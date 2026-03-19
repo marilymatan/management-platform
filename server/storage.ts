@@ -31,7 +31,8 @@ export function sanitizeFilename(name: string): string {
     .replace(/\0/g, "")
     .replace(/\.\./g, "")
     .replace(/[\/\\]/g, "")
-    .replace(/[^a-zA-Z0-9._\-\u0590-\u05FF ]/g, "_");
+    .replace(/[^a-zA-Z0-9._\- ]/g, "_")
+    .replace(/\s+/g, "_");
   return sanitized || "unnamed";
 }
 
@@ -40,7 +41,8 @@ export function generateSignedFileUrl(key: string, expiresInSec: number = 3600):
   const data = `${key}:${exp}`;
   const secret = ENV.cookieSecret;
   const token = crypto.createHmac("sha256", secret).update(data).digest("hex");
-  return `/api/files/${key}?token=${token}&exp=${exp}`;
+  const encodedKey = key.split("/").map(encodeURIComponent).join("/");
+  return `/api/files/${encodedKey}?token=${token}&exp=${exp}`;
 }
 
 export function verifyFileSignature(key: string, token: string, exp: string): boolean {

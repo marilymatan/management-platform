@@ -41,7 +41,7 @@ async function startServer() {
         res.status(403).json({ error: "Access denied" });
         return;
       }
-      const fileKey = req.path.replace(/^\/+/, "");
+      const fileKey = decodeURIComponent(req.path.replace(/^\/+/, ""));
       if (!verifyFileSignature(fileKey, token, exp)) {
         res.status(403).json({ error: "Invalid or expired file token" });
         return;

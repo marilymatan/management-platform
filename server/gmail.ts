@@ -12,7 +12,7 @@ import { gmailConnections, smartInvoices } from "../drizzle/schema";
 import { eq, and } from "drizzle-orm";
 import { invokeLLM } from "./_core/llm";
 import { convert as htmlToText } from "html-to-text";
-import { storagePut, storageRead } from "./storage";
+import { storagePut, storageRead, sanitizeFilename } from "./storage";
 import { encryptField, decryptField, encryptJson } from "./encryption";
 import { ENV } from "./_core/env";
 
@@ -520,9 +520,11 @@ async function downloadAndUploadPdfAttachment(
     }
 
     const suffix = crypto.randomBytes(4).toString("hex");
-    const fileKey = `gmail-invoices/${userId}/${messageId}-${suffix}-${filename}`;
+    const safeName = sanitizeFilename(filename);
+    const fileKey = `gmail-invoices/${userId}/${messageId}-${suffix}-${safeName}`;
     const { url } = await storagePut(fileKey, pdfBuffer, "application/pdf");
 
+    console.log(`[Gmail] PDF stored: key=${fileKey}, url=${url}, size=${pdfBuffer.length}`);
     return url;
   } catch (err) {
     console.error(`[Gmail] Failed to download PDF attachment:`, err);
@@ -532,40 +534,57 @@ async function downloadAndUploadPdfAttachment(
 
 async function extractTextFromPdf(pdfUrl: string, fileKey?: string): Promise<string> {
   try {
-    if (fileKey) {
-      const buffer = await storageRead(fileKey);
-      if (buffer) {
-        const base64 = buffer.toString("base64");
-        const response = await invokeLLM({
-          messages: [
-            {
-              role: "system",
-              content: "אתה מומחה לקריאת מסמכי PDF בעברית ובאנגלית. חלץ את כל הטקסט הרלוונטי מהמסמך. התמקד בפרטים כמו: שם ספק, סכום לתשלום, תאריכים, מספר חשבונית, פירוט שירותים/מוצרים. החזר טקסט נקי בלבד.",
-            },
-            {
-              role: "user",
-              content: [
-                {
-                  type: "image_url",
-                  image_url: {
-                    url: `data:application/pdf;base64,${base64}`,
-                  },
-                },
-                {
-                  type: "text",
-                  text: "חלץ את כל הטקסט הרלוונטי מהחשבונית/קבלה הזו. כלול: שם ספק, סכום, תאריך, מספר חשבונית, פירוט פריטים.",
-                },
-              ],
-            },
-          ],
-        });
-
-        const content = response.choices?.[0]?.message?.content;
-        if (typeof content === "string") return content;
-      }
+    if (!fileKey) {
+      console.log("[Gmail] No fileKey for PDF text extraction, skipping");
+      return "";
     }
 
-    return "";
+    const buffer = await storageRead(fileKey);
+    if (!buffer) {
+      console.log(`[Gmail] PDF file not found in storage: ${fileKey}`);
+      return "";
+    }
+
+    console.log(`[Gmail] Extracting text from PDF: ${fileKey} (${buffer.length} bytes)`);
+    const base64 = buffer.toString("base64");
+
+    const response = await invokeLLM({
+      messages: [
+        {
+          role: "system",
+          content: "אתה מומחה לקריאת מסמכי PDF בעברית ובאנגלית. חלץ את כל הטקסט הרלוונטי מהמסמך. התמקד בפרטים כמו: שם ספק, סכום לתשלום, תאריכים, מספר חשבונית, פירוט שירותים/מוצרים. החזר טקסט נקי בלבד.",
+        },
+        {
+          role: "user",
+          content: [
+            {
+              type: "image_url" as const,
+              image_url: {
+                url: `data:application/pdf;base64,${base64}`,
+              },
+            },
+            {
+              type: "text",
+              text: "חלץ את כל הטקסט הרלוונטי מהחשבונית/קבלה הזו. כלול: שם ספק, סכום, תאריך, מספר חשבונית, פירוט פריטים.",
+            },
+          ],
+        },
+      ],
+    });
+
+    const rawContent = response.choices?.[0]?.message?.content;
+    let text = "";
+    if (typeof rawContent === "string") {
+      text = rawContent;
+    } else if (Array.isArray(rawContent)) {
+      text = rawContent
+        .filter((p): p is { type: "text"; text: string } => p.type === "text")
+        .map((p) => p.text)
+        .join("\n");
+    }
+
+    console.log(`[Gmail] PDF text extraction result: ${text.length} chars`);
+    return text;
   } catch (err) {
     console.error("[Gmail] PDF text extraction failed:", err);
     return "";
@@ -681,8 +700,22 @@ ${contentForAnalysis}`,
     });
 
     const rawContent = response.choices?.[0]?.message?.content;
-    if (!rawContent || typeof rawContent !== "string") return null;
-    return JSON.parse(rawContent) as ExtractedInvoice;
+    let jsonStr: string | null = null;
+    if (typeof rawContent === "string") {
+      jsonStr = rawContent;
+    } else if (Array.isArray(rawContent)) {
+      jsonStr = rawContent
+        .filter((p): p is { type: "text"; text: string } => p.type === "text")
+        .map((p) => p.text)
+        .join("");
+    }
+    if (!jsonStr) {
+      console.log("[Gmail] extractInvoiceData: no content from LLM");
+      return null;
+    }
+    const parsed = JSON.parse(jsonStr) as ExtractedInvoice;
+    console.log(`[Gmail] extractInvoiceData result: provider=${parsed.provider}, amount=${parsed.amount}, currency=${parsed.currency}`);
+    return parsed;
   } catch (err) {
     console.error("[Gmail] AI extraction failed:", err);
     return null;
@@ -749,9 +782,11 @@ export async function scanGmailForInvoices(
       let pdfText: string | null = null;
       let pdfUrl: string | null = null;
 
+      console.log(`[Gmail] Email "${email.subject}" from "${email.from}" — ${email.pdfAttachments.length} PDF attachment(s)`);
+
       if (email.pdfAttachments.length > 0) {
         const firstPdf = email.pdfAttachments[0];
-        console.log(`[Gmail] Processing PDF attachment: ${firstPdf.filename} (${firstPdf.size} bytes)`);
+        console.log(`[Gmail] Downloading PDF: ${firstPdf.filename} (${firstPdf.size} bytes, attachmentId=${firstPdf.attachmentId})`);
 
         pdfUrl = await downloadAndUploadPdfAttachment(
           conn.id,
@@ -764,7 +799,8 @@ export async function scanGmailForInvoices(
         if (pdfUrl) {
           const fileKey = pdfUrl.replace(/^\/api\/files\//, "");
           pdfText = await extractTextFromPdf(pdfUrl, fileKey);
-          console.log(`[Gmail] Extracted ${pdfText.length} chars from PDF: ${firstPdf.filename}`);
+        } else {
+          console.log(`[Gmail] PDF download failed for: ${firstPdf.filename}`);
         }
       }
 
@@ -787,6 +823,9 @@ export async function scanGmailForInvoices(
         pdfFilename: email.pdfAttachments[0]?.filename ?? undefined,
         fromEmail: email.from,
       };
+
+      console.log(`[Gmail] Saving invoice: provider=${provider}, category=${category}, amount=${extracted?.amount ?? "null"}, pdfUrl=${pdfUrl ? "YES" : "NO"}, pdfText=${pdfText ? pdfText.length + " chars" : "NONE"}`);
+
       await db.insert(smartInvoices).values({
         userId,
         gmailConnectionId: conn.id,
