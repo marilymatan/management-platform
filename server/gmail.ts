@@ -727,7 +727,7 @@ export async function scanGmailForInvoices(
       );
 
       if (pdfUrl) {
-        const fileKey = `gmail-invoices/${userId}/${email.messageId}-${firstPdf.filename}`;
+        const fileKey = pdfUrl.replace(/^\/api\/files\//, "");
         pdfText = await extractTextFromPdf(pdfUrl, fileKey);
         console.log(`[Gmail] Extracted ${pdfText.length} chars from PDF: ${firstPdf.filename}`);
       }
