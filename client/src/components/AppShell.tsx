@@ -76,17 +76,17 @@ export function AppShell({ children }: AppShellProps) {
 
   const sidebarContent = (
     <div className="flex flex-col h-full">
-      <div className={cn("flex items-center gap-3 px-5 py-6", collapsed && "justify-center px-0")}>
+      <button onClick={() => setLocation("/")} className={cn("flex items-center gap-3 px-5 py-6 w-full hover:opacity-80 transition-opacity cursor-pointer", collapsed && "justify-center px-0")}>
         <div className="rounded-xl bg-gradient-to-br from-amber-400/20 to-orange-400/20 p-2 shrink-0 border border-amber-300/20">
           <Sparkles className="size-6 text-amber-300" />
         </div>
         {!collapsed && (
-          <div className="min-w-0">
+          <div className="min-w-0 text-right">
             <h1 className="text-base font-bold text-white truncate tracking-wide">Lumi</h1>
             <p className="text-[11px] text-white/50">מאיר לך את הדרך הפיננסית</p>
           </div>
         )}
-      </div>
+      </button>
 
       <nav className="flex-1 px-3 space-y-1 mt-2">
         {filteredNavItems.map((item) => {
@@ -255,12 +255,12 @@ export function AppShell({ children }: AppShellProps) {
       <div className="flex-1 flex flex-col min-w-0">
         {isMobile && (
           <header className="sticky top-0 z-30 bg-card/80 backdrop-blur-md border-b px-4 py-3 flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
+            <button onClick={() => setLocation("/")} className="flex items-center gap-2.5 hover:opacity-80 transition-opacity cursor-pointer">
               <div className="rounded-lg bg-amber-500/10 p-1.5">
                 <Sparkles className="size-5 text-amber-500" />
               </div>
               <span className="text-sm font-bold text-foreground tracking-wide">Lumi</span>
-            </div>
+            </button>
             <Button
               variant="ghost"
               size="icon"
