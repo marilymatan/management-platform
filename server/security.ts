@@ -306,10 +306,7 @@ export function registerSecurityMiddleware(app: Express): void {
     cors({
       origin: (origin, callback) => {
         if (!origin) {
-          if (process.env.NODE_ENV === "development") {
-            return callback(null, true);
-          }
-          return callback(new Error("Origin required"));
+          return callback(null, true);
         }
         const isAllowed = ALLOWED_ORIGINS.some((allowed) =>
           typeof allowed === "string" ? allowed === origin : allowed.test(origin)
