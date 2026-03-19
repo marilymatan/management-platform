@@ -194,13 +194,13 @@ interface RateLimitOptions {
   maxRequests: number; // Max requests per window
 }
 
-export function rateLimitMiddleware(options: RateLimitOptions) {
-  const { windowMs, maxRequests } = options;
+export function rateLimitMiddleware(options: RateLimitOptions & { perRoute?: boolean }) {
+  const { windowMs, maxRequests, perRoute = false } = options;
 
   return (req: Request, res: Response, next: NextFunction): void => {
     const ip = getClientIp(req);
-    const normalizedPath = req.baseUrl || req.path;
-    const key = `${ip}:${normalizedPath}`;
+    const routeKey = perRoute ? `${req.baseUrl}${req.path}` : (req.baseUrl || req.path);
+    const key = `${ip}:${routeKey}`;
     const now = Date.now();
 
     let entry = rateLimitStore.get(key);
@@ -215,8 +215,12 @@ export function rateLimitMiddleware(options: RateLimitOptions) {
     entry.count++;
 
     if (entry.count > maxRequests) {
-      console.warn(`[Security] Rate limit exceeded for IP: ${ip} on ${req.path}`);
-      // Audit log rate-limited request
+      const logKey = `ratelimit:${key}`;
+      const lastLog = rateLimitStore.get(logKey);
+      if (!lastLog || lastLog.resetAt < now) {
+        console.warn(`[Security] Rate limit exceeded for IP: ${ip} on ${req.path} (${entry.count} reqs)`);
+        rateLimitStore.set(logKey, { count: 1, resetAt: now + 10_000 });
+      }
       audit({
         action: "rate_limited",
         resource: "security",
@@ -333,12 +337,13 @@ export function registerSecurityMiddleware(app: Express): void {
   // 2. Geo-blocking: Israel only (production)
   app.use(geoBlockMiddleware);
 
-  // 3. Rate limiting on API endpoints
+  // 3. Rate limiting on API endpoints (per-route so one procedure can't starve others)
   app.use(
     "/api/trpc",
     rateLimitMiddleware({
-      windowMs: 60 * 1000,   // 1 minute window
-      maxRequests: 60,        // 60 requests per minute per IP
+      windowMs: 60 * 1000,
+      maxRequests: 120,
+      perRoute: true,
     })
   );
 

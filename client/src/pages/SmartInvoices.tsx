@@ -204,8 +204,8 @@ export default function SmartInvoices() {
   const { data: connectionStatus, isLoading: statusLoading } =
     trpc.gmail.connectionStatus.useQuery(undefined, { enabled: !!user });
 
-  const { data: invoices, isLoading: invoicesLoading } =
-    trpc.gmail.getInvoices.useQuery({ limit: 100 }, { enabled: !!user });
+  const { data: invoices, isLoading: invoicesLoading, error: invoicesError } =
+    trpc.gmail.getInvoices.useQuery({ limit: 100 }, { enabled: !!user, retry: 2 });
 
   const { data: monthlySummary } = trpc.gmail.getMonthlySummary.useQuery(undefined, {
     enabled: !!user,
@@ -856,6 +856,25 @@ export default function SmartInvoices() {
                     <div className="absolute inset-0 rounded-full border-2 border-primary border-t-transparent animate-spin" />
                   </div>
                 </div>
+              ) : invoicesError ? (
+                <Card className="border-destructive/40">
+                  <CardContent className="py-10 text-center">
+                    <AlertCircle className="size-8 text-destructive/60 mx-auto mb-3" />
+                    <h3 className="text-sm font-semibold mb-1">שגיאה בטעינת חשבוניות</h3>
+                    <p className="text-xs text-muted-foreground mb-3">
+                      {invoicesError.message.includes("Rate limit") || invoicesError.message.includes("Too many")
+                        ? "יותר מדי בקשות — נסה שוב בעוד רגע"
+                        : "אירעה שגיאה בטעינת הנתונים"}
+                    </p>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => utils.gmail.getInvoices.invalidate()}
+                    >
+                      נסה שוב
+                    </Button>
+                  </CardContent>
+                </Card>
               ) : !invoices || invoices.length === 0 ? (
                 <Card className="border-dashed">
                   <CardContent className="py-14 text-center">

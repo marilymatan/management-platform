@@ -878,24 +878,35 @@ export const appRouter = router({
           .orderBy(desc(smartInvoices.createdAt))
           .limit(input.limit);
         return invoices.map(inv => {
-          const decrypted = inv.extractedData && typeof inv.extractedData === 'string'
-            ? decryptJson(inv.extractedData) as Record<string, unknown>
-            : inv.extractedData as Record<string, unknown> | null;
+          try {
+            const decrypted = inv.extractedData && typeof inv.extractedData === 'string'
+              ? decryptJson(inv.extractedData) as Record<string, unknown>
+              : inv.extractedData as Record<string, unknown> | null;
 
-          if (decrypted?.pdfUrl && typeof decrypted.pdfUrl === 'string') {
-            const rawUrl = decrypted.pdfUrl.split('?')[0];
-            const fileKey = rawUrl.replace(/^\/api\/files\//, '');
-            if (fileKey) {
-              decrypted.pdfUrl = generateSignedFileUrl(fileKey);
+            if (decrypted?.pdfUrl && typeof decrypted.pdfUrl === 'string') {
+              try {
+                const rawUrl = decrypted.pdfUrl.split('?')[0];
+                const fileKey = rawUrl.replace(/^\/api\/files\//, '');
+                if (fileKey) {
+                  decrypted.pdfUrl = generateSignedFileUrl(fileKey);
+                }
+              } catch {
+                delete decrypted.pdfUrl;
+              }
             }
-          }
 
-          return {
-            ...inv,
-            subject: inv.subject ? decryptField(inv.subject) : inv.subject,
-            rawText: inv.rawText ? decryptField(inv.rawText) : inv.rawText,
-            extractedData: decrypted,
-          };
+            return {
+              ...inv,
+              subject: inv.subject ? decryptField(inv.subject) : inv.subject,
+              rawText: inv.rawText ? decryptField(inv.rawText) : inv.rawText,
+              extractedData: decrypted,
+            };
+          } catch {
+            return {
+              ...inv,
+              extractedData: null,
+            };
+          }
         });
       }),
 
@@ -1030,14 +1041,20 @@ export const appRouter = router({
         .from(smartInvoices)
         .where(eq(smartInvoices.userId, ctx.user.id))
         .orderBy(desc(smartInvoices.createdAt));
-      const invoices = rawInvoices.map(inv => ({
-        ...inv,
-        subject: inv.subject ? decryptField(inv.subject) : inv.subject,
-        rawText: inv.rawText ? decryptField(inv.rawText) : inv.rawText,
-        extractedData: inv.extractedData && typeof inv.extractedData === 'string'
-          ? decryptJson(inv.extractedData)
-          : inv.extractedData,
-      }));
+      const invoices = rawInvoices.map(inv => {
+        try {
+          return {
+            ...inv,
+            subject: inv.subject ? decryptField(inv.subject) : inv.subject,
+            rawText: inv.rawText ? decryptField(inv.rawText) : inv.rawText,
+            extractedData: inv.extractedData && typeof inv.extractedData === 'string'
+              ? decryptJson(inv.extractedData)
+              : inv.extractedData,
+          };
+        } catch {
+          return { ...inv, extractedData: null };
+        }
+      });
 
       const monthMap: Record<string, { month: string; total: number; categories: Record<string, { category: string; total: number; count: number }> }> = {};
       for (const inv of invoices) {
