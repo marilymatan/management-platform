@@ -278,6 +278,24 @@ function detectProvider(subject: string, from: string, body: string): {
   return null;
 }
 
+function extractSenderName(from: string): string | null {
+  const displayNameMatch = from.match(/^"?([^"<]+?)"?\s*<[^>]+>/);
+  if (displayNameMatch) {
+    const name = displayNameMatch[1].trim();
+    if (name.length > 0) return name;
+  }
+
+  const domainMatch = from.match(/@([^.>]+)\./);
+  if (domainMatch) {
+    const domain = domainMatch[1];
+    if (domain && !["gmail", "yahoo", "hotmail", "outlook", "walla", "nana"].includes(domain.toLowerCase())) {
+      return domain;
+    }
+  }
+
+  return null;
+}
+
 function isInvoiceEmail(subject: string, body: string): boolean {
   const text = `${subject} ${body}`.toLowerCase();
   return INVOICE_KEYWORDS.some((kw) => text.includes(kw.toLowerCase()));
@@ -747,7 +765,8 @@ export async function scanGmailForInvoices(
         detectedProvider
       );
 
-      const provider = extracted?.provider ?? detectedProvider?.name ?? "ספק לא ידוע";
+      const llmProvider = extracted?.provider && extracted.provider !== "לא ידוע" ? extracted.provider : null;
+      const provider = llmProvider ?? detectedProvider?.name ?? extractSenderName(email.from) ?? "ספק לא ידוע";
       const category = extracted?.category ?? detectedProvider?.category ?? "אחר";
       const description = extracted?.description ?? email.subject;
 

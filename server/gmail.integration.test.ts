@@ -272,6 +272,59 @@ describe("Provider detection", () => {
   });
 });
 
+// ─── Sender name extraction tests ────────────────────────────────────────────
+
+describe("Sender name extraction (extractSenderName logic)", () => {
+  function extractSenderName(from: string): string | null {
+    const displayNameMatch = from.match(/^"?([^"<]+?)"?\s*<[^>]+>/);
+    if (displayNameMatch) {
+      const name = displayNameMatch[1].trim();
+      if (name.length > 0) return name;
+    }
+
+    const domainMatch = from.match(/@([^.>]+)\./);
+    if (domainMatch) {
+      const domain = domainMatch[1];
+      if (domain && !["gmail", "yahoo", "hotmail", "outlook", "walla", "nana"].includes(domain.toLowerCase())) {
+        return domain;
+      }
+    }
+
+    return null;
+  }
+
+  it("should extract display name from quoted sender", () => {
+    expect(extractSenderName('"ניצן מורלא" <accounting@finbot.co.il>')).toBe("ניצן מורלא");
+  });
+
+  it("should extract display name from unquoted sender", () => {
+    expect(extractSenderName("Nitzan Morela <accounting@finbot.co.il>")).toBe("Nitzan Morela");
+  });
+
+  it("should fall back to domain for email-only sender", () => {
+    expect(extractSenderName("billing@finbot.co.il")).toBe("finbot");
+  });
+
+  it("should return null for generic email domains", () => {
+    expect(extractSenderName("someone@gmail.com")).toBeNull();
+    expect(extractSenderName("someone@yahoo.com")).toBeNull();
+    expect(extractSenderName("someone@hotmail.com")).toBeNull();
+    expect(extractSenderName("someone@outlook.com")).toBeNull();
+  });
+
+  it("should extract domain from business email without display name", () => {
+    expect(extractSenderName("noreply@bezeq.co.il")).toBe("bezeq");
+  });
+
+  it("should handle Hebrew display name with angle brackets", () => {
+    expect(extractSenderName("חברת החשמל <billing@iec.co.il>")).toBe("חברת החשמל");
+  });
+
+  it("should handle empty from string", () => {
+    expect(extractSenderName("")).toBeNull();
+  });
+});
+
 // ─── Invoice keyword detection tests ────────────────────────────────────────
 
 describe("Invoice keyword detection", () => {

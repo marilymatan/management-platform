@@ -1,31 +1,31 @@
 import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import { motion } from "framer-motion";
-import { Shield, FileSearch, Mail, MessageSquare, Sparkles, ArrowLeft } from "lucide-react";
+import { Sparkles, Shield, Wallet, Bell, FileSearch, ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { getLoginUrl } from "@/const";
 import { trpc } from "@/lib/trpc";
 
 const FEATURES = [
   {
+    icon: Shield,
+    title: "ניהול ביטוחים",
+    description: "ניתוח פוליסות עם AI, השוואת כיסויים וזיהוי חיסכון",
+  },
+  {
+    icon: Wallet,
+    title: "מעקב הוצאות",
+    description: "סריקה אוטומטית של חשבוניות ומעקב הוצאות חודשיות",
+  },
+  {
+    icon: Bell,
+    title: "תזכורות חכמות",
+    description: "התראות על חידוש פוליסות, תשלומים ומועדים חשובים",
+  },
+  {
     icon: FileSearch,
-    title: "ניתוח פוליסות",
-    description: "העלו פוליסות ביטוח וקבלו ניתוח מעמיק בעזרת AI",
-  },
-  {
-    icon: Mail,
-    title: "חשבוניות חכמות",
-    description: "סריקה אוטומטית של חשבוניות מהג׳ימייל שלכם",
-  },
-  {
-    icon: MessageSquare,
-    title: "צ׳אט חכם",
-    description: "שאלו שאלות על הפוליסות שלכם וקבלו תשובות מיידיות",
-  },
-  {
-    icon: Sparkles,
-    title: "זיהוי כפילויות",
-    description: "איתור כיסויים כפולים וחיסכון בעלויות ביטוח",
+    title: "תובנות AI",
+    description: "המלצות מותאמות אישית לחיסכון ושיפור הכיסוי שלך",
   },
 ];
 
@@ -93,10 +93,10 @@ export default function Login() {
 
   return (
     <div className="min-h-screen flex flex-col lg:flex-row" dir="rtl">
-      <div className="relative lg:w-[55%] bg-gradient-to-bl from-[#1a2744] via-[#162038] to-[#0f1a2e] px-8 py-12 lg:px-16 lg:py-0 flex flex-col justify-center overflow-hidden">
+      <div className="relative lg:w-[55%] bg-gradient-to-bl from-[#1a1b3d] via-[#151631] to-[#0d0e24] px-8 py-12 lg:px-16 lg:py-0 flex flex-col justify-center overflow-hidden">
         <div className="absolute inset-0 overflow-hidden">
-          <div className="absolute -top-1/4 -right-1/4 w-[600px] h-[600px] rounded-full bg-white/[0.03] blur-3xl" />
-          <div className="absolute -bottom-1/4 -left-1/4 w-[500px] h-[500px] rounded-full bg-primary/[0.08] blur-3xl" />
+          <div className="absolute -top-1/4 -right-1/4 w-[600px] h-[600px] rounded-full bg-amber-500/[0.05] blur-3xl" />
+          <div className="absolute -bottom-1/4 -left-1/4 w-[500px] h-[500px] rounded-full bg-orange-500/[0.08] blur-3xl" />
           <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] rounded-full bg-gradient-radial from-white/[0.02] to-transparent" />
         </div>
 
@@ -107,12 +107,12 @@ export default function Login() {
           animate="visible"
         >
           <motion.div variants={itemVariants} className="flex items-center gap-3 mb-8">
-            <div className="rounded-2xl bg-white/10 p-3 backdrop-blur-sm border border-white/10">
-              <Shield className="size-8 text-white" />
+            <div className="rounded-2xl bg-gradient-to-br from-amber-400/20 to-orange-400/20 p-3 backdrop-blur-sm border border-amber-300/15">
+              <Sparkles className="size-8 text-amber-300" />
             </div>
             <div>
-              <h1 className="text-2xl font-bold text-white">מנתח ביטוח</h1>
-              <p className="text-sm text-white/50">ניתוח חכם עם AI</p>
+              <h1 className="text-2xl font-bold text-white tracking-wide">Lumi</h1>
+              <p className="text-sm text-white/50">מאיר לך את הדרך הפיננסית</p>
             </div>
           </motion.div>
 
@@ -120,10 +120,10 @@ export default function Login() {
             variants={itemVariants}
             className="text-3xl lg:text-4xl font-bold text-white leading-tight mb-4"
           >
-            נהלו את הביטוח שלכם
+            העוזר הפיננסי
             <br />
-            <span className="text-transparent bg-clip-text bg-gradient-to-l from-blue-300 to-blue-100">
-              בצורה חכמה יותר
+            <span className="text-transparent bg-clip-text bg-gradient-to-l from-amber-300 to-orange-200">
+              האישי שלך
             </span>
           </motion.h2>
 
@@ -131,7 +131,7 @@ export default function Login() {
             variants={itemVariants}
             className="text-base text-white/60 mb-10 max-w-md leading-relaxed"
           >
-            פלטפורמה מבוססת בינה מלאכותית לניתוח פוליסות ביטוח, מעקב אחר חשבוניות, וזיהוי חיסכון פוטנציאלי.
+            פלטפורמה חכמה לניהול הביטוחים, ההוצאות והמסמכים הפיננסיים שלך — הכל במקום אחד, עם בינה מלאכותית שעובדת בשבילך.
           </motion.p>
 
           <motion.div variants={containerVariants} className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -142,7 +142,7 @@ export default function Login() {
                 className="group flex gap-3 rounded-xl bg-white/[0.05] backdrop-blur-sm border border-white/[0.08] p-4 transition-colors hover:bg-white/[0.08]"
               >
                 <div className="rounded-lg bg-white/10 p-2 h-fit shrink-0">
-                  <feature.icon className="size-5 text-blue-300" />
+                  <feature.icon className="size-5 text-amber-300" />
                 </div>
                 <div className="min-w-0">
                   <h3 className="text-sm font-semibold text-white mb-1">{feature.title}</h3>
@@ -163,10 +163,10 @@ export default function Login() {
         >
           <div className="text-center mb-8">
             <div className="lg:hidden flex items-center justify-center gap-2 mb-6">
-              <div className="rounded-xl bg-primary/10 p-2">
-                <Shield className="size-6 text-primary" />
+              <div className="rounded-xl bg-amber-500/10 p-2">
+                <Sparkles className="size-6 text-amber-500" />
               </div>
-              <span className="text-lg font-bold text-foreground">מנתח ביטוח</span>
+              <span className="text-lg font-bold text-foreground tracking-wide">Lumi</span>
             </div>
             <h3 className="text-2xl font-bold text-foreground mb-2">ברוכים הבאים</h3>
             <p className="text-sm text-muted-foreground">

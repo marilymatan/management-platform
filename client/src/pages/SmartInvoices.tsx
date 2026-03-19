@@ -30,6 +30,8 @@ import {
   Hash,
   ExternalLink,
   Trash2,
+  Receipt,
+  BarChart3,
 } from "lucide-react";
 
 const CATEGORY_ICONS: Record<string, React.ReactNode> = {
@@ -52,6 +54,28 @@ const CATEGORY_COLORS: Record<string, string> = {
   בנק: "bg-purple-50 text-purple-700 border-purple-200",
   רכב: "bg-red-50 text-red-700 border-red-200",
   אחר: "bg-gray-50 text-gray-700 border-gray-200",
+};
+
+const CATEGORY_BAR_COLORS: Record<string, string> = {
+  תקשורת: "bg-blue-500",
+  חשמל: "bg-yellow-500",
+  מים: "bg-cyan-500",
+  ארנונה: "bg-orange-500",
+  ביטוח: "bg-green-500",
+  בנק: "bg-purple-500",
+  רכב: "bg-red-500",
+  אחר: "bg-gray-400",
+};
+
+const CATEGORY_ICON_BG: Record<string, string> = {
+  תקשורת: "bg-blue-100 text-blue-600",
+  חשמל: "bg-yellow-100 text-yellow-600",
+  מים: "bg-cyan-100 text-cyan-600",
+  ארנונה: "bg-orange-100 text-orange-600",
+  ביטוח: "bg-green-100 text-green-600",
+  בנק: "bg-purple-100 text-purple-600",
+  רכב: "bg-red-100 text-red-600",
+  אחר: "bg-gray-100 text-gray-600",
 };
 
 const STATUS_LABELS: Record<string, { label: string; color: string; icon: React.ReactNode }> = {
@@ -144,11 +168,11 @@ export default function SmartInvoices() {
     const error = params.get("gmail_error");
 
     if (connected === "1") {
-      window.history.replaceState({}, "", "/smart-invoices");
+      window.history.replaceState({}, "", "/expenses");
       toast.success("Gmail חובר בהצלחה!");
       utils.gmail.connectionStatus.invalidate();
     } else if (error) {
-      window.history.replaceState({}, "", "/smart-invoices");
+      window.history.replaceState({}, "", "/expenses");
       toast.error(`שגיאה בחיבור Gmail: ${decodeURIComponent(error)}`);
     }
   }, []);
@@ -331,34 +355,72 @@ export default function SmartInvoices() {
             </Card>
 
             {monthlySummary && monthlySummary.length > 0 && (
-              <div className="animate-fade-in-up stagger-2">
-                <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
-                  <TrendingUp className="size-4 text-muted-foreground" />
-                  סיכום הוצאות
-                </h3>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                  <Card className="relative overflow-hidden">
-                    <div className="absolute inset-0 bg-gradient-to-bl from-primary/8 to-transparent" />
-                    <CardContent className="relative py-3 px-4">
-                      <p className="text-[11px] text-muted-foreground mb-1">סה"כ הוצאות</p>
-                      <p className="text-2xl font-bold text-primary">₪{totalMonthly.toLocaleString("he-IL")}</p>
-                    </CardContent>
-                  </Card>
-                  {monthlySummary.map((cat) => (
-                    <Card key={cat.category}>
-                      <CardContent className="py-3 px-4">
-                        <div className="flex items-center gap-1.5 mb-1">
-                          <span className="text-muted-foreground">
-                            {CATEGORY_ICONS[cat.category] ?? <TrendingUp className="w-4 h-4" />}
-                          </span>
-                          <p className="text-[11px] text-muted-foreground">{cat.category}</p>
-                        </div>
-                        <p className="text-lg font-semibold">₪{cat.total.toLocaleString("he-IL")}</p>
-                        <p className="text-[11px] text-muted-foreground">{cat.count} חשבוניות</p>
-                      </CardContent>
-                    </Card>
-                  ))}
-                </div>
+              <div className="animate-fade-in-up stagger-2 space-y-4">
+                <Card className="relative overflow-hidden border-0 shadow-lg bg-gradient-to-br from-primary/5 via-background to-primary/3">
+                  <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-l from-primary via-primary/60 to-transparent" />
+                  <CardContent className="py-6 px-6">
+                    <div className="flex items-center gap-2 mb-4">
+                      <div className="size-8 rounded-lg bg-primary/10 flex items-center justify-center">
+                        <BarChart3 className="size-4 text-primary" />
+                      </div>
+                      <h3 className="text-sm font-semibold">סיכום הוצאות</h3>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-6 mb-6">
+                      <div>
+                        <p className="text-xs text-muted-foreground mb-1">סה"כ הוצאות</p>
+                        <p className="text-3xl font-bold tracking-tight text-primary">
+                          ₪{totalMonthly.toLocaleString("he-IL")}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-muted-foreground mb-1">חשבוניות</p>
+                        <p className="text-3xl font-bold tracking-tight">
+                          {monthlySummary.reduce((sum, c) => sum + c.count, 0)}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-muted-foreground mb-1">ממוצע לחשבונית</p>
+                        <p className="text-3xl font-bold tracking-tight">
+                          ₪{monthlySummary.reduce((sum, c) => sum + c.count, 0) > 0
+                            ? Math.round(totalMonthly / monthlySummary.reduce((sum, c) => sum + c.count, 0)).toLocaleString("he-IL")
+                            : "0"}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="space-y-3">
+                      {monthlySummary.map((cat) => {
+                        const pct = totalMonthly > 0 ? (cat.total / totalMonthly) * 100 : 0;
+                        return (
+                          <div key={cat.category} className="group">
+                            <div className="flex items-center justify-between mb-1.5">
+                              <div className="flex items-center gap-2.5">
+                                <div className={`size-7 rounded-lg flex items-center justify-center ${CATEGORY_ICON_BG[cat.category] ?? "bg-gray-100 text-gray-600"}`}>
+                                  {CATEGORY_ICONS[cat.category] ?? <TrendingUp className="w-3.5 h-3.5" />}
+                                </div>
+                                <span className="text-sm font-medium">{cat.category}</span>
+                                <Badge variant="outline" className="text-[10px] px-1.5 py-0 font-normal text-muted-foreground">
+                                  {cat.count} {cat.count === 1 ? "חשבונית" : "חשבוניות"}
+                                </Badge>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs text-muted-foreground">{pct.toFixed(0)}%</span>
+                                <span className="text-sm font-semibold">₪{cat.total.toLocaleString("he-IL")}</span>
+                              </div>
+                            </div>
+                            <div className="h-2 rounded-full bg-muted/50 overflow-hidden">
+                              <div
+                                className={`h-full rounded-full transition-all duration-700 ease-out ${CATEGORY_BAR_COLORS[cat.category] ?? "bg-gray-400"}`}
+                                style={{ width: `${Math.max(pct, 2)}%` }}
+                              />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </CardContent>
+                </Card>
               </div>
             )}
 

@@ -36,7 +36,7 @@ const STEPS = [
 export default function Home() {
   const { user } = useAuth({ redirectOnUnauthenticated: true });
   const [, setLocation] = useLocation();
-  const [match, params] = useRoute("/analysis/:sessionId");
+  const [match, params] = useRoute("/insurance/:sessionId");
 
   const [files, setFiles] = useState<UploadedFile[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -137,7 +137,7 @@ export default function Home() {
     setIsAnalyzing(false);
     setActiveTab("coverages");
     setSelectedFileFilter(null);
-    setLocation("/");
+    setLocation("/insurance/new");
   }, [setLocation]);
 
   const currentStep = isAnalyzing ? 1 : analysisResult ? 2 : 0;

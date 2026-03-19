@@ -5,7 +5,7 @@ import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
 import { z } from "zod";
 import { nanoid } from "nanoid";
-import { storagePut, storageGet, storageRead, sanitizeFilename } from "./storage";
+import { storagePut, storageGet, storageRead, sanitizeFilename, generateSignedFileUrl } from "./storage";
 import { invokeLLM } from "./_core/llm";
 import { ENV } from "./_core/env";
 import {
@@ -822,14 +822,23 @@ export const appRouter = router({
           .where(eq(smartInvoices.userId, ctx.user.id))
           .orderBy(desc(smartInvoices.createdAt))
           .limit(input.limit);
-        return invoices.map(inv => ({
-          ...inv,
-          subject: inv.subject ? decryptField(inv.subject) : inv.subject,
-          rawText: inv.rawText ? decryptField(inv.rawText) : inv.rawText,
-          extractedData: inv.extractedData && typeof inv.extractedData === 'string'
-            ? decryptJson(inv.extractedData)
-            : inv.extractedData,
-        }));
+        return invoices.map(inv => {
+          const decrypted = inv.extractedData && typeof inv.extractedData === 'string'
+            ? decryptJson(inv.extractedData) as Record<string, unknown>
+            : inv.extractedData as Record<string, unknown> | null;
+
+          if (decrypted?.pdfUrl && typeof decrypted.pdfUrl === 'string') {
+            const fileKey = decrypted.pdfUrl.replace(/^\/api\/files\//, '');
+            decrypted.pdfUrl = generateSignedFileUrl(fileKey);
+          }
+
+          return {
+            ...inv,
+            subject: inv.subject ? decryptField(inv.subject) : inv.subject,
+            rawText: inv.rawText ? decryptField(inv.rawText) : inv.rawText,
+            extractedData: decrypted,
+          };
+        });
       }),
 
     /** Clear all invoices and rescan from scratch */

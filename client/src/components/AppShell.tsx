@@ -7,17 +7,17 @@ import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
-  Shield,
+  Sparkles,
   LayoutDashboard,
-  FileSearch,
-  Mail,
-  Zap,
+  Shield,
+  Wallet,
+  Bell,
+  FolderOpen,
   Settings,
   LogOut,
   Menu,
   X,
   ChevronRight,
-  User,
 } from "lucide-react";
 
 interface NavItem {
@@ -28,11 +28,11 @@ interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { label: "ניתוח חדש", icon: <FileSearch className="size-5" />, path: "/" },
-  { label: "דשבורד", icon: <LayoutDashboard className="size-5" />, path: "/dashboard" },
-  { label: "חשבוניות חכמות", icon: <Mail className="size-5" />, path: "/smart-invoices" },
-  { label: "שימוש", icon: <Zap className="size-5" />, path: "/usage" },
-  { label: "ניהול", icon: <Settings className="size-5" />, path: "/admin", adminOnly: true },
+  { label: "דשבורד", icon: <LayoutDashboard className="size-5" />, path: "/" },
+  { label: "ביטוחים", icon: <Shield className="size-5" />, path: "/insurance" },
+  { label: "הוצאות", icon: <Wallet className="size-5" />, path: "/expenses" },
+  { label: "תזכורות", icon: <Bell className="size-5" />, path: "/reminders" },
+  { label: "מסמכים", icon: <FolderOpen className="size-5" />, path: "/documents" },
 ];
 
 interface AppShellProps {
@@ -60,7 +60,7 @@ export function AppShell({ children }: AppShellProps) {
   }, [sidebarOpen, isMobile]);
 
   const isActive = (path: string) => {
-    if (path === "/") return location === "/" || location.startsWith("/analysis/");
+    if (path === "/") return location === "/";
     return location.startsWith(path);
   };
 
@@ -77,13 +77,13 @@ export function AppShell({ children }: AppShellProps) {
   const sidebarContent = (
     <div className="flex flex-col h-full">
       <div className={cn("flex items-center gap-3 px-5 py-6", collapsed && "justify-center px-0")}>
-        <div className="rounded-xl bg-white/10 p-2 shrink-0">
-          <Shield className="size-6 text-white" />
+        <div className="rounded-xl bg-gradient-to-br from-amber-400/20 to-orange-400/20 p-2 shrink-0 border border-amber-300/20">
+          <Sparkles className="size-6 text-amber-300" />
         </div>
         {!collapsed && (
           <div className="min-w-0">
-            <h1 className="text-base font-bold text-white truncate">מנתח ביטוח</h1>
-            <p className="text-[11px] text-white/50">ניתוח חכם עם AI</p>
+            <h1 className="text-base font-bold text-white truncate tracking-wide">Lumi</h1>
+            <p className="text-[11px] text-white/50">מאיר לך את הדרך הפיננסית</p>
           </div>
         )}
       </div>
@@ -134,14 +134,38 @@ export function AppShell({ children }: AppShellProps) {
         {user && (
           <button
             onClick={() => {
-              setLocation("/profile");
+              setLocation("/settings");
+              if (isMobile) setSidebarOpen(false);
+            }}
+            className={cn(
+              "w-full flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition-all duration-200",
+              collapsed && "justify-center px-0",
+              isActive("/settings")
+                ? "bg-white/15 text-white"
+                : "text-white/60 hover:text-white hover:bg-white/8"
+            )}
+          >
+            {collapsed ? (
+              <Settings className="size-5 shrink-0" />
+            ) : (
+              <>
+                <Settings className="size-5 shrink-0" />
+                <span>הגדרות</span>
+              </>
+            )}
+          </button>
+        )}
+
+        {user && (
+          <button
+            onClick={() => {
+              setLocation("/settings");
               if (isMobile) setSidebarOpen(false);
             }}
             className={cn(
               "w-full flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition-all duration-200",
               "text-white/60 hover:text-white hover:bg-white/8",
               collapsed && "justify-center px-0",
-              isActive("/profile") && "bg-white/15 text-white"
             )}
           >
             <Avatar className="size-8 shrink-0 border border-white/20">
@@ -198,7 +222,7 @@ export function AppShell({ children }: AppShellProps) {
 
       <aside
         className={cn(
-          "shrink-0 bg-gradient-to-b from-[#1a2744] to-[#0f1a2e] flex flex-col z-50 transition-all duration-300",
+          "shrink-0 bg-gradient-to-b from-[#1a1b3d] via-[#151631] to-[#0d0e24] flex flex-col z-50 transition-all duration-300",
           isMobile
             ? cn(
                 "fixed top-0 right-0 h-full w-[280px] shadow-2xl",
@@ -232,10 +256,10 @@ export function AppShell({ children }: AppShellProps) {
         {isMobile && (
           <header className="sticky top-0 z-30 bg-card/80 backdrop-blur-md border-b px-4 py-3 flex items-center justify-between">
             <div className="flex items-center gap-2.5">
-              <div className="rounded-lg bg-primary/10 p-1.5">
-                <Shield className="size-5 text-primary" />
+              <div className="rounded-lg bg-amber-500/10 p-1.5">
+                <Sparkles className="size-5 text-amber-500" />
               </div>
-              <span className="text-sm font-bold text-foreground">מנתח ביטוח</span>
+              <span className="text-sm font-bold text-foreground tracking-wide">Lumi</span>
             </div>
             <Button
               variant="ghost"
