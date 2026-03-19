@@ -1,10 +1,11 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import {
   Mail,
@@ -30,8 +31,11 @@ import {
   Hash,
   ExternalLink,
   Trash2,
-  Receipt,
   BarChart3,
+  Search,
+  Filter,
+  X,
+  Download,
 } from "lucide-react";
 
 const CATEGORY_ICONS: Record<string, React.ReactNode> = {
@@ -85,7 +89,10 @@ const STATUS_LABELS: Record<string, { label: string; color: string; icon: React.
   unknown: { label: "לא ידוע", color: "text-gray-500", icon: <Clock className="w-3.5 h-3.5" /> },
 };
 
-function getExtractedData(inv: { extractedData?: unknown }): {
+const ALL_CATEGORIES = ["תקשורת", "חשמל", "מים", "ארנונה", "ביטוח", "בנק", "רכב", "אחר"];
+const ALL_STATUSES = ["pending", "paid", "overdue", "unknown"];
+
+type ExtractedData = {
   description?: string;
   invoiceNumber?: string | null;
   items?: Array<{ name: string; amount: number | null }>;
@@ -93,17 +100,66 @@ function getExtractedData(inv: { extractedData?: unknown }): {
   pdfFilename?: string;
   fromEmail?: string;
   currency?: string;
-} {
+  amount?: number | null;
+};
+
+function getExtractedData(inv: { extractedData?: unknown }): ExtractedData {
   if (!inv.extractedData || typeof inv.extractedData !== "object") return {};
-  return inv.extractedData as ReturnType<typeof getExtractedData>;
+  return inv.extractedData as ExtractedData;
 }
+
+function getEffectiveAmount(inv: { amount?: string | null; extractedData?: unknown }): number {
+  if (inv.amount != null) {
+    const parsed = Number(inv.amount);
+    if (!isNaN(parsed) && parsed > 0) return parsed;
+  }
+  const ed = getExtractedData(inv);
+  if (typeof ed.amount === "number" && ed.amount > 0) return ed.amount;
+  if (typeof ed.amount === "string") {
+    const parsed = parseFloat(ed.amount);
+    if (!isNaN(parsed) && parsed > 0) return parsed;
+  }
+  return 0;
+}
+
+function getCurrency(inv: { extractedData?: unknown }): string {
+  const ed = getExtractedData(inv);
+  if (ed.currency === "USD") return "$";
+  if (ed.currency === "EUR") return "€";
+  return "₪";
+}
+
+type Invoice = {
+  id: number;
+  provider?: string | null;
+  category?: string | null;
+  amount?: string | null;
+  status?: string | null;
+  subject?: string | null;
+  sourceEmail?: string | null;
+  invoiceDate?: string | Date | null;
+  dueDate?: string | Date | null;
+  extractedData?: unknown;
+};
+
+type ProviderGroup = {
+  provider: string;
+  invoices: Invoice[];
+  totalAmount: number;
+  categories: string[];
+  hasPdf: boolean;
+};
 
 export default function SmartInvoices() {
   const { user, loading: authLoading } = useAuth();
   const [, navigate] = useLocation();
-  const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [expandedProvider, setExpandedProvider] = useState<string | null>(null);
+  const [expandedInvoiceId, setExpandedInvoiceId] = useState<number | null>(null);
   const [isScanning, setIsScanning] = useState(false);
   const [scanDays, setScanDays] = useState(7);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
+  const [statusFilter, setStatusFilter] = useState<string | null>(null);
 
   const utils = trpc.useUtils();
 
@@ -187,6 +243,55 @@ export default function SmartInvoices() {
     setIsScanning(true);
     scanMutation.mutate({ daysBack: scanDays });
   }
+
+  const filteredInvoices = useMemo(() => {
+    if (!invoices) return [];
+    return invoices.filter((inv) => {
+      if (categoryFilter && inv.category !== categoryFilter) return false;
+      if (statusFilter && inv.status !== statusFilter) return false;
+      if (searchQuery.trim()) {
+        const q = searchQuery.trim().toLowerCase();
+        const ed = getExtractedData(inv);
+        const searchable = [
+          inv.provider,
+          inv.subject,
+          inv.category,
+          ed.description,
+          ed.fromEmail,
+          ed.invoiceNumber,
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        if (!searchable.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [invoices, categoryFilter, statusFilter, searchQuery]);
+
+  const providerGroups = useMemo((): ProviderGroup[] => {
+    const map = new Map<string, Invoice[]>();
+    for (const inv of filteredInvoices) {
+      const key = inv.provider ?? "ספק לא ידוע";
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(inv);
+    }
+    return Array.from(map.entries())
+      .map(([provider, invs]) => ({
+        provider,
+        invoices: invs.sort((a, b) => {
+          const da = a.invoiceDate ? new Date(a.invoiceDate).getTime() : 0;
+          const db = b.invoiceDate ? new Date(b.invoiceDate).getTime() : 0;
+          return db - da;
+        }),
+        totalAmount: invs.reduce((sum, inv) => sum + getEffectiveAmount(inv), 0),
+        categories: [...new Set(invs.map((i) => i.category ?? "אחר"))],
+        hasPdf: invs.some((i) => !!getExtractedData(i).pdfUrl),
+      }))
+      .sort((a, b) => b.totalAmount - a.totalAmount);
+  }, [filteredInvoices]);
+
+  const hasActiveFilters = !!categoryFilter || !!statusFilter || !!searchQuery.trim();
 
   if (authLoading) {
     return (
@@ -424,11 +529,62 @@ export default function SmartInvoices() {
               </div>
             )}
 
-            <div className="animate-fade-in-up stagger-3">
-              <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
-                <FileText className="size-4 text-muted-foreground" />
-                חשבוניות
-              </h3>
+            <div className="animate-fade-in-up stagger-3 space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-semibold flex items-center gap-2">
+                  <FileText className="size-4 text-muted-foreground" />
+                  חשבוניות
+                  {invoices && invoices.length > 0 && (
+                    <span className="text-muted-foreground font-normal">({filteredInvoices.length})</span>
+                  )}
+                </h3>
+              </div>
+
+              {invoices && invoices.length > 0 && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="relative flex-1 min-w-[200px] max-w-sm">
+                    <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+                    <Input
+                      placeholder="חיפוש לפי ספק, נושא, תיאור..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      className="pr-9 h-9 text-sm"
+                    />
+                  </div>
+                  <select
+                    value={categoryFilter ?? ""}
+                    onChange={(e) => setCategoryFilter(e.target.value || null)}
+                    className="text-sm border rounded-lg px-2.5 py-1.5 bg-card h-9"
+                  >
+                    <option value="">כל הקטגוריות</option>
+                    {ALL_CATEGORIES.map((cat) => (
+                      <option key={cat} value={cat}>{cat}</option>
+                    ))}
+                  </select>
+                  <select
+                    value={statusFilter ?? ""}
+                    onChange={(e) => setStatusFilter(e.target.value || null)}
+                    className="text-sm border rounded-lg px-2.5 py-1.5 bg-card h-9"
+                  >
+                    <option value="">כל הסטטוסים</option>
+                    {ALL_STATUSES.map((s) => (
+                      <option key={s} value={s}>{STATUS_LABELS[s]?.label ?? s}</option>
+                    ))}
+                  </select>
+                  {hasActiveFilters && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => { setSearchQuery(""); setCategoryFilter(null); setStatusFilter(null); }}
+                      className="gap-1 text-muted-foreground h-9"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                      נקה
+                    </Button>
+                  )}
+                </div>
+              )}
+
               {invoicesLoading ? (
                 <div className="flex items-center justify-center py-12">
                   <div className="relative size-10">
@@ -448,54 +604,91 @@ export default function SmartInvoices() {
                     </p>
                   </CardContent>
                 </Card>
+              ) : filteredInvoices.length === 0 ? (
+                <Card className="border-dashed">
+                  <CardContent className="py-10 text-center">
+                    <Filter className="size-8 text-muted-foreground/40 mx-auto mb-3" />
+                    <h3 className="text-sm font-semibold mb-1">אין תוצאות</h3>
+                    <p className="text-xs text-muted-foreground">נסה לשנות את הסינון או החיפוש</p>
+                  </CardContent>
+                </Card>
               ) : (
                 <div className="space-y-2">
-                  {invoices.map((inv) => {
-                    const status = STATUS_LABELS[inv.status ?? "unknown"] ?? STATUS_LABELS.unknown;
-                    const catColor = CATEGORY_COLORS[inv.category ?? "אחר"] ?? CATEGORY_COLORS["אחר"];
-                    const isExpanded = expandedId === inv.id;
-                    const extracted = getExtractedData(inv);
+                  {providerGroups.map((group) => {
+                    const isGroupExpanded = expandedProvider === group.provider;
+                    const isSingle = group.invoices.length === 1;
+                    const singleInv = isSingle ? group.invoices[0] : null;
+                    const singleExtracted = singleInv ? getExtractedData(singleInv) : null;
+                    const primaryCat = group.categories[0] ?? "אחר";
+                    const catColor = CATEGORY_COLORS[primaryCat] ?? CATEGORY_COLORS["אחר"];
 
                     return (
-                      <Card key={inv.id} className="overflow-hidden transition-all hover:shadow-md hover:border-primary/20">
-                        <CardContent className="py-3 px-4">
+                      <Card key={group.provider} className="overflow-hidden transition-all hover:shadow-md hover:border-primary/20">
+                        <CardContent className="p-0">
                           <div
-                            className="flex items-center justify-between cursor-pointer"
-                            onClick={() => setExpandedId(isExpanded ? null : inv.id)}
+                            className="flex items-center justify-between cursor-pointer py-3 px-4"
+                            onClick={() => {
+                              if (isSingle) {
+                                setExpandedInvoiceId(expandedInvoiceId === singleInv!.id ? null : singleInv!.id);
+                                setExpandedProvider(null);
+                              } else {
+                                setExpandedProvider(isGroupExpanded ? null : group.provider);
+                                setExpandedInvoiceId(null);
+                              }
+                            }}
                           >
                             <div className="flex items-center gap-3 min-w-0">
                               <Badge variant="outline" className={`shrink-0 text-xs gap-1 ${catColor}`}>
-                                {CATEGORY_ICONS[inv.category ?? "אחר"] ?? <TrendingUp className="w-3.5 h-3.5" />}
-                                {inv.category ?? "אחר"}
+                                {CATEGORY_ICONS[primaryCat] ?? <TrendingUp className="w-3.5 h-3.5" />}
+                                {primaryCat}
                               </Badge>
                               <div className="min-w-0">
                                 <div className="flex items-center gap-2">
-                                  <p className="font-medium text-sm truncate">{inv.provider}</p>
-                                  {inv.sourceEmail && connectionStatus && connectionStatus.connections.length > 1 && (
-                                    <Badge variant="outline" className="text-[10px] px-1.5 py-0 shrink-0 font-normal text-muted-foreground">
-                                      {inv.sourceEmail}
+                                  <p className="font-medium text-sm truncate">{group.provider}</p>
+                                  {!isSingle && (
+                                    <Badge variant="secondary" className="text-[10px] px-1.5 py-0 shrink-0">
+                                      {group.invoices.length} חשבוניות
                                     </Badge>
                                   )}
                                 </div>
-                                {extracted.description && (
+                                {isSingle && singleExtracted?.description && (
                                   <p className="text-[11px] text-muted-foreground truncate max-w-xs">
-                                    {extracted.description}
+                                    {singleExtracted.description}
                                   </p>
                                 )}
                               </div>
                             </div>
-                            <div className="flex items-center gap-3 shrink-0">
-                              {inv.amount != null && (
+                            <div className="flex items-center gap-2 shrink-0">
+                              {group.hasPdf && (
+                                <a
+                                  href={isSingle && singleExtracted?.pdfUrl ? singleExtracted.pdfUrl : undefined}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  onClick={(e) => {
+                                    if (isSingle && singleExtracted?.pdfUrl) {
+                                      e.stopPropagation();
+                                    } else {
+                                      e.preventDefault();
+                                    }
+                                  }}
+                                  className={`p-1.5 rounded-md transition-colors ${isSingle && singleExtracted?.pdfUrl ? "hover:bg-red-50 text-red-500" : "text-red-300 cursor-default"}`}
+                                  title="פתח PDF"
+                                >
+                                  <FileText className="w-4 h-4" />
+                                </a>
+                              )}
+                              {group.totalAmount > 0 && (
                                 <p className="font-semibold text-sm">
-                                  {extracted.currency === "USD" ? "$" : extracted.currency === "EUR" ? "€" : "₪"}
-                                  {Number(inv.amount).toLocaleString("he-IL")}
+                                  {isSingle ? getCurrency(singleInv!) : "₪"}{group.totalAmount.toLocaleString("he-IL")}
                                 </p>
                               )}
-                              <div className={`flex items-center gap-1 text-xs ${status.color}`}>
-                                {status.icon}
-                                <span className="hidden sm:inline">{status.label}</span>
-                              </div>
-                              {isExpanded ? (
+                              {isSingle && (
+                                <div className={`flex items-center gap-1 text-xs ${(STATUS_LABELS[singleInv!.status ?? "unknown"] ?? STATUS_LABELS.unknown).color}`}>
+                                  {(STATUS_LABELS[singleInv!.status ?? "unknown"] ?? STATUS_LABELS.unknown).icon}
+                                  <span className="hidden sm:inline">{(STATUS_LABELS[singleInv!.status ?? "unknown"] ?? STATUS_LABELS.unknown).label}</span>
+                                </div>
+                              )}
+                              {(isSingle ? expandedInvoiceId === singleInv!.id : isGroupExpanded) ? (
                                 <ChevronUp className="w-4 h-4 text-muted-foreground" />
                               ) : (
                                 <ChevronDown className="w-4 h-4 text-muted-foreground" />
@@ -503,102 +696,71 @@ export default function SmartInvoices() {
                             </div>
                           </div>
 
-                          {isExpanded && (
-                            <div className="mt-3 pt-3 border-t space-y-3 animate-fade-in">
-                              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
-                                {inv.subject && (
-                                  <div className="col-span-2 sm:col-span-3">
-                                    <div className="flex items-center gap-1.5 text-muted-foreground mb-0.5">
-                                      <Mail className="w-3.5 h-3.5" />
-                                      <span className="text-[11px] font-medium">נושא המייל</span>
-                                    </div>
-                                    <p className="text-xs">{inv.subject}</p>
-                                  </div>
-                                )}
-                                {inv.invoiceDate && (
-                                  <div>
-                                    <div className="flex items-center gap-1.5 text-muted-foreground mb-0.5">
-                                      <Calendar className="w-3.5 h-3.5" />
-                                      <span className="text-[11px] font-medium">תאריך</span>
-                                    </div>
-                                    <p className="text-xs">{new Date(inv.invoiceDate).toLocaleDateString("he-IL")}</p>
-                                  </div>
-                                )}
-                                {inv.dueDate && (
-                                  <div>
-                                    <div className="flex items-center gap-1.5 text-muted-foreground mb-0.5">
-                                      <Clock className="w-3.5 h-3.5" />
-                                      <span className="text-[11px] font-medium">מועד תשלום</span>
-                                    </div>
-                                    <p className="text-xs">{new Date(inv.dueDate).toLocaleDateString("he-IL")}</p>
-                                  </div>
-                                )}
-                                {extracted.invoiceNumber && (
-                                  <div>
-                                    <div className="flex items-center gap-1.5 text-muted-foreground mb-0.5">
-                                      <Hash className="w-3.5 h-3.5" />
-                                      <span className="text-[11px] font-medium">מספר חשבונית</span>
-                                    </div>
-                                    <p className="text-xs">{extracted.invoiceNumber}</p>
-                                  </div>
-                                )}
-                                {extracted.fromEmail && (
-                                  <div>
-                                    <div className="flex items-center gap-1.5 text-muted-foreground mb-0.5">
-                                      <Mail className="w-3.5 h-3.5" />
-                                      <span className="text-[11px] font-medium">שולח</span>
-                                    </div>
-                                    <p className="text-xs truncate">{extracted.fromEmail}</p>
-                                  </div>
-                                )}
-                                {inv.sourceEmail && (
-                                  <div>
-                                    <div className="flex items-center gap-1.5 text-muted-foreground mb-0.5">
-                                      <Mail className="w-3.5 h-3.5" />
-                                      <span className="text-[11px] font-medium">נלקח מחשבון</span>
-                                    </div>
-                                    <p className="text-xs truncate">{inv.sourceEmail}</p>
-                                  </div>
-                                )}
-                              </div>
+                          {isSingle && expandedInvoiceId === singleInv!.id && (
+                            <InvoiceDetails inv={singleInv!} connectionCount={connectionStatus?.connections.length ?? 1} />
+                          )}
 
-                              {extracted.description && (
-                                <div className="bg-muted/40 rounded-lg p-3">
-                                  <p className="text-[11px] font-medium text-muted-foreground mb-1">תיאור</p>
-                                  <p className="text-sm">{extracted.description}</p>
-                                </div>
-                              )}
+                          {!isSingle && isGroupExpanded && (
+                            <div className="border-t bg-muted/20">
+                              {group.invoices.map((inv) => {
+                                const extracted = getExtractedData(inv);
+                                const status = STATUS_LABELS[inv.status ?? "unknown"] ?? STATUS_LABELS.unknown;
+                                const amount = getEffectiveAmount(inv);
+                                const isSubExpanded = expandedInvoiceId === inv.id;
 
-                              {extracted.items && extracted.items.length > 0 && (
-                                <div>
-                                  <p className="text-[11px] font-medium text-muted-foreground mb-2">פירוט פריטים</p>
-                                  <div className="bg-muted/30 rounded-lg divide-y divide-border">
-                                    {extracted.items.map((item, idx) => (
-                                      <div key={idx} className="flex items-center justify-between px-3 py-2 text-xs">
-                                        <span>{item.name}</span>
-                                        {item.amount != null && (
-                                          <span className="font-medium">₪{item.amount.toLocaleString("he-IL")}</span>
+                                return (
+                                  <div key={inv.id} className="border-b last:border-b-0">
+                                    <div
+                                      className="flex items-center justify-between cursor-pointer py-2.5 px-6 hover:bg-muted/30 transition-colors"
+                                      onClick={() => setExpandedInvoiceId(isSubExpanded ? null : inv.id)}
+                                    >
+                                      <div className="flex items-center gap-3 min-w-0">
+                                        <div className="size-1.5 rounded-full bg-muted-foreground/30 shrink-0" />
+                                        <div className="min-w-0">
+                                          <p className="text-xs truncate max-w-xs">
+                                            {extracted.description || inv.subject || "חשבונית"}
+                                          </p>
+                                          {inv.invoiceDate && (
+                                            <p className="text-[10px] text-muted-foreground">
+                                              {new Date(inv.invoiceDate).toLocaleDateString("he-IL")}
+                                            </p>
+                                          )}
+                                        </div>
+                                      </div>
+                                      <div className="flex items-center gap-2 shrink-0">
+                                        {extracted.pdfUrl && (
+                                          <a
+                                            href={extracted.pdfUrl}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            onClick={(e) => e.stopPropagation()}
+                                            className="p-1 rounded hover:bg-red-50 text-red-500 transition-colors"
+                                            title="פתח PDF"
+                                          >
+                                            <FileText className="w-3.5 h-3.5" />
+                                          </a>
+                                        )}
+                                        {amount > 0 && (
+                                          <span className="text-xs font-semibold">
+                                            {getCurrency(inv)}{amount.toLocaleString("he-IL")}
+                                          </span>
+                                        )}
+                                        <div className={`flex items-center gap-1 text-[11px] ${status.color}`}>
+                                          {status.icon}
+                                        </div>
+                                        {isSubExpanded ? (
+                                          <ChevronUp className="w-3.5 h-3.5 text-muted-foreground" />
+                                        ) : (
+                                          <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
                                         )}
                                       </div>
-                                    ))}
+                                    </div>
+                                    {isSubExpanded && (
+                                      <InvoiceDetails inv={inv} connectionCount={connectionStatus?.connections.length ?? 1} nested />
+                                    )}
                                   </div>
-                                </div>
-                              )}
-
-                              {extracted.pdfUrl && (
-                                <div className="flex items-center gap-2">
-                                  <FileText className="w-4 h-4 text-red-500" />
-                                  <a
-                                    href={extracted.pdfUrl}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="text-xs text-primary hover:underline flex items-center gap-1"
-                                  >
-                                    {extracted.pdfFilename ?? "צפה בקובץ PDF"}
-                                    <ExternalLink className="w-3 h-3" />
-                                  </a>
-                                </div>
-                              )}
+                                );
+                              })}
                             </div>
                           )}
                         </CardContent>
@@ -611,6 +773,107 @@ export default function SmartInvoices() {
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+function InvoiceDetails({ inv, connectionCount, nested }: { inv: Invoice; connectionCount: number; nested?: boolean }) {
+  const extracted = getExtractedData(inv);
+  return (
+    <div className={`border-t space-y-3 animate-fade-in ${nested ? "py-3 px-8 bg-muted/10" : "py-3 px-4"}`}>
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
+        {inv.subject && (
+          <div className="col-span-2 sm:col-span-3">
+            <div className="flex items-center gap-1.5 text-muted-foreground mb-0.5">
+              <Mail className="w-3.5 h-3.5" />
+              <span className="text-[11px] font-medium">נושא המייל</span>
+            </div>
+            <p className="text-xs">{inv.subject}</p>
+          </div>
+        )}
+        {inv.invoiceDate && (
+          <div>
+            <div className="flex items-center gap-1.5 text-muted-foreground mb-0.5">
+              <Calendar className="w-3.5 h-3.5" />
+              <span className="text-[11px] font-medium">תאריך</span>
+            </div>
+            <p className="text-xs">{new Date(inv.invoiceDate).toLocaleDateString("he-IL")}</p>
+          </div>
+        )}
+        {inv.dueDate && (
+          <div>
+            <div className="flex items-center gap-1.5 text-muted-foreground mb-0.5">
+              <Clock className="w-3.5 h-3.5" />
+              <span className="text-[11px] font-medium">מועד תשלום</span>
+            </div>
+            <p className="text-xs">{new Date(inv.dueDate).toLocaleDateString("he-IL")}</p>
+          </div>
+        )}
+        {extracted.invoiceNumber && (
+          <div>
+            <div className="flex items-center gap-1.5 text-muted-foreground mb-0.5">
+              <Hash className="w-3.5 h-3.5" />
+              <span className="text-[11px] font-medium">מספר חשבונית</span>
+            </div>
+            <p className="text-xs">{extracted.invoiceNumber}</p>
+          </div>
+        )}
+        {extracted.fromEmail && (
+          <div>
+            <div className="flex items-center gap-1.5 text-muted-foreground mb-0.5">
+              <Mail className="w-3.5 h-3.5" />
+              <span className="text-[11px] font-medium">שולח</span>
+            </div>
+            <p className="text-xs truncate">{extracted.fromEmail}</p>
+          </div>
+        )}
+        {inv.sourceEmail && connectionCount > 1 && (
+          <div>
+            <div className="flex items-center gap-1.5 text-muted-foreground mb-0.5">
+              <Mail className="w-3.5 h-3.5" />
+              <span className="text-[11px] font-medium">נלקח מחשבון</span>
+            </div>
+            <p className="text-xs truncate">{inv.sourceEmail}</p>
+          </div>
+        )}
+      </div>
+
+      {extracted.description && (
+        <div className="bg-muted/40 rounded-lg p-3">
+          <p className="text-[11px] font-medium text-muted-foreground mb-1">תיאור</p>
+          <p className="text-sm">{extracted.description}</p>
+        </div>
+      )}
+
+      {extracted.items && extracted.items.length > 0 && (
+        <div>
+          <p className="text-[11px] font-medium text-muted-foreground mb-2">פירוט פריטים</p>
+          <div className="bg-muted/30 rounded-lg divide-y divide-border">
+            {extracted.items.map((item, idx) => (
+              <div key={idx} className="flex items-center justify-between px-3 py-2 text-xs">
+                <span>{item.name}</span>
+                {item.amount != null && (
+                  <span className="font-medium">₪{item.amount.toLocaleString("he-IL")}</span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {extracted.pdfUrl && (
+        <div className="flex items-center gap-2 pt-1">
+          <a
+            href={extracted.pdfUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-2 text-xs text-white bg-red-500 hover:bg-red-600 rounded-lg px-3 py-1.5 transition-colors"
+          >
+            <Download className="w-3.5 h-3.5" />
+            {extracted.pdfFilename ?? "פתח PDF"}
+          </a>
+        </div>
+      )}
     </div>
   );
 }
