@@ -125,11 +125,11 @@ const ACTION_COLORS: Record<string, string> = {
 };
 
 const PIE_COLORS = [
-  "hsl(var(--chart-1))",
-  "hsl(var(--chart-2))",
-  "hsl(var(--chart-3))",
-  "hsl(var(--chart-4))",
-  "hsl(var(--chart-5))",
+  "var(--chart-1)",
+  "var(--chart-2)",
+  "var(--chart-3)",
+  "var(--chart-4)",
+  "var(--chart-5)",
 ];
 
 const STATUS_COLORS: Record<string, string> = {
@@ -237,7 +237,7 @@ function OverviewTab() {
                     formatter={(value: number, name: string) => [name === "tokens" ? formatTokens(value) : value, name === "tokens" ? "טוקנים" : "קריאות"]}
                     labelFormatter={(label) => new Date(label).toLocaleDateString("he-IL")}
                   />
-                  <Bar dataKey="calls" fill="hsl(var(--chart-1))" radius={[4, 4, 0, 0]} name="calls" />
+                  <Bar dataKey="calls" fill="var(--chart-1)" radius={[4, 4, 0, 0]} name="calls" />
                 </BarChart>
               </ResponsiveContainer>
             </CardContent>
@@ -252,7 +252,7 @@ function OverviewTab() {
                   <XAxis dataKey="date" tick={{ fontSize: 10 }} tickFormatter={(v) => { const d = new Date(v); return `${d.getDate()}/${d.getMonth() + 1}`; }} />
                   <YAxis tick={{ fontSize: 10 }} tickFormatter={(v) => `$${v}`} />
                   <Tooltip formatter={(value: number) => [formatCost(value), "עלות"]} labelFormatter={(label) => new Date(label).toLocaleDateString("he-IL")} />
-                  <Area type="monotone" dataKey="cost" stroke="hsl(var(--chart-2))" fill="hsl(var(--chart-2))" fillOpacity={0.2} />
+                  <Area type="monotone" dataKey="cost" stroke="var(--chart-2)" fill="var(--chart-2)" fillOpacity={0.2} />
                 </AreaChart>
               </ResponsiveContainer>
             </CardContent>
@@ -270,7 +270,7 @@ function OverviewTab() {
                 <XAxis dataKey="date" tick={{ fontSize: 10 }} tickFormatter={(v) => { const d = new Date(v); return `${d.getDate()}/${d.getMonth() + 1}`; }} />
                 <YAxis tick={{ fontSize: 10 }} allowDecimals={false} />
                 <Tooltip formatter={(value: number) => [value, "משתמשים חדשים"]} labelFormatter={(label) => new Date(label).toLocaleDateString("he-IL")} />
-                <Line type="monotone" dataKey="count" stroke="hsl(var(--chart-3))" strokeWidth={2} dot={{ r: 3 }} />
+                <Line type="monotone" dataKey="count" stroke="var(--chart-3)" strokeWidth={2} dot={{ r: 3 }} />
               </LineChart>
             </ResponsiveContainer>
           </CardContent>
@@ -614,7 +614,7 @@ function LLMCostsTab() {
                 <XAxis type="number" tick={{ fontSize: 10 }} tickFormatter={(v) => `$${v.toFixed(3)}`} />
                 <YAxis type="category" dataKey="userEmail" tick={{ fontSize: 10 }} width={100} />
                 <Tooltip formatter={(value: number) => [formatCost(value), "עלות"]} />
-                <Bar dataKey="totalCost" fill="hsl(var(--chart-4))" radius={[0, 4, 4, 0]} />
+                <Bar dataKey="totalCost" fill="var(--chart-4)" radius={[0, 4, 4, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </CardContent>
@@ -631,7 +631,7 @@ function LLMCostsTab() {
                 <XAxis dataKey="date" tick={{ fontSize: 10 }} tickFormatter={(v) => { const d = new Date(v); return `${d.getDate()}/${d.getMonth() + 1}`; }} />
                 <YAxis tick={{ fontSize: 10 }} tickFormatter={(v) => `$${v}`} />
                 <Tooltip formatter={(value: number) => [formatCost(value), "עלות"]} labelFormatter={(label) => new Date(label).toLocaleDateString("he-IL")} />
-                <Area type="monotone" dataKey="cost" stroke="hsl(var(--chart-2))" fill="hsl(var(--chart-2))" fillOpacity={0.15} />
+                <Area type="monotone" dataKey="cost" stroke="var(--chart-2)" fill="var(--chart-2)" fillOpacity={0.15} />
               </AreaChart>
             </ResponsiveContainer>
           </CardContent>
@@ -648,7 +648,7 @@ function LLMCostsTab() {
                 <XAxis dataKey="week" tick={{ fontSize: 10 }} tickFormatter={(v) => { const d = new Date(v); return `${d.getDate()}/${d.getMonth() + 1}`; }} />
                 <YAxis tick={{ fontSize: 10 }} tickFormatter={(v) => `$${v}`} />
                 <Tooltip formatter={(value: number) => [formatCost(value), "עלות"]} labelFormatter={(label) => `שבוע של ${new Date(label).toLocaleDateString("he-IL")}`} />
-                <Bar dataKey="cost" fill="hsl(var(--chart-5))" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="cost" fill="var(--chart-5)" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </CardContent>
@@ -693,8 +693,6 @@ function LLMCostsTab() {
 function SecurityTab() {
   const { data: events, isLoading } = trpc.admin.securityEvents.useQuery({ limit: 100 });
 
-  if (isLoading) return <DashboardSkeleton />;
-
   const statusBreakdown = useMemo(() => {
     if (!events) return [];
     const map: Record<string, number> = {};
@@ -708,6 +706,8 @@ function SecurityTab() {
     events.forEach(e => { map[e.action] = (map[e.action] || 0) + 1; });
     return Object.entries(map).map(([action, count]) => ({ action, count })).sort((a, b) => b.count - a.count);
   }, [events]);
+
+  if (isLoading) return <DashboardSkeleton />;
 
   return (
     <div className="space-y-6">
@@ -754,7 +754,7 @@ function SecurityTab() {
                 <PieChart>
                   <Pie data={statusBreakdown} cx="50%" cy="50%" outerRadius={70} dataKey="value" label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}>
                     {statusBreakdown.map((_, i) => (
-                      <Cell key={i} fill={i === 0 ? "hsl(var(--chart-2))" : "hsl(var(--chart-1))"} />
+                      <Cell key={i} fill={i === 0 ? "var(--chart-2)" : "var(--chart-1)"} />
                     ))}
                   </Pie>
                   <Tooltip />
@@ -887,10 +887,10 @@ function SystemTab() {
                 <Pie data={statusData} cx="50%" cy="50%" outerRadius={80} dataKey="value" label={({ name, value }) => `${name} (${value})`}>
                   {statusData.map((entry, i) => {
                     const colors: Record<string, string> = {
-                      completed: "hsl(var(--chart-3))",
-                      error: "hsl(var(--chart-1))",
-                      processing: "hsl(var(--chart-4))",
-                      pending: "hsl(var(--chart-5))",
+                      completed: "var(--chart-3)",
+                      error: "var(--chart-1)",
+                      processing: "var(--chart-4)",
+                      pending: "var(--chart-5)",
                     };
                     return <Cell key={i} fill={colors[entry.status] || PIE_COLORS[i]} />;
                   })}

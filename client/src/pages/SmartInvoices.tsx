@@ -45,6 +45,7 @@ import {
   X,
   Download,
   PencilLine,
+  Banknote,
 } from "lucide-react";
 
 const CATEGORY_ICONS: Record<string, React.ReactNode> = {
@@ -1074,8 +1075,19 @@ export default function SmartInvoices() {
 
 function InvoiceDetails({ inv, connectionCount, nested }: { inv: Invoice; connectionCount: number; nested?: boolean }) {
   const extracted = getExtractedData(inv);
+  const effectiveAmount = getEffectiveAmount(inv);
+  const currency = getCurrency(inv);
   return (
     <div className={`border-t space-y-3 animate-fade-in ${nested ? "py-3 px-8 bg-muted/10" : "py-3 px-4"}`}>
+      {effectiveAmount > 0 && (
+        <div className="flex items-center justify-between rounded-lg bg-primary/5 border border-primary/10 px-4 py-2.5">
+          <div className="flex items-center gap-2 text-muted-foreground">
+            <Banknote className="w-4 h-4" />
+            <span className="text-xs font-medium">סכום</span>
+          </div>
+          <p className="text-lg font-bold text-primary">{currency}{effectiveAmount.toLocaleString("he-IL")}</p>
+        </div>
+      )}
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
         {inv.subject && (
           <div className="col-span-2 sm:col-span-3">

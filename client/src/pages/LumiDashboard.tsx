@@ -343,7 +343,7 @@ export default function LumiDashboard() {
                   formatter={(value: number) => [`₪${value.toLocaleString("he-IL")}`, "סכום"]}
                   contentStyle={{ direction: "rtl", borderRadius: 8, fontSize: 12 }}
                 />
-                <Bar dataKey="amount" fill="hsl(var(--primary))" radius={[6, 6, 0, 0]} />
+                <Bar dataKey="amount" fill="var(--primary)" radius={[6, 6, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </CardContent>

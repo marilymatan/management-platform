@@ -863,7 +863,7 @@ export default function Settings() {
                         ]}
                         labelFormatter={(label) => new Date(label).toLocaleDateString("he-IL")}
                       />
-                      <Bar dataKey="calls" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} name="calls" />
+                      <Bar dataKey="calls" fill="var(--primary)" radius={[4, 4, 0, 0]} name="calls" />
                     </BarChart>
                   </ResponsiveContainer>
                 </CardContent>
