@@ -19,7 +19,7 @@ import { PDFParse } from "pdf-parse";
 
 // ─── Encryption helpers ───────────────────────────────────────────────────────
 
-const ENCRYPTION_KEY = process.env.JWT_SECRET!.slice(0, 32).padEnd(32, "0");
+const ENCRYPTION_KEY = (process.env.ENCRYPTION_KEY || process.env.JWT_SECRET || "dev-fallback-key-not-for-production").slice(0, 32).padEnd(32, "0");
 const ALGORITHM = "aes-256-gcm";
 
 function encrypt(text: string): string {
