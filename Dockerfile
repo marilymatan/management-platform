@@ -14,6 +14,7 @@ COPY . .
 RUN pnpm build
 
 FROM base AS production
+RUN apk add --no-cache su-exec
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/drizzle ./drizzle
@@ -23,12 +24,13 @@ COPY --from=build /app/drizzle.config.ts ./
 RUN addgroup --system app && adduser --system --ingroup app app
 RUN mkdir -p /data/uploads && chown -R app:app /data/uploads
 
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
 ENV NODE_ENV=production
 ENV PORT=3000
 ENV STORAGE_PATH=/data/uploads
 
 EXPOSE 3000
 
-USER app
-
-CMD ["node", "dist/index.js"]
+ENTRYPOINT ["/entrypoint.sh"]
