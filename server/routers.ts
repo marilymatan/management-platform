@@ -65,6 +65,47 @@ export function verifyOAuthState(state: string): Record<string, unknown> {
   return payload;
 }
 
+function extractLLMContent(response: any): string {
+  const choice = response.choices?.[0];
+  if (!choice?.message) {
+    throw new Error("Empty response from AI");
+  }
+
+  const { content } = choice.message;
+  let text: string;
+  if (typeof content === "string") {
+    text = content;
+  } else if (Array.isArray(content)) {
+    text = content
+      .filter((p: any) => p.type === "text")
+      .map((p: any) => p.text)
+      .join("");
+  } else {
+    throw new Error("Empty response from AI");
+  }
+
+  if (!text.trim()) {
+    throw new Error("Empty response from AI");
+  }
+
+  if (choice.finish_reason === "length") {
+    throw new Error(
+      "תגובת ה-AI נקטעה באמצע כי היא ארוכה מדי. נסה להעלות פחות קבצים בבת אחת."
+    );
+  }
+
+  return text;
+}
+
+function parseLLMJson<T = any>(raw: string): T {
+  let cleaned = raw.trim();
+  const fenceMatch = cleaned.match(/^```(?:json)?\s*\n?([\s\S]*?)\n?\s*```$/);
+  if (fenceMatch) {
+    cleaned = fenceMatch[1].trim();
+  }
+  return JSON.parse(cleaned);
+}
+
 const ANALYSIS_SYSTEM_PROMPT = `אתה מומחה לניתוח פוליסות ביטוח בעברית. תפקידך לנתח את הטקסט של פוליסת הביטוח ולחלץ ממנו מידע מובנה.
 
 עליך להחזיר JSON בפורמט הבא בלבד, ללא טקסט נוסף:
@@ -440,6 +481,7 @@ export const appRouter = router({
                 content: userContent,
               },
             ],
+            maxTokens: 65536,
             response_format: {
               type: "json_schema",
               json_schema: {
@@ -512,12 +554,16 @@ export const appRouter = router({
             },
           });
 
-          const content = response.choices[0]?.message?.content;
-          if (!content || typeof content !== "string") {
-            throw new Error("Empty response from AI");
+          const content = extractLLMContent(response);
+          let analysisResult: PolicyAnalysis;
+          try {
+            analysisResult = parseLLMJson<PolicyAnalysis>(content);
+          } catch (parseError: any) {
+            console.error("[Analysis] JSON parse failed:", parseError.message, "| Content length:", content.length, "| finish_reason:", response.choices?.[0]?.finish_reason);
+            throw new Error(
+              "שגיאה בעיבוד תגובת ה-AI. התגובה לא התקבלה בפורמט תקין. נסה להעלות פחות קבצים בבת אחת."
+            );
           }
-
-          const analysisResult: PolicyAnalysis = JSON.parse(content);
 
           // Track token usage for billing
           const usage = response.usage;
@@ -575,10 +621,11 @@ export const appRouter = router({
                 },
               });
 
-              const insightsContent = insightsResponse.choices[0]?.message?.content;
-              if (insightsContent && typeof insightsContent === "string") {
-                const parsed = JSON.parse(insightsContent);
+              try {
+                const insightsContent = extractLLMContent(insightsResponse);
+                const parsed = parseLLMJson(insightsContent);
                 analysisResult.personalizedInsights = parsed.personalizedInsights;
+              } catch {
               }
 
               const insightsUsage = insightsResponse.usage;
