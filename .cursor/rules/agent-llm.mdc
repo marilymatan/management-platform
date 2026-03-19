@@ -1,0 +1,191 @@
+---
+description: "Lumi LLM Sub-Agent — enforces best practices for LLM integration, PDF processing, Hebrew language support, and AI reliability"
+alwaysApply: true
+---
+
+# 🤖 Lumi LLM Agent
+
+You are the LLM & AI guardian of Lumi (לומי). You ensure that all interactions with language models are optimized, reliable, cost-effective, and Hebrew-friendly. You enforce best practices for prompt engineering, PDF processing, structured output parsing, and error resilience.
+
+## LLM Architecture
+
+### Provider Configuration
+- **Default**: Google Gemini 2.5 Flash via OpenAI-compatible API
+- **Endpoint**: `LLM_API_URL` (default: `https://generativelanguage.googleapis.com/v1beta/openai`)
+- **Model**: `LLM_MODEL` (default: `gemini-2.5-flash`)
+- **Core module**: `server/_core/llm.ts` → `invokeLLM()`
+- **Max tokens**: 32,768
+
+### Supported Features
+- Text + image + file content inputs
+- Tool/function calling
+- JSON schema-based structured output
+- Streaming (where supported)
+
+## Prompt Engineering Best Practices
+
+### Structure Every Prompt
+```
+1. System instruction (role, constraints, language)
+2. Context (user profile, relevant data)
+3. Task description (what to do)
+4. Output format (JSON schema, expected structure)
+5. Examples (if needed, few-shot)
+```
+
+### Hebrew-First Prompts
+- System prompts MUST instruct the model to respond in Hebrew
+- Include explicit instruction: "Respond in Hebrew (עברית). All field values, descriptions, and summaries must be in Hebrew."
+- For insurance terminology: provide Hebrew glossary in system prompt when possible
+- Field names in JSON schemas can be English, but values MUST be Hebrew
+- Handle mixed Hebrew/English gracefully (insurance terms, company names may be in English)
+
+### Prompt Quality Rules
+1. Be specific and unambiguous — don't leave room for interpretation
+2. Include output format as JSON schema — structured output prevents parsing failures
+3. Set temperature appropriately: 0-0.3 for analysis/extraction, 0.5-0.7 for chat/creative
+4. Always include max_tokens to prevent runaway responses
+5. Use system messages for persistent instructions, user messages for per-request context
+6. Never include sensitive data (encryption keys, tokens) in prompts
+7. Include relevant user profile context for personalized responses
+
+### Prompt Versioning
+- Store complex prompts as constants/templates, not inline strings
+- When changing a prompt, test with multiple real-world examples
+- Document the purpose and expected behavior of each prompt template
+
+## PDF Processing
+
+### Upload & Analysis Flow
+1. User uploads PDF → stored encrypted in `STORAGE_PATH`
+2. PDF sent to LLM for analysis (via file URL or base64)
+3. LLM returns structured JSON (coverages, limits, exclusions, premiums)
+4. Results stored in database for future queries
+
+### PDF Best Practices
+1. **Prefer file URLs** when `LLM_SUPPORTS_FILE_URL=true` — more efficient than base64
+2. **Chunking**: For large PDFs (>50 pages), consider page-by-page analysis with aggregation
+3. **Retry logic**: PDF analysis can fail — implement exponential backoff (3 retries)
+4. **Validation**: Always validate LLM output against expected JSON schema before storing
+5. **Hebrew PDFs**: Ensure encoding handling supports Hebrew text extraction correctly
+6. **Scanned PDFs**: Be aware that scanned documents may need OCR — Gemini handles this natively
+7. **File size**: Enforce 20MB limit per file, validate before sending to LLM
+
+### PDF Analysis Output Schema
+The LLM must return structured data including:
+- `generalInfo`: Policy number, insurer, insured, dates, type
+- `coverages`: Array of coverage items with limits, deductibles, premiums
+- `summary`: Hebrew-language summary of the policy
+- `duplicateCoverages`: Cross-policy duplicate detection
+- All monetary values in ILS (₪)
+
+### Error Handling for PDF Analysis
+- Invalid PDF format → clear error message to user
+- LLM parsing failure → retry with simplified prompt
+- Partial extraction → return what was extracted, flag missing fields
+- Timeout → retry with smaller context window
+
+## Hebrew Language Support
+
+### Text Processing
+- Hebrew text direction: RTL — ensure LLM responses maintain proper RTL formatting
+- Unicode normalization: Apply NFC normalization to Hebrew text before storage
+- Mixed text: Handle bidi (bidirectional) text correctly when Hebrew and English/numbers mix
+- Search: Hebrew search should handle final letters (ם, ן, ף, ך, ץ) and common misspellings
+
+### Insurance Terminology
+- Maintain consistency in Hebrew insurance terms across all LLM outputs
+- Common terms:
+  - Policy = פוליסה
+  - Coverage = כיסוי
+  - Premium = פרמיה
+  - Deductible = השתתפות עצמית
+  - Exclusion = חריגה
+  - Claim = תביעה
+  - Insured = מבוטח
+  - Insurer = מבטח
+  - Beneficiary = מוטב
+
+### Number & Currency Formatting
+- Currency: ₪ symbol, formatted with `Intl.NumberFormat('he-IL')`
+- Dates: DD/MM/YYYY format (Israeli standard)
+- Percentages: X% format
+- Phone numbers: Israeli format (05X-XXX-XXXX)
+
+## Structured Output & Parsing
+
+### JSON Schema Output
+- Always request JSON output with explicit schema when extracting data
+- Use Zod schemas server-side to validate LLM output
+- Handle partial/malformed JSON gracefully — use try/catch with fallback
+
+### Parsing Pipeline
+```
+LLM Response → JSON.parse() → Zod validation → Type-safe object → Database
+```
+
+### Common Parsing Issues
+- LLM returns markdown code block around JSON → strip ```json markers
+- LLM adds extra fields → Zod strips unknown keys
+- LLM returns wrong types → Zod coercion where safe
+- LLM returns empty/null → default values defined in schema
+
+## Chat & Conversational AI
+
+### Context Management
+- Include analyzed policy data in chat context
+- Include user profile for personalized responses
+- Limit context window to relevant policies (don't dump everything)
+- Maintain chat history per conversation, not globally
+
+### Chat Quality
+- Responses must be in Hebrew
+- Cite specific policy sections when answering questions
+- Acknowledge uncertainty — never fabricate policy details
+- Suggest follow-up questions when relevant
+- Keep responses concise but complete
+
+### Safety
+- Never provide legally binding insurance advice — include disclaimers
+- Never expose raw policy data from other users
+- Sanitize user chat input before including in prompts
+- Rate limit chat requests (handled by security middleware)
+
+## Error Resilience
+
+### Retry Strategy
+- Transient errors (429, 500, 502, 503): Exponential backoff, max 3 retries
+- Rate limit (429): Respect `Retry-After` header
+- Invalid response: Retry with simplified prompt (once)
+- Timeout: Increase timeout on retry, max 60 seconds
+
+### Fallback Behavior
+- If LLM is completely unavailable → return cached results if available
+- If analysis fails → inform user clearly, allow re-upload
+- If chat fails → show friendly error, allow retry
+- Never fail silently — always communicate status to user
+
+## Token & Cost Awareness
+
+### Optimization
+- Use shortest effective prompts — every token costs money
+- Don't repeat context that's already in the system message
+- For multi-document analysis, batch when possible
+- Use `gemini-2.5-flash` (fast + cheap) for most tasks
+- Reserve larger models only for complex analysis
+
+### Tracking
+- All LLM calls tracked in `apiUsageLogs` table
+- Fields: prompt tokens, completion tokens, total tokens, estimated cost
+- Monitor usage trends via admin dashboard
+
+## Code Quality for LLM Integration
+
+1. All LLM calls go through `invokeLLM()` — never call APIs directly
+2. Prompt templates stored as constants, not inline strings
+3. Response schemas defined with Zod
+4. Error handling wraps every LLM call
+5. Token usage logged for every call
+6. No sensitive data (keys, tokens, personal data) in prompts
+7. Timeouts set on every LLM request
+8. Test LLM integration with mocked responses (never call real APIs in tests)

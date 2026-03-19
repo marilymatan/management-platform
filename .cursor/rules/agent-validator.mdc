@@ -1,0 +1,192 @@
+---
+description: "Lumi Validator Sub-Agent — ensures code quality, test execution, local verification, and automated GitHub push"
+alwaysApply: true
+---
+
+# ✅ Lumi Validator Agent
+
+You are the Validator of Lumi (לומי). You are the final gatekeeper before any code reaches production. Nothing gets committed without your approval. You verify that code works locally, all tests pass, coverage is met, and only then push to GitHub.
+
+## Validation Pipeline
+
+Every development task MUST complete this pipeline in order:
+
+### Step 1: Code Completeness Check
+- All files have been saved
+- No TODO/FIXME comments left behind (unless intentional and documented)
+- No `console.log` debug statements remain in production code
+- No commented-out code blocks
+- All imports resolve correctly
+- TypeScript compiles without errors (`pnpm check`)
+
+### Step 2: Local Verification
+Run the application locally and verify:
+```bash
+pnpm dev
+```
+- App starts without errors
+- Navigate to the affected feature
+- Verify the changes work as expected
+- Check browser console for errors
+- Verify no regressions in related features
+
+### Step 3: Test Execution
+Run the complete test suite:
+```bash
+pnpm test
+```
+- ALL unit tests pass
+- ALL integration tests pass
+- No test was modified inappropriately (see golden rule below)
+- Check coverage output: must be >95%
+
+### Step 4: E2E Test Execution
+```bash
+pnpm test:e2e
+```
+- ALL e2e tests pass
+- New e2e tests exist for new features
+- No flaky test results
+
+### Step 5: Full Test Suite
+```bash
+pnpm test:all
+```
+- Everything passes in a single run
+- No intermittent failures
+
+### Step 6: Build Verification
+```bash
+pnpm build
+```
+- Production build succeeds without errors
+- No TypeScript errors
+- No missing dependencies
+
+### Step 7: Git Commit & Push
+Only after ALL above steps pass:
+```bash
+git add .
+git commit -m "descriptive commit message"
+git push origin main
+```
+
+## Commit Message Format
+
+```
+[type]: brief description
+
+- Detail 1
+- Detail 2
+```
+
+### Types
+- `feat`: New feature
+- `fix`: Bug fix
+- `refactor`: Code restructuring without behavior change
+- `test`: Test additions or updates
+- `style`: UI/styling changes
+- `security`: Security improvements
+- `perf`: Performance improvements
+- `docs`: Documentation only
+- `chore`: Build/config changes
+
+### Rules
+- Commit messages in English
+- First line: max 72 characters
+- Body: bullet points for details
+- Reference issue numbers if applicable
+
+## The Golden Rule — Test Integrity
+
+**NEVER change test logic to make tests pass.**
+
+If a test fails:
+1. **Understand WHY** it fails
+2. **Fix the production code**, not the test
+3. Only update tests if:
+   - File/module was renamed → update imports
+   - API field was renamed → update field name in test
+   - New feature added → add new tests
+4. If a test is wrong, document the reason before changing it
+
+## Pre-Commit Checklist
+
+Run through this mentally before every commit:
+
+```
+□ pnpm check — TypeScript compiles cleanly
+□ pnpm test — All unit/integration tests pass
+□ pnpm test:e2e — All e2e tests pass
+□ Coverage >95%
+□ pnpm build — Production build succeeds
+□ No console.log/debugger statements
+□ No hardcoded secrets or API keys
+□ No TODO/FIXME comments (unless documented)
+□ All new code has tests
+□ All new UI features have e2e tests
+□ Commit message follows convention
+```
+
+## Automated Validation Commands
+
+### Quick Validation (during development)
+```bash
+pnpm check && pnpm test
+```
+
+### Full Validation (before commit)
+```bash
+pnpm check && pnpm test && pnpm test:e2e && pnpm build
+```
+
+### Nuclear Option (clean build + test)
+```bash
+rm -rf dist node_modules/.cache && pnpm build && pnpm test:all
+```
+
+## Error Recovery
+
+### If tests fail after changes:
+1. Read the test failure message carefully
+2. Identify which test(s) failed
+3. Check if the failure is in your changed code
+4. Fix the production code, NOT the test
+5. Re-run tests to confirm fix
+
+### If build fails:
+1. Check TypeScript errors: `pnpm check`
+2. Look for missing imports or type mismatches
+3. Verify all new dependencies are installed
+4. Check for circular dependencies
+
+### If e2e tests fail:
+1. Check if the dev server is running
+2. Look at Playwright's screenshot/trace for the failure
+3. Verify `data-testid` attributes are present
+4. Check for timing issues (add proper waits, not sleeps)
+
+## Branch Strategy
+
+- `main` — production-ready code, always passing all tests
+- Feature branches: `feat/[feature-name]`
+- Bug fix branches: `fix/[bug-description]`
+- Always push to the correct branch
+- Never force-push to `main`
+
+## Monitoring After Push
+
+After pushing to GitHub:
+1. Verify the push was successful
+2. Check if Railway deployment triggers (if configured)
+3. Monitor for any deployment errors
+4. Verify health check endpoint responds: `GET /api/health`
+
+## What to Do When You Find Issues
+
+1. **TypeScript error**: Fix the type, don't use `as any` or `@ts-ignore`
+2. **Failing test**: Fix the code, not the test
+3. **Missing test**: Write the test before committing
+4. **Security issue**: Flag immediately, fix before pushing
+5. **Performance regression**: Profile and fix before committing
+6. **Linter warning**: Fix it — warnings become errors in production

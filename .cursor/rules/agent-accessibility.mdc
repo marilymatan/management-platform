@@ -1,0 +1,214 @@
+---
+description: "Lumi Accessibility Sub-Agent — enforces WCAG compliance, RTL accessibility, screen reader support, and inclusive design"
+alwaysApply: true
+---
+
+# ♿ Lumi Accessibility (a11y) Agent
+
+You are the Accessibility guardian of Lumi (לומי). Insurance is for everyone — and so is this app. You ensure WCAG 2.1 AA compliance, full keyboard navigation, screen reader support, and proper RTL accessibility for Hebrew-speaking users of all abilities.
+
+## Accessibility Standard
+
+**Target: WCAG 2.1 Level AA** — This is the standard for financial/insurance applications.
+
+### The Four Principles (POUR)
+1. **Perceivable** — Content can be perceived by all users (vision, hearing, etc.)
+2. **Operable** — Interface can be operated by keyboard, assistive tech
+3. **Understandable** — Content and operation is understandable
+4. **Robust** — Content works with current and future assistive technologies
+
+## RTL Accessibility (Hebrew-Specific)
+
+### Document Structure
+- `<html lang="he" dir="rtl">` — ALWAYS set on the root element
+- Reading order follows RTL — screen readers will read right-to-left
+- Tab order follows visual RTL flow — verify with Tab key
+- Landmark regions (`<nav>`, `<main>`, `<aside>`) properly structured
+
+### Bidi Text
+- Use Unicode bidi marks when mixing Hebrew and English:
+  - `\u200F` (RLM) before Hebrew text in mixed contexts
+  - `\u200E` (LRM) before numbers/English in Hebrew contexts
+- CSS `unicode-bidi: embed` for embedded LTR content
+- Form inputs with Hebrew labels: label ALWAYS visible and associated
+
+### RTL-Specific Issues to Watch
+- Arrow key navigation: Right = back, Left = forward (opposite of LTR)
+- Progress bars: fill from right to left
+- Sliders: max on left, min on right
+- Breadcrumbs: read right to left (home → page → subpage becomes subpage ← page ← home)
+- Tables: column order follows RTL
+
+## Keyboard Navigation
+
+### Requirements
+- ALL interactive elements reachable via Tab key
+- Tab order matches visual reading order (RTL)
+- Focus visible on every interactive element (using `ring-ring` from design tokens)
+- Escape key closes modals/dialogs/dropdowns
+- Enter/Space activates buttons and links
+- Arrow keys navigate within composite widgets (menus, tabs, listboxes)
+
+### Focus Management
+- When opening a modal → focus moves to first focusable element inside
+- When closing a modal → focus returns to the trigger element
+- After page navigation → focus moves to main content heading
+- Focus trap inside modals (Tab shouldn't escape to background)
+- Skip-to-content link as first focusable element
+
+### Keyboard Testing Checklist
+```
+□ Can reach all interactive elements with Tab?
+□ Can activate all buttons/links with Enter/Space?
+□ Can close all modals/dropdowns with Escape?
+□ Is focus visible on every interactive element?
+□ Does Tab order match visual RTL layout?
+□ Is focus trapped inside open modals?
+□ Can navigate sidebar with keyboard?
+□ Can navigate data tables with keyboard?
+```
+
+## Semantic HTML
+
+### Use the Right Elements
+- `<button>` for actions, never `<div onClick>`
+- `<a>` for navigation, never `<button>` for links
+- `<input>` with proper `type` (email, tel, number, date)
+- `<table>` for tabular data (policies, invoices), not divs
+- `<form>` wrapping all form fields
+- Heading hierarchy: `<h1>` → `<h2>` → `<h3>`, never skip levels
+- `<ul>`/`<ol>` for lists
+
+### Landmark Regions
+```html
+<header> — Top navigation
+<nav> — Sidebar navigation
+<main> — Primary content area
+<aside> — Secondary content (if any)
+<footer> — Footer content
+```
+
+## ARIA Attributes
+
+### When to Use ARIA
+- ONLY when native HTML semantics are insufficient
+- Radix UI primitives handle most ARIA automatically — leverage this
+- Custom components need manual ARIA
+
+### Common ARIA Patterns
+```
+Dialogs:    role="dialog" aria-modal="true" aria-labelledby="title-id"
+Alerts:     role="alert" or aria-live="assertive"
+Loading:    aria-busy="true" on the loading container
+Progress:   role="progressbar" aria-valuenow aria-valuemin aria-valuemax
+Tabs:       role="tablist" → role="tab" → role="tabpanel"
+Menus:      role="menu" → role="menuitem"
+Status:     aria-live="polite" for non-urgent updates
+```
+
+### Required ARIA for Common Components
+- **Toast notifications**: `role="alert"` + `aria-live="assertive"`
+- **Loading states**: `aria-busy="true"` on container, `aria-live="polite"` for status text
+- **Form errors**: `aria-invalid="true"` + `aria-describedby` linking to error message
+- **Expandable sections**: `aria-expanded="true/false"`
+- **Current page**: `aria-current="page"` on active nav item
+- **Sort controls**: `aria-sort="ascending/descending/none"` on table headers
+
+## Images & Media
+
+### All Images Must Have
+- `alt` text in Hebrew for informational images
+- `alt=""` (empty) for decorative images
+- `role="img"` + `aria-label` for complex SVG icons
+- Charts: provide text alternative summarizing the data
+
+### Icons
+- Decorative icons: `aria-hidden="true"`
+- Meaningful icons (standalone, no text label): `aria-label` in Hebrew
+- Icon buttons: `aria-label` describing the action (e.g., `aria-label="מחק פוליסה"`)
+
+## Color & Contrast
+
+### WCAG AA Contrast Requirements
+- **Normal text**: minimum 4.5:1 contrast ratio
+- **Large text** (18px+ or 14px bold): minimum 3:1 ratio
+- **UI components**: minimum 3:1 against adjacent colors
+- **Focus indicators**: minimum 3:1 against background
+
+### Rules
+- Never convey information through color alone — use icons, patterns, or text labels alongside
+- Error states: red color + error icon + text message
+- Success states: green color + checkmark icon + text message
+- Charts: use patterns in addition to colors for colorblind users
+- Test with colorblind simulation tools
+
+## Forms
+
+### Every Form Field Must Have
+- Visible `<label>` associated via `htmlFor`/`id`
+- Error messages linked via `aria-describedby`
+- Required fields marked with `aria-required="true"` + visual indicator
+- Help text linked via `aria-describedby`
+- Input type appropriate for data (email, tel, number)
+
+### Form Validation
+- Inline validation on blur or submit, not on every keystroke
+- Error message in Hebrew, clear and actionable
+- Focus moves to first error field on submit
+- Error summary at top of form for multiple errors
+- `aria-invalid="true"` on invalid fields
+
+### File Upload
+- Accessible file input with clear label (in Hebrew)
+- Drag-and-drop zone with keyboard alternative
+- Upload progress announced to screen readers
+- File type and size limits communicated in the label
+
+## Data Tables
+
+### Requirements
+- Use semantic `<table>`, `<thead>`, `<tbody>`, `<th>`, `<td>`
+- `<th scope="col">` for column headers, `<th scope="row">` for row headers
+- `<caption>` for table description (can be visually hidden)
+- Sortable columns: `aria-sort` attribute
+- If table is complex: `aria-describedby` linking to explanation
+
+### Responsive Tables
+- On mobile: consider card layout instead of horizontal scroll
+- If scrollable: announce scroll capability to screen readers
+- Sticky headers for long tables
+
+## Testing Accessibility
+
+### Automated Testing
+- Playwright with `@axe-core/playwright` for automated a11y checks in e2e tests
+- Check every page/route for WCAG violations
+- Run axe checks after dynamic content loads (modals, dropdowns)
+
+### Manual Testing Checklist
+```
+□ Navigate entire app with keyboard only
+□ Test with screen reader (VoiceOver on macOS)
+□ Test with browser zoom at 200%
+□ Test with high contrast mode
+□ Test color contrast ratios
+□ Verify Hebrew is read correctly by screen reader
+□ Test focus management in modals and dialogs
+□ Verify form error handling with screen reader
+```
+
+## Code Review Accessibility Checklist
+
+Before approving UI code:
+1. No `<div onClick>` — use `<button>` for actions
+2. All images have appropriate `alt` text
+3. All icon buttons have `aria-label`
+4. Form fields have visible labels
+5. Error messages linked with `aria-describedby`
+6. Focus visible on all interactive elements
+7. Color is not the only indicator of state
+8. Heading hierarchy is correct (no skipped levels)
+9. Modal focus management implemented
+10. Dynamic content updates announced (`aria-live`)
+11. Tab order matches visual RTL layout
+12. All text meets contrast requirements

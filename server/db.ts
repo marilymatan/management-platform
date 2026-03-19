@@ -1,6 +1,6 @@
-import { eq, desc, sql } from "drizzle-orm";
+import { eq, desc, sql, and } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
-import { InsertUser, users, analyses, chatMessages, apiUsageLogs, userProfiles, type InsertAnalysis, type InsertChatMessage, type InsertApiUsageLog, type InsertUserProfile } from "../drizzle/schema";
+import { InsertUser, users, analyses, chatMessages, apiUsageLogs, userProfiles, gmailConnections, smartInvoices, auditLogs, type InsertAnalysis, type InsertChatMessage, type InsertApiUsageLog, type InsertUserProfile } from "../drizzle/schema";
 import { ENV } from './_core/env';
 import type { PolicyAnalysis } from "@shared/insurance";
 import { encryptField, decryptField, encryptJson, decryptJson } from "./encryption";
@@ -357,4 +357,392 @@ export async function upsertUserProfile(userId: number, data: Omit<InsertUserPro
     await db.insert(userProfiles).values({ ...data, userId });
   }
   return getUserProfile(userId);
+}
+
+export async function getAdminDashboardStats() {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const [userCount] = await db.select({ count: sql<number>`COUNT(*)` }).from(users);
+  const [analysisCount] = await db.select({ count: sql<number>`COUNT(*)` }).from(analyses);
+  const [chatCount] = await db.select({ count: sql<number>`COUNT(*)` }).from(chatMessages);
+  const [gmailCount] = await db.select({ count: sql<number>`COUNT(*)` }).from(gmailConnections);
+  const [invoiceCount] = await db.select({ count: sql<number>`COUNT(*)` }).from(smartInvoices);
+
+  const [usageTotals] = await db
+    .select({
+      totalTokens: sql<number>`COALESCE(SUM(${apiUsageLogs.totalTokens}), 0)`,
+      totalCost: sql<string>`COALESCE(SUM(${apiUsageLogs.costUsd}), '0')`,
+      totalCalls: sql<number>`COUNT(*)`,
+      totalPromptTokens: sql<number>`COALESCE(SUM(${apiUsageLogs.promptTokens}), 0)`,
+      totalCompletionTokens: sql<number>`COALESCE(SUM(${apiUsageLogs.completionTokens}), 0)`,
+    })
+    .from(apiUsageLogs);
+
+  const startOfMonth = new Date();
+  startOfMonth.setDate(1);
+  startOfMonth.setHours(0, 0, 0, 0);
+
+  const [activeThisMonth] = await db
+    .select({ count: sql<number>`COUNT(DISTINCT ${apiUsageLogs.userId})` })
+    .from(apiUsageLogs)
+    .where(sql`${apiUsageLogs.createdAt} >= ${startOfMonth}`);
+
+  const [monthCost] = await db
+    .select({ cost: sql<string>`COALESCE(SUM(${apiUsageLogs.costUsd}), '0')` })
+    .from(apiUsageLogs)
+    .where(sql`${apiUsageLogs.createdAt} >= ${startOfMonth}`);
+
+  const now = new Date();
+  const dayOfMonth = now.getDate();
+  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  const monthCostValue = parseFloat(monthCost?.cost ?? "0");
+  const projectedMonthlyCost = dayOfMonth > 0 ? (monthCostValue / dayOfMonth) * daysInMonth : 0;
+
+  const dailyUsageRaw = await db
+    .select({
+      dateBucket: sql<string>`DATE(${apiUsageLogs.createdAt})`,
+      calls: sql<number>`COUNT(*)`,
+      tokens: sql<number>`SUM(${apiUsageLogs.totalTokens})`,
+      cost: sql<string>`SUM(${apiUsageLogs.costUsd})`,
+    })
+    .from(apiUsageLogs)
+    .where(sql`${apiUsageLogs.createdAt} >= NOW() - INTERVAL '30 days'`)
+    .groupBy(sql`DATE(${apiUsageLogs.createdAt})`)
+    .orderBy(sql`DATE(${apiUsageLogs.createdAt})`);
+
+  const dailyUsage = dailyUsageRaw.map(r => ({
+    date: r.dateBucket,
+    calls: Number(r.calls),
+    tokens: Number(r.tokens),
+    cost: parseFloat(r.cost ?? "0"),
+  }));
+
+  const [completedCount] = await db
+    .select({ count: sql<number>`COUNT(*)` })
+    .from(analyses)
+    .where(sql`${analyses.status} = 'completed'`);
+  const [errorCount] = await db
+    .select({ count: sql<number>`COUNT(*)` })
+    .from(analyses)
+    .where(sql`${analyses.status} = 'error'`);
+
+  const totalAnalyses = Number(analysisCount?.count ?? 0);
+  const completed = Number(completedCount?.count ?? 0);
+  const errors = Number(errorCount?.count ?? 0);
+  const successRate = totalAnalyses > 0 ? Math.round((completed / totalAnalyses) * 100) : 100;
+
+  return {
+    totalUsers: Number(userCount?.count ?? 0),
+    totalAnalyses,
+    totalChats: Number(chatCount?.count ?? 0),
+    totalGmailConnections: Number(gmailCount?.count ?? 0),
+    totalInvoices: Number(invoiceCount?.count ?? 0),
+    totalTokens: Number(usageTotals?.totalTokens ?? 0),
+    totalPromptTokens: Number(usageTotals?.totalPromptTokens ?? 0),
+    totalCompletionTokens: Number(usageTotals?.totalCompletionTokens ?? 0),
+    totalCost: parseFloat(usageTotals?.totalCost ?? "0"),
+    totalCalls: Number(usageTotals?.totalCalls ?? 0),
+    activeUsersThisMonth: Number(activeThisMonth?.count ?? 0),
+    currentMonthCost: monthCostValue,
+    projectedMonthlyCost,
+    successRate,
+    completedAnalyses: completed,
+    errorAnalyses: errors,
+    dailyUsage,
+  };
+}
+
+export async function getUserDetailedSummary(userId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const [user] = await db.select().from(users).where(eq(users.id, userId)).limit(1);
+  if (!user) throw new Error("User not found");
+
+  const userAnalyses = await db
+    .select({
+      sessionId: analyses.sessionId,
+      status: analyses.status,
+      insuranceCategory: analyses.insuranceCategory,
+      createdAt: analyses.createdAt,
+    })
+    .from(analyses)
+    .where(eq(analyses.userId, userId))
+    .orderBy(desc(analyses.createdAt));
+
+  const usageRows = await db
+    .select()
+    .from(apiUsageLogs)
+    .where(eq(apiUsageLogs.userId, userId))
+    .orderBy(desc(apiUsageLogs.createdAt));
+
+  const totalTokens = usageRows.reduce((s, r) => s + r.totalTokens, 0);
+  const totalCost = usageRows.reduce((s, r) => s + parseFloat(r.costUsd as string), 0);
+  const analyzeCount = usageRows.filter(r => r.action === "analyze").length;
+  const chatCount = usageRows.filter(r => r.action === "chat").length;
+
+  const gmailConns = await db
+    .select({
+      id: gmailConnections.id,
+      email: gmailConnections.email,
+      lastSyncedAt: gmailConnections.lastSyncedAt,
+      lastSyncCount: gmailConnections.lastSyncCount,
+    })
+    .from(gmailConnections)
+    .where(eq(gmailConnections.userId, userId));
+
+  const [invoiceStats] = await db
+    .select({ count: sql<number>`COUNT(*)`, total: sql<string>`COALESCE(SUM(${smartInvoices.amount}::numeric), 0)` })
+    .from(smartInvoices)
+    .where(eq(smartInvoices.userId, userId));
+
+  const recentAudit = await db
+    .select()
+    .from(auditLogs)
+    .where(eq(auditLogs.userId, userId))
+    .orderBy(desc(auditLogs.createdAt))
+    .limit(20);
+
+  return {
+    user: {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      createdAt: user.createdAt,
+      lastSignedIn: user.lastSignedIn,
+    },
+    analyses: userAnalyses,
+    usage: {
+      totalTokens,
+      totalCost,
+      analyzeCount,
+      chatCount,
+      totalCalls: usageRows.length,
+    },
+    gmail: gmailConns,
+    invoices: {
+      count: Number(invoiceStats?.count ?? 0),
+      totalAmount: parseFloat(invoiceStats?.total ?? "0"),
+    },
+    recentAudit,
+  };
+}
+
+export async function getLLMUsageBreakdown() {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const costByUser = await db
+    .select({
+      userId: apiUsageLogs.userId,
+      userName: users.name,
+      userEmail: users.email,
+      totalCost: sql<string>`SUM(${apiUsageLogs.costUsd})`,
+      totalTokens: sql<number>`SUM(${apiUsageLogs.totalTokens})`,
+      callCount: sql<number>`COUNT(*)`,
+    })
+    .from(apiUsageLogs)
+    .leftJoin(users, eq(apiUsageLogs.userId, users.id))
+    .groupBy(apiUsageLogs.userId, users.name, users.email)
+    .orderBy(sql`SUM(${apiUsageLogs.costUsd}) DESC`)
+    .limit(15);
+
+  const costByAction = await db
+    .select({
+      action: apiUsageLogs.action,
+      totalCost: sql<string>`SUM(${apiUsageLogs.costUsd})`,
+      totalTokens: sql<number>`SUM(${apiUsageLogs.totalTokens})`,
+      promptTokens: sql<number>`SUM(${apiUsageLogs.promptTokens})`,
+      completionTokens: sql<number>`SUM(${apiUsageLogs.completionTokens})`,
+      callCount: sql<number>`COUNT(*)`,
+    })
+    .from(apiUsageLogs)
+    .groupBy(apiUsageLogs.action);
+
+  const dailyCost = await db
+    .select({
+      date: sql<string>`DATE(${apiUsageLogs.createdAt})`,
+      cost: sql<string>`SUM(${apiUsageLogs.costUsd})`,
+      tokens: sql<number>`SUM(${apiUsageLogs.totalTokens})`,
+      calls: sql<number>`COUNT(*)`,
+    })
+    .from(apiUsageLogs)
+    .where(sql`${apiUsageLogs.createdAt} >= NOW() - INTERVAL '30 days'`)
+    .groupBy(sql`DATE(${apiUsageLogs.createdAt})`)
+    .orderBy(sql`DATE(${apiUsageLogs.createdAt})`);
+
+  const weeklyCost = await db
+    .select({
+      week: sql<string>`TO_CHAR(DATE_TRUNC('week', ${apiUsageLogs.createdAt}), 'YYYY-MM-DD')`,
+      cost: sql<string>`SUM(${apiUsageLogs.costUsd})`,
+      tokens: sql<number>`SUM(${apiUsageLogs.totalTokens})`,
+      calls: sql<number>`COUNT(*)`,
+    })
+    .from(apiUsageLogs)
+    .where(sql`${apiUsageLogs.createdAt} >= NOW() - INTERVAL '12 weeks'`)
+    .groupBy(sql`DATE_TRUNC('week', ${apiUsageLogs.createdAt})`)
+    .orderBy(sql`DATE_TRUNC('week', ${apiUsageLogs.createdAt})`);
+
+  const [analyzeTotals] = await db
+    .select({
+      count: sql<number>`COUNT(*)`,
+      cost: sql<string>`COALESCE(SUM(${apiUsageLogs.costUsd}), '0')`,
+    })
+    .from(apiUsageLogs)
+    .where(sql`${apiUsageLogs.action} = 'analyze'`);
+
+  const [chatTotals] = await db
+    .select({
+      count: sql<number>`COUNT(*)`,
+      cost: sql<string>`COALESCE(SUM(${apiUsageLogs.costUsd}), '0')`,
+    })
+    .from(apiUsageLogs)
+    .where(sql`${apiUsageLogs.action} = 'chat'`);
+
+  const avgCostPerAnalysis = Number(analyzeTotals?.count ?? 0) > 0
+    ? parseFloat(analyzeTotals?.cost ?? "0") / Number(analyzeTotals.count)
+    : 0;
+
+  const avgCostPerChat = Number(chatTotals?.count ?? 0) > 0
+    ? parseFloat(chatTotals?.cost ?? "0") / Number(chatTotals.count)
+    : 0;
+
+  return {
+    costByUser: costByUser.map(r => ({
+      userId: r.userId,
+      userName: r.userName,
+      userEmail: r.userEmail,
+      totalCost: parseFloat(r.totalCost ?? "0"),
+      totalTokens: Number(r.totalTokens ?? 0),
+      callCount: Number(r.callCount ?? 0),
+    })),
+    costByAction: costByAction.map(r => ({
+      action: r.action,
+      totalCost: parseFloat(r.totalCost ?? "0"),
+      totalTokens: Number(r.totalTokens ?? 0),
+      promptTokens: Number(r.promptTokens ?? 0),
+      completionTokens: Number(r.completionTokens ?? 0),
+      callCount: Number(r.callCount ?? 0),
+    })),
+    dailyCost: dailyCost.map(r => ({
+      date: r.date,
+      cost: parseFloat(r.cost ?? "0"),
+      tokens: Number(r.tokens ?? 0),
+      calls: Number(r.calls ?? 0),
+    })),
+    weeklyCost: weeklyCost.map(r => ({
+      week: r.week,
+      cost: parseFloat(r.cost ?? "0"),
+      tokens: Number(r.tokens ?? 0),
+      calls: Number(r.calls ?? 0),
+    })),
+    avgCostPerAnalysis,
+    avgCostPerChat,
+  };
+}
+
+export async function getSystemHealth() {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const statusDist = await db
+    .select({
+      status: analyses.status,
+      count: sql<number>`COUNT(*)`,
+    })
+    .from(analyses)
+    .groupBy(analyses.status);
+
+  const gmailStats = await db
+    .select({
+      totalConnections: sql<number>`COUNT(*)`,
+      recentSyncs: sql<number>`COUNT(*) FILTER (WHERE ${gmailConnections.lastSyncedAt} >= NOW() - INTERVAL '24 hours')`,
+    })
+    .from(gmailConnections);
+
+  const avgDuration = await db
+    .select({
+      avgMs: sql<string>`COALESCE(AVG(EXTRACT(EPOCH FROM (${analyses.updatedAt} - ${analyses.createdAt})) * 1000), 0)`,
+    })
+    .from(analyses)
+    .where(sql`${analyses.status} = 'completed'`);
+
+  const recentErrors = await db
+    .select({
+      sessionId: analyses.sessionId,
+      userId: analyses.userId,
+      createdAt: analyses.createdAt,
+      updatedAt: analyses.updatedAt,
+    })
+    .from(analyses)
+    .where(sql`${analyses.status} = 'error'`)
+    .orderBy(desc(analyses.updatedAt))
+    .limit(10);
+
+  const categoryDist = await db
+    .select({
+      category: analyses.insuranceCategory,
+      count: sql<number>`COUNT(*)`,
+    })
+    .from(analyses)
+    .where(sql`${analyses.insuranceCategory} IS NOT NULL`)
+    .groupBy(analyses.insuranceCategory);
+
+  return {
+    analysisStatusDistribution: statusDist.map(r => ({
+      status: r.status,
+      count: Number(r.count),
+    })),
+    gmailSyncStatus: {
+      totalConnections: Number(gmailStats[0]?.totalConnections ?? 0),
+      recentSyncs24h: Number(gmailStats[0]?.recentSyncs ?? 0),
+    },
+    avgAnalysisDurationMs: parseFloat(avgDuration[0]?.avgMs ?? "0"),
+    recentErrors,
+    categoryDistribution: categoryDist.map(r => ({
+      category: r.category,
+      count: Number(r.count),
+    })),
+  };
+}
+
+export async function getNewUsersOverTime(days = 30) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const result = await db
+    .select({
+      date: sql<string>`DATE(${users.createdAt})`,
+      count: sql<number>`COUNT(*)`,
+    })
+    .from(users)
+    .where(sql`${users.createdAt} >= NOW() - INTERVAL '${sql.raw(String(days))} days'`)
+    .groupBy(sql`DATE(${users.createdAt})`)
+    .orderBy(sql`DATE(${users.createdAt})`);
+
+  return result.map(r => ({
+    date: r.date,
+    count: Number(r.count),
+  }));
+}
+
+export async function getCategoryDistribution() {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const result = await db
+    .select({
+      category: analyses.insuranceCategory,
+      count: sql<number>`COUNT(*)`,
+    })
+    .from(analyses)
+    .where(sql`${analyses.insuranceCategory} IS NOT NULL`)
+    .groupBy(analyses.insuranceCategory);
+
+  return result.map(r => ({
+    category: r.category as string,
+    count: Number(r.count),
+  }));
 }

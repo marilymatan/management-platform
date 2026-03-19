@@ -14,6 +14,7 @@ import Expenses from "./pages/SmartInvoices";
 import Reminders from "./pages/Reminders";
 import Documents from "./pages/Documents";
 import Settings from "./pages/Settings";
+import AdminDashboard from "./pages/AdminDashboard";
 import Login from "./pages/Login";
 
 function Router() {
@@ -50,6 +51,7 @@ function Router() {
         <Route path="/reminders" component={Reminders} />
         <Route path="/documents" component={Documents} />
         <Route path="/settings" component={Settings} />
+        <Route path="/admin" component={AdminDashboard} />
         <Route path="/404" component={NotFound} />
         <Route component={NotFound} />
       </Switch>

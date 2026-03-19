@@ -19,6 +19,7 @@ import {
   Menu,
   X,
   ChevronRight,
+  BarChart3,
 } from "lucide-react";
 
 interface NavItem {
@@ -34,6 +35,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: "הוצאות", icon: <Wallet className="size-5" />, path: "/expenses" },
   { label: "תזכורות", icon: <Bell className="size-5" />, path: "/reminders" },
   { label: "מסמכים", icon: <FolderOpen className="size-5" />, path: "/documents" },
+  { label: "לוח בקרה", icon: <BarChart3 className="size-5" />, path: "/admin", adminOnly: true },
 ];
 
 interface AppShellProps {
