@@ -21,6 +21,8 @@ import {
   getUserUsageStats,
   getAllUsersWithUsage,
   getPlatformStats,
+  getUserProfile,
+  upsertUserProfile,
 } from "./db";
 import { TRPCError } from "@trpc/server";
 import type { PolicyAnalysis } from "@shared/insurance";
@@ -129,6 +131,94 @@ const CHAT_SYSTEM_PROMPT = `אתה עוזר וירטואלי מומחה בפול
 להלן המידע שחולץ מהפוליסה:
 `;
 
+const PERSONALIZED_INSIGHTS_PROMPT = `אתה יועץ ביטוח מומחה ומנוסה בישראל. קיבלת ניתוח מלא של פוליסת ביטוח ופרופיל אישי של הלקוח.
+
+תפקידך: לזהות פערים ביטוחיים, סיכונים, והמלצות מותאמות אישית על בסיס המצב האישי והמשפחתי של הלקוח.
+
+עליך לבדוק את הנקודות הבאות ולהחזיר תובנות רלוונטיות בלבד:
+
+1. **ילדים ומשפחה**: אם יש ילדים - האם יש כיסוי לתאונות ילדים, ביטוח בריאות לילדים, ביטוח שיניים לילדים? האם סכום ביטוח החיים מתאים למספר הנפשות התלויות?
+2. **דירה ומשכנתא**: אם יש דירה בבעלות - האם יש ביטוח מבנה ותכולה? אם יש משכנתא - האם יש ביטוח חיים לכיסוי המשכנתא?
+3. **רכבים**: אם יש רכבים - האם יש כיסוי מקיף/צד ג'? האם מספר הרכבים תואם את הכיסוי?
+4. **תעסוקה והכנסה**: האם יש ביטוח אובדן כושר עבודה? האם סכום הכיסוי מתאים לטווח ההכנסה? עצמאים - האם יש ביטוח אחריות מקצועית?
+5. **גיל ושלב בחיים**: על בסיס הגיל - האם הפוליסה מתאימה? האם כדאי לשקול ביטוח סיעודי? האם תקופת האכשרה בעייתית?
+6. **ספורט אקסטרימי**: אם יש תחביבים מסוכנים - האם יש החרגות רלוונטיות בפוליסה?
+7. **מצב בריאותי**: אם יש מצבים בריאותיים מיוחדים - האם הכיסוי הבריאותי מתאים? האם יש החרגות שעלולות להשפיע?
+8. **חיות מחמד**: אם יש חיות מחמד - האם יש ביטוח וטרינרי?
+
+כללים:
+- החזר רק תובנות רלוונטיות למצב הספציפי של הלקוח (אל תחזיר תובנות על ילדים אם אין ילדים, וכו')
+- לכל תובנה, סווג אותה כ: "warning" (חסר כיסוי קריטי), "recommendation" (המלצה לשיפור), או "positive" (כיסוי מתאים קיים)
+- דרג כל תובנה: "high" (דחוף/קריטי), "medium" (חשוב), או "low" (כדאי לשקול)
+- כתוב בעברית ברורה ומובנת, בגובה העיניים
+- הסבר בקצרה למה זה רלוונטי ומה ההמלצה המעשית
+- החזר 3-8 תובנות, לא יותר
+- אם יש כיסוי טוב שמתאים למצב הלקוח, ציין את זה כ-"positive"
+
+החזר JSON בפורמט הבא בלבד:
+{
+  "personalizedInsights": [
+    {
+      "id": "מזהה ייחודי",
+      "type": "warning | recommendation | positive",
+      "title": "כותרת קצרה",
+      "description": "תיאור מפורט של התובנה וההמלצה",
+      "relevantCoverage": "שם הכיסוי הרלוונטי מהפוליסה (אם יש)",
+      "priority": "high | medium | low"
+    }
+  ]
+}`;
+
+function buildProfileContext(profile: any): string {
+  const labels: Record<string, string> = {
+    single: "רווק/ה",
+    married: "נשוי/אה",
+    divorced: "גרוש/ה",
+    widowed: "אלמן/ה",
+    salaried: "שכיר/ה",
+    self_employed: "עצמאי/ת",
+    business_owner: "בעל/ת עסק",
+    student: "סטודנט/ית",
+    retired: "פנסיונר/ית",
+    unemployed: "לא עובד/ת",
+    male: "זכר",
+    female: "נקבה",
+    other: "אחר",
+    below_5k: "מתחת ל-5,000 ₪",
+    "5k_10k": "5,000-10,000 ₪",
+    "10k_15k": "10,000-15,000 ₪",
+    "15k_25k": "15,000-25,000 ₪",
+    "25k_40k": "25,000-40,000 ₪",
+    above_40k: "מעל 40,000 ₪",
+  };
+
+  const parts: string[] = [];
+
+  if (profile.dateOfBirth) {
+    const age = Math.floor((Date.now() - new Date(profile.dateOfBirth).getTime()) / (365.25 * 24 * 60 * 60 * 1000));
+    parts.push(`גיל: ${age}`);
+  }
+  if (profile.gender) parts.push(`מין: ${labels[profile.gender] || profile.gender}`);
+  if (profile.maritalStatus) parts.push(`מצב משפחתי: ${labels[profile.maritalStatus] || profile.maritalStatus}`);
+  if (profile.numberOfChildren > 0) {
+    parts.push(`מספר ילדים: ${profile.numberOfChildren}`);
+    if (profile.childrenAges) parts.push(`גילאי ילדים: ${profile.childrenAges}`);
+  }
+  if (profile.employmentStatus) parts.push(`תעסוקה: ${labels[profile.employmentStatus] || profile.employmentStatus}`);
+  if (profile.incomeRange) parts.push(`הכנסה חודשית: ${labels[profile.incomeRange] || profile.incomeRange}`);
+  if (profile.ownsApartment) parts.push(`בעלות על דירה: כן`);
+  if (profile.hasActiveMortgage) parts.push(`משכנתא פעילה: כן`);
+  if (profile.numberOfVehicles > 0) parts.push(`מספר רכבים: ${profile.numberOfVehicles}`);
+  if (profile.hasExtremeSports) parts.push(`ספורט אקסטרימי/תחביבים מסוכנים: כן`);
+  if (profile.hasSpecialHealthConditions) {
+    parts.push(`מצב בריאותי מיוחד: כן`);
+    if (profile.healthConditionsDetails) parts.push(`פרטי מצב בריאותי: ${profile.healthConditionsDetails}`);
+  }
+  if (profile.hasPets) parts.push(`חיות מחמד: כן`);
+
+  return parts.join("\n");
+}
+
 export const appRouter = router({
   system: systemRouter,
   auth: router({
@@ -138,6 +228,57 @@ export const appRouter = router({
       ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });
       return { success: true } as const;
     }),
+  }),
+
+  profile: router({
+    get: protectedProcedure.query(async ({ ctx }) => {
+      if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const profile = await getUserProfile(ctx.user.id);
+      if (!profile) return null;
+      return {
+        dateOfBirth: profile.dateOfBirth?.toISOString() ?? null,
+        gender: profile.gender,
+        maritalStatus: profile.maritalStatus,
+        numberOfChildren: profile.numberOfChildren ?? 0,
+        childrenAges: profile.childrenAges,
+        employmentStatus: profile.employmentStatus,
+        incomeRange: profile.incomeRange,
+        ownsApartment: profile.ownsApartment ?? false,
+        hasActiveMortgage: profile.hasActiveMortgage ?? false,
+        numberOfVehicles: profile.numberOfVehicles ?? 0,
+        hasExtremeSports: profile.hasExtremeSports ?? false,
+        hasSpecialHealthConditions: profile.hasSpecialHealthConditions ?? false,
+        healthConditionsDetails: profile.healthConditionsDetails,
+        hasPets: profile.hasPets ?? false,
+      };
+    }),
+
+    update: protectedProcedure
+      .input(z.object({
+        dateOfBirth: z.string().nullable().optional(),
+        gender: z.enum(["male", "female", "other"]).nullable().optional(),
+        maritalStatus: z.enum(["single", "married", "divorced", "widowed"]).nullable().optional(),
+        numberOfChildren: z.number().min(0).max(20).optional(),
+        childrenAges: z.string().nullable().optional(),
+        employmentStatus: z.enum(["salaried", "self_employed", "business_owner", "student", "retired", "unemployed"]).nullable().optional(),
+        incomeRange: z.enum(["below_5k", "5k_10k", "10k_15k", "15k_25k", "25k_40k", "above_40k"]).nullable().optional(),
+        ownsApartment: z.boolean().optional(),
+        hasActiveMortgage: z.boolean().optional(),
+        numberOfVehicles: z.number().min(0).max(10).optional(),
+        hasExtremeSports: z.boolean().optional(),
+        hasSpecialHealthConditions: z.boolean().optional(),
+        healthConditionsDetails: z.string().nullable().optional(),
+        hasPets: z.boolean().optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
+        const data: any = { ...input };
+        if (input.dateOfBirth !== undefined) {
+          data.dateOfBirth = input.dateOfBirth ? new Date(input.dateOfBirth) : null;
+        }
+        const profile = await upsertUserProfile(ctx.user.id, data);
+        return { success: true, profile };
+      }),
   }),
 
   policy: router({
@@ -333,10 +474,6 @@ export const appRouter = router({
 
           const analysisResult: PolicyAnalysis = JSON.parse(content);
 
-          await updateAnalysisStatus(input.sessionId, "completed", {
-            analysisResult,
-          });
-
           // Track token usage for billing
           const usage = response.usage;
           if (usage) {
@@ -348,6 +485,75 @@ export const appRouter = router({
               completionTokens: usage.completion_tokens ?? 0,
             });
           }
+
+          const userProfile = ctx.user ? await getUserProfile(ctx.user.id) : null;
+          if (userProfile) {
+            try {
+              const profileText = buildProfileContext(userProfile);
+              const insightsResponse = await invokeLLM({
+                messages: [
+                  { role: "system", content: PERSONALIZED_INSIGHTS_PROMPT },
+                  {
+                    role: "user",
+                    content: `פרופיל הלקוח:\n${profileText}\n\nניתוח הפוליסה:\n${JSON.stringify(analysisResult, null, 2)}`,
+                  },
+                ],
+                response_format: {
+                  type: "json_schema",
+                  json_schema: {
+                    name: "personalized_insights",
+                    strict: true,
+                    schema: {
+                      type: "object",
+                      properties: {
+                        personalizedInsights: {
+                          type: "array",
+                          items: {
+                            type: "object",
+                            properties: {
+                              id: { type: "string" },
+                              type: { type: "string", enum: ["warning", "recommendation", "positive"] },
+                              title: { type: "string" },
+                              description: { type: "string" },
+                              relevantCoverage: { type: "string" },
+                              priority: { type: "string", enum: ["high", "medium", "low"] },
+                            },
+                            required: ["id", "type", "title", "description", "relevantCoverage", "priority"],
+                            additionalProperties: false,
+                          },
+                        },
+                      },
+                      required: ["personalizedInsights"],
+                      additionalProperties: false,
+                    },
+                  },
+                },
+              });
+
+              const insightsContent = insightsResponse.choices[0]?.message?.content;
+              if (insightsContent && typeof insightsContent === "string") {
+                const parsed = JSON.parse(insightsContent);
+                analysisResult.personalizedInsights = parsed.personalizedInsights;
+              }
+
+              const insightsUsage = insightsResponse.usage;
+              if (insightsUsage) {
+                await logApiUsage({
+                  userId: analysis.userId ?? null,
+                  sessionId: input.sessionId,
+                  action: "analyze",
+                  promptTokens: insightsUsage.prompt_tokens ?? 0,
+                  completionTokens: insightsUsage.completion_tokens ?? 0,
+                });
+              }
+            } catch (insightError) {
+              console.error("[Insights] Failed to generate personalized insights:", insightError);
+            }
+          }
+
+          await updateAnalysisStatus(input.sessionId, "completed", {
+            analysisResult,
+          });
 
           // Audit log
           await audit({
@@ -419,11 +625,17 @@ export const appRouter = router({
         // Get chat history
         const history = await getChatHistory(input.sessionId);
 
-        // Build context from analysis result
         const policyContext = JSON.stringify(analysis.analysisResult, null, 2);
 
+        let systemContent = CHAT_SYSTEM_PROMPT + policyContext;
+        const chatProfile = ctx.user ? await getUserProfile(ctx.user.id) : null;
+        if (chatProfile) {
+          const profileText = buildProfileContext(chatProfile);
+          systemContent += `\n\nפרופיל אישי של הלקוח:\n${profileText}\n\nכשאתה עונה, התחשב במצב האישי והמשפחתי של הלקוח. אם השאלה קשורה לכיסוי מסוים, ציין אם הכיסוי רלוונטי או חסר בהתאם לפרופיל שלו.`;
+        }
+
         const messages = [
-          { role: "system" as const, content: CHAT_SYSTEM_PROMPT + policyContext },
+          { role: "system" as const, content: systemContent },
           ...history.map(msg => ({
             role: msg.role as "user" | "assistant",
             content: msg.content,

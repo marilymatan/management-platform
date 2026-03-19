@@ -37,12 +37,39 @@ export interface DuplicateCoverageGroup {
   recommendation: string;
 }
 
+export interface PersonalizedInsight {
+  id: string;
+  type: "warning" | "recommendation" | "positive";
+  title: string;
+  description: string;
+  relevantCoverage?: string;
+  priority: "high" | "medium" | "low";
+}
+
+export interface UserProfile {
+  dateOfBirth: string | null;
+  gender: string | null;
+  maritalStatus: string | null;
+  numberOfChildren: number;
+  childrenAges: string | null;
+  employmentStatus: string | null;
+  incomeRange: string | null;
+  ownsApartment: boolean;
+  hasActiveMortgage: boolean;
+  numberOfVehicles: number;
+  hasExtremeSports: boolean;
+  hasSpecialHealthConditions: boolean;
+  healthConditionsDetails: string | null;
+  hasPets: boolean;
+}
+
 /** Full analysis result returned by the AI */
 export interface PolicyAnalysis {
   coverages: Coverage[];
   generalInfo: GeneralInfo;
   summary: string;
   duplicateCoverages?: DuplicateCoverageGroup[];
+  personalizedInsights?: PersonalizedInsight[];
 }
 
 /** Status of a file in the upload queue */

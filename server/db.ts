@@ -1,6 +1,6 @@
 import { eq, desc, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
-import { InsertUser, users, analyses, chatMessages, apiUsageLogs, type InsertAnalysis, type InsertChatMessage, type InsertApiUsageLog } from "../drizzle/schema";
+import { InsertUser, users, analyses, chatMessages, apiUsageLogs, userProfiles, type InsertAnalysis, type InsertChatMessage, type InsertApiUsageLog, type InsertUserProfile } from "../drizzle/schema";
 import { ENV } from './_core/env';
 import type { PolicyAnalysis } from "@shared/insurance";
 import { encryptField, decryptField, encryptJson, decryptJson } from "./encryption";
@@ -333,4 +333,27 @@ export async function getPlatformStats() {
     activeUsersThisMonth: activeThisMonth?.count ?? 0,
     dailyUsage,
   };
+}
+
+export async function getUserProfile(userId: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(userProfiles).where(eq(userProfiles.userId, userId)).limit(1);
+  return result.length > 0 ? result[0] : null;
+}
+
+export async function upsertUserProfile(userId: number, data: Omit<InsertUserProfile, "id" | "userId" | "createdAt" | "updatedAt">) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const existing = await getUserProfile(userId);
+  if (existing) {
+    await db
+      .update(userProfiles)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(userProfiles.userId, userId));
+  } else {
+    await db.insert(userProfiles).values({ ...data, userId });
+  }
+  return getUserProfile(userId);
 }

@@ -7,6 +7,10 @@ export const usageActionEnum = pgEnum("usage_action", ["analyze", "chat"]);
 export const invoiceCategoryEnum = pgEnum("invoice_category", ["תקשורת", "חשמל", "מים", "ארנונה", "ביטוח", "בנק", "רכב", "אחר"]);
 export const invoiceStatusEnum = pgEnum("invoice_status", ["pending", "paid", "overdue", "unknown"]);
 export const auditStatusEnum = pgEnum("audit_status", ["allowed", "blocked", "error"]);
+export const maritalStatusEnum = pgEnum("marital_status", ["single", "married", "divorced", "widowed"]);
+export const employmentStatusEnum = pgEnum("employment_status", ["salaried", "self_employed", "business_owner", "student", "retired", "unemployed"]);
+export const incomeRangeEnum = pgEnum("income_range", ["below_5k", "5k_10k", "10k_15k", "15k_25k", "25k_40k", "above_40k"]);
+export const genderEnum = pgEnum("gender", ["male", "female", "other"]);
 
 export const users = pgTable("users", {
   id: serial("id").primaryKey(),
@@ -140,3 +144,29 @@ export const auditLogs = pgTable("audit_logs", {
 
 export type AuditLog = typeof auditLogs.$inferSelect;
 export type InsertAuditLog = typeof auditLogs.$inferInsert;
+
+export const userProfiles = pgTable("user_profiles", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().unique(),
+  dateOfBirth: timestamp("date_of_birth"),
+  gender: genderEnum("gender"),
+  maritalStatus: maritalStatusEnum("marital_status"),
+  numberOfChildren: integer("number_of_children").default(0),
+  childrenAges: text("children_ages"),
+  employmentStatus: employmentStatusEnum("employment_status"),
+  incomeRange: incomeRangeEnum("income_range"),
+  ownsApartment: boolean("owns_apartment").default(false),
+  hasActiveMortgage: boolean("has_active_mortgage").default(false),
+  numberOfVehicles: integer("number_of_vehicles").default(0),
+  hasExtremeSports: boolean("has_extreme_sports").default(false),
+  hasSpecialHealthConditions: boolean("has_special_health_conditions").default(false),
+  healthConditionsDetails: text("health_conditions_details"),
+  hasPets: boolean("has_pets").default(false),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull().$onUpdate(() => new Date()),
+}, (table) => ({
+  userIdIdx: index("profile_user_id_idx").on(table.userId),
+}));
+
+export type UserProfileRow = typeof userProfiles.$inferSelect;
+export type InsertUserProfile = typeof userProfiles.$inferInsert;

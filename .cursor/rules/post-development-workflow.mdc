@@ -9,5 +9,7 @@ After completing any development task:
 
 1. Run the app locally and verify the changes work
 2. Run existing tests and confirm they pass
-3. **Never modify existing tests** to make them pass - fix the implementation instead
-4. Commit and push to GitHub automatically (without waiting for the user to ask)
+3. **Never modify existing tests that previously passed** — only update them if file names or imports changed
+4. Write e2e tests covering the new feature end-to-end
+5. Ensure all tests pass and coverage is above 95%
+6. Only then commit and push to GitHub

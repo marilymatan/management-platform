@@ -12,6 +12,7 @@ import { CoverageCards } from "@/components/CoverageCards";
 import { FinancialSummary } from "@/components/FinancialSummary";
 import { PolicyChatbot } from "@/components/PolicyChatbot";
 import { DuplicateCoveragesAlert } from "@/components/DuplicateCoveragesAlert";
+import { PersonalizedInsights } from "@/components/PersonalizedInsights";
 import {
   Shield,
   FileSearch,
@@ -300,6 +301,17 @@ export default function Home() {
               </div>
             </div>
           </div>
+
+          {analysisResult.duplicateCoverages && analysisResult.duplicateCoverages.length > 0 && (
+            <DuplicateCoveragesAlert
+              duplicates={analysisResult.duplicateCoverages}
+              coverages={analysisResult.coverages}
+            />
+          )}
+
+          {analysisResult.personalizedInsights && analysisResult.personalizedInsights.length > 0 && (
+            <PersonalizedInsights insights={analysisResult.personalizedInsights} />
+          )}
 
           <Tabs value={activeTab} onValueChange={setActiveTab} dir="rtl" className="animate-fade-in-up stagger-2">
             <TabsList className="w-full justify-start bg-card border p-1.5 rounded-xl gap-1">
