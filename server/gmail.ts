@@ -436,14 +436,13 @@ async function fetchRecentEmails(
         body = "";
       }
 
-      // ─── Detect PDF attachments ────────────────────────────────────────
       const pdfAttachments: ScannedEmail["pdfAttachments"] = [];
       const collectAttachments = (parts: PayloadParts): void => {
         if (!parts) return;
         for (const part of parts) {
           const isPdf =
             (part.filename && part.filename.toLowerCase().endsWith(".pdf")) ||
-            part.mimeType === "application/pdf";
+            (part.mimeType === "application/pdf" && part.filename);
           if (isPdf && part.body?.attachmentId) {
             pdfAttachments.push({
               filename: part.filename || "attachment.pdf",
@@ -456,6 +455,18 @@ async function fetchRecentEmails(
       };
       if (msgRes.data.payload?.parts) {
         collectAttachments(msgRes.data.payload.parts);
+      }
+      const topPayload = msgRes.data.payload;
+      if (
+        pdfAttachments.length === 0 &&
+        topPayload?.filename?.toLowerCase().endsWith(".pdf") &&
+        topPayload.body?.attachmentId
+      ) {
+        pdfAttachments.push({
+          filename: topPayload.filename,
+          attachmentId: topPayload.body.attachmentId,
+          size: topPayload.body.size ?? 0,
+        });
       }
 
       emails.push({

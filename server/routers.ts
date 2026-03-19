@@ -828,8 +828,11 @@ export const appRouter = router({
             : inv.extractedData as Record<string, unknown> | null;
 
           if (decrypted?.pdfUrl && typeof decrypted.pdfUrl === 'string') {
-            const fileKey = decrypted.pdfUrl.replace(/^\/api\/files\//, '');
-            decrypted.pdfUrl = generateSignedFileUrl(fileKey);
+            const rawUrl = decrypted.pdfUrl.split('?')[0];
+            const fileKey = rawUrl.replace(/^\/api\/files\//, '');
+            if (fileKey) {
+              decrypted.pdfUrl = generateSignedFileUrl(fileKey);
+            }
           }
 
           return {
