@@ -113,3 +113,6 @@ data/
 .webdev/
 .manus-logs/
 .manus/
+
+playwright-report/
+test-results/
