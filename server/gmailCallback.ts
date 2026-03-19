@@ -11,12 +11,12 @@ export function registerGmailCallbackRoute(app: Express) {
 
     if (error) {
       console.error("[Gmail OAuth] User denied access or error:", error);
-      return res.redirect(302, "/smart-invoices?gmail_error=" + encodeURIComponent(error));
+      return res.redirect(302, "/expenses?gmail_error=" + encodeURIComponent(error));
     }
 
     if (!code || !state) {
       console.error("[Gmail OAuth] Missing code or state");
-      return res.redirect(302, "/smart-invoices?gmail_error=missing_params");
+      return res.redirect(302, "/expenses?gmail_error=missing_params");
     }
 
     let userId: number;
@@ -26,7 +26,7 @@ export function registerGmailCallbackRoute(app: Express) {
       if (!userId || typeof userId !== "number") throw new Error("Invalid userId in state");
     } catch (err) {
       console.error("[Gmail OAuth] Invalid or expired state parameter");
-      return res.redirect(302, "/smart-invoices?gmail_error=invalid_state");
+      return res.redirect(302, "/expenses?gmail_error=invalid_state");
     }
 
     const redirectUri = `${ENV.appUrl}/api/gmail/callback`;
@@ -42,17 +42,17 @@ export function registerGmailCallbackRoute(app: Express) {
         console.error(`[Gmail OAuth] User did not grant gmail.readonly scope for userId=${userId}`);
         return res.redirect(
           302,
-          "/smart-invoices?gmail_error=" +
+          "/expenses?gmail_error=" +
             encodeURIComponent("יש לאשר הרשאת קריאת מיילים כדי לסרוק חשבוניות. אנא נסה שוב ואשר את כל ההרשאות.")
         );
       }
 
       await saveGmailConnection(userId, accessToken, refreshToken, email, expiresAt);
       console.log(`[Gmail OAuth] Connected Gmail for userId=${userId}, email=${email}`);
-      return res.redirect(302, "/smart-invoices?gmail_connected=1");
+      return res.redirect(302, "/expenses?gmail_connected=1");
     } catch (err) {
       console.error("[Gmail OAuth] Token exchange failed:", err);
-      return res.redirect(302, "/smart-invoices?gmail_error=connection_failed");
+      return res.redirect(302, "/expenses?gmail_error=connection_failed");
     }
   });
 }

@@ -1,12 +1,11 @@
 import { test, expect } from "@playwright/test";
 
-test.describe("Profile page (unauthenticated)", () => {
-  test("shows login prompt when not authenticated", async ({ page }) => {
-    await page.goto("/profile");
+test.describe("Settings page (unauthenticated)", () => {
+  test("redirects to login when not authenticated", async ({ page }) => {
+    await page.goto("/settings");
     await page.waitForLoadState("networkidle");
-    const loginPrompt = page.locator("text=אנא התחבר");
-    const googleButton = page.locator("text=התחבר עם Google");
-    await expect(loginPrompt.or(googleButton)).toBeVisible({ timeout: 10_000 });
+    const loginHeading = page.getByRole("heading", { name: "ברוכים הבאים" });
+    await expect(loginHeading).toBeVisible({ timeout: 15_000 });
   });
 });
 

@@ -10,7 +10,7 @@ test.describe("App loading", () => {
 
   test("has the correct page title", async ({ page }) => {
     await page.goto("/");
-    await expect(page).toHaveTitle("מנתח פוליסות ביטוח");
+    await expect(page).toHaveTitle("Lumi — העוזר הפיננסי שלך");
   });
 
   test("loads Heebo font", async ({ page }) => {
@@ -48,30 +48,28 @@ test.describe("Navigation", () => {
     await page.goto("/");
     const sidebar = page.locator("nav");
     if (await sidebar.isVisible()) {
-      await expect(page.locator("text=ניתוח חדש")).toBeVisible();
       await expect(page.locator("text=דשבורד")).toBeVisible();
+      await expect(page.locator("text=ביטוחים")).toBeVisible();
     }
   });
 });
 
 test.describe("Authentication UI", () => {
-  test("dashboard shows login prompt when not authenticated", async ({
+  test("insurance page redirects to login when not authenticated", async ({
     page,
   }) => {
-    await page.goto("/dashboard");
+    await page.goto("/insurance");
     await page.waitForLoadState("networkidle");
-    const loginPrompt = page.locator("text=אנא התחבר");
-    const googleButton = page.locator("text=התחבר עם Google");
-    await expect(loginPrompt.or(googleButton)).toBeVisible({ timeout: 10_000 });
+    const loginHeading = page.getByRole("heading", { name: "ברוכים הבאים" });
+    await expect(loginHeading).toBeVisible({ timeout: 15_000 });
   });
 
-  test("profile page shows login prompt when not authenticated", async ({
+  test("settings page redirects to login when not authenticated", async ({
     page,
   }) => {
-    await page.goto("/profile");
+    await page.goto("/settings");
     await page.waitForLoadState("networkidle");
-    const loginPrompt = page.locator("text=אנא התחבר");
-    const googleButton = page.locator("text=התחבר עם Google");
-    await expect(loginPrompt.or(googleButton)).toBeVisible({ timeout: 10_000 });
+    const loginHeading = page.getByRole("heading", { name: "ברוכים הבאים" });
+    await expect(loginHeading).toBeVisible({ timeout: 15_000 });
   });
 });

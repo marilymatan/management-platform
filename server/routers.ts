@@ -882,12 +882,17 @@ export const appRouter = router({
           : inv.extractedData,
       }));
 
-      // Group by category and sum amounts
       const summary: Record<string, { category: string; total: number; count: number }> = {};
       for (const inv of invoices) {
         const cat = inv.category ?? "אחר";
         if (!summary[cat]) summary[cat] = { category: cat, total: 0, count: 0 };
-        summary[cat].total += parseFloat(inv.amount ?? "0");
+        let amount = parseFloat(inv.amount ?? "0");
+        if ((!amount || isNaN(amount)) && inv.extractedData && typeof inv.extractedData === 'object') {
+          const ed = inv.extractedData as Record<string, unknown>;
+          if (typeof ed.amount === 'number') amount = ed.amount;
+          else if (typeof ed.amount === 'string') amount = parseFloat(ed.amount) || 0;
+        }
+        summary[cat].total += isNaN(amount) ? 0 : amount;
         summary[cat].count++;
       }
       return Object.values(summary).sort((a, b) => b.total - a.total);

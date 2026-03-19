@@ -207,9 +207,9 @@ export default function SmartInvoices() {
             <div className="size-14 rounded-2xl bg-primary/8 flex items-center justify-center mx-auto mb-4">
               <Mail className="size-7 text-primary" />
             </div>
-            <h2 className="text-lg font-bold mb-2">חשבוניות חכמות</h2>
+            <h2 className="text-lg font-bold mb-2">הוצאות</h2>
             <p className="text-sm text-muted-foreground mb-5">יש להתחבר כדי לגשת לפיצ'ר זה</p>
-            <Button onClick={() => navigate("/")}>חזרה לדף הבית</Button>
+            <Button onClick={() => navigate("/")}>חזרה לדשבורד</Button>
           </CardContent>
         </Card>
       </div>
@@ -222,12 +222,12 @@ export default function SmartInvoices() {
     <div className="page-container">
       <div className="flex items-center justify-between mb-6 animate-fade-in-up">
         <div className="flex items-center gap-3">
-          <div className="size-10 rounded-xl bg-primary/8 flex items-center justify-center">
-            <Mail className="size-5 text-primary" />
+          <div className="size-10 rounded-xl bg-emerald-100 flex items-center justify-center">
+            <Mail className="size-5 text-emerald-600" />
           </div>
           <div>
-            <h2 className="text-xl font-bold">חשבוניות חכמות</h2>
-            <p className="text-xs text-muted-foreground">סריקת מיילים וניתוח חשבוניות אוטומטי</p>
+            <h2 className="text-xl font-bold">הוצאות</h2>
+            <p className="text-xs text-muted-foreground">חשבוניות חכמות, מעקב הוצאות וסריקת מיילים</p>
           </div>
         </div>
         {connectionStatus?.connected && (

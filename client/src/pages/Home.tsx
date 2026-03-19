@@ -153,7 +153,7 @@ export default function Home() {
               <div className="relative z-10 text-center">
                 <div className="inline-flex items-center gap-2 rounded-full bg-white/10 backdrop-blur-sm px-4 py-1.5 mb-5">
                   <Shield className="size-4 text-blue-300" />
-                  <span className="text-xs font-medium text-blue-100">ניתוח חכם עם AI</span>
+                  <span className="text-xs font-medium text-blue-100">ניתוח פוליסות עם AI</span>
                 </div>
                 <h2 className="text-2xl md:text-3xl font-bold text-white mb-3">
                   הבן את הפוליסה שלך בקלות

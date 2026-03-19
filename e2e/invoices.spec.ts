@@ -1,34 +1,36 @@
 import { test, expect } from "@playwright/test";
 
-test.describe("Smart Invoices page", () => {
+test.describe("Expenses page", () => {
   test("renders page title and header", async ({ page }) => {
-    await page.goto("/smart-invoices");
+    await page.goto("/expenses");
     await page.waitForLoadState("networkidle");
-    const header = page.locator("text=חשבוניות חכמות");
+    const header = page.locator("text=הוצאות");
     await expect(header.first()).toBeVisible({ timeout: 10_000 });
   });
 
   test("shows login prompt or Gmail connect when not authenticated", async ({ page }) => {
-    await page.goto("/smart-invoices");
+    await page.goto("/expenses");
     await page.waitForLoadState("networkidle");
     const connectButton = page.locator("text=חבר Gmail");
     const loginPrompt = page.locator("text=יש להתחבר");
-    await expect(connectButton.or(loginPrompt)).toBeVisible({ timeout: 10_000 });
+    const loginButton = page.locator("text=התחברות עם Google");
+    await expect(connectButton.or(loginPrompt).or(loginButton)).toBeVisible({ timeout: 10_000 });
   });
 
   test("expense summary section renders when data is present", async ({ page }) => {
-    await page.goto("/smart-invoices");
+    await page.goto("/expenses");
     await page.waitForLoadState("networkidle");
     const summarySection = page.locator("text=סיכום הוצאות");
     const noInvoices = page.locator("text=לא נמצאו חשבוניות");
     const connectPrompt = page.locator("text=חבר Gmail");
     const loginPrompt = page.locator("text=יש להתחבר");
-    const anyVisible = summarySection.or(noInvoices).or(connectPrompt).or(loginPrompt);
+    const loginButton = page.locator("text=התחברות עם Google");
+    const anyVisible = summarySection.or(noInvoices).or(connectPrompt).or(loginPrompt).or(loginButton);
     await expect(anyVisible).toBeVisible({ timeout: 10_000 });
   });
 
   test("invoice cards display provider name (not just 'ספק לא ידוע')", async ({ page }) => {
-    await page.goto("/smart-invoices");
+    await page.goto("/expenses");
     await page.waitForLoadState("networkidle");
     const invoiceCards = page.locator(".font-medium.text-sm.truncate");
     const count = await invoiceCards.count();
@@ -41,7 +43,7 @@ test.describe("Smart Invoices page", () => {
   });
 });
 
-test.describe("Smart Invoices API", () => {
+test.describe("Expenses API", () => {
   test("file endpoint rejects unsigned URLs with 403", async ({ request }) => {
     const response = await request.get("/api/files/gmail-invoices/test/invoice.pdf");
     expect(response.status()).toBe(403);

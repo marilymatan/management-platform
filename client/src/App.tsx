@@ -6,12 +6,13 @@ import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { AppShell } from "./components/AppShell";
+import LumiDashboard from "./pages/LumiDashboard";
+import Insurance from "./pages/Insurance";
 import Home from "./pages/Home";
-import Dashboard from "./pages/Dashboard";
-import Profile from "./pages/Profile";
-import AdminDashboard from "./pages/AdminDashboard";
-import UsagePage from "./pages/UsagePage";
-import SmartInvoices from "./pages/SmartInvoices";
+import Expenses from "./pages/SmartInvoices";
+import Reminders from "./pages/Reminders";
+import Documents from "./pages/Documents";
+import Settings from "./pages/Settings";
 import Login from "./pages/Login";
 
 function Router() {
@@ -39,13 +40,14 @@ function Router() {
   return (
     <AppShell>
       <Switch>
-        <Route path="/" component={Home} />
-        <Route path="/dashboard" component={Dashboard} />
-        <Route path="/profile" component={Profile} />
-        <Route path="/admin" component={AdminDashboard} />
-        <Route path="/usage" component={UsagePage} />
-        <Route path="/smart-invoices" component={SmartInvoices} />
-        <Route path="/analysis/:sessionId" component={Home} />
+        <Route path="/" component={LumiDashboard} />
+        <Route path="/insurance" component={Insurance} />
+        <Route path="/insurance/new" component={Home} />
+        <Route path="/insurance/:sessionId" component={Home} />
+        <Route path="/expenses" component={Expenses} />
+        <Route path="/reminders" component={Reminders} />
+        <Route path="/documents" component={Documents} />
+        <Route path="/settings" component={Settings} />
         <Route path="/404" component={NotFound} />
         <Route component={NotFound} />
       </Switch>
