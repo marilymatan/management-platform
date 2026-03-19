@@ -2,6 +2,12 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { appRouter } from "./routers";
 import type { TrpcContext } from "./_core/context";
 
+vi.mock("./storage", () => ({
+  storagePut: vi.fn().mockResolvedValue({ key: "avatars/1/test.jpg", url: "/api/files/avatars/1/test.jpg" }),
+  sanitizeFilename: vi.fn().mockImplementation((name: string) => name.replace(/[^a-zA-Z0-9._-]/g, "_")),
+  generateSignedFileUrl: vi.fn().mockReturnValue("/api/files/avatars/1/test.jpg?token=abc&exp=999"),
+}));
+
 let mockProfile: any = null;
 
 vi.mock("./db", () => ({
@@ -20,23 +26,25 @@ vi.mock("./db", () => ({
   getUserProfile: vi.fn().mockImplementation(() => mockProfile),
   upsertUserProfile: vi.fn().mockImplementation((_userId: number, data: any) => {
     mockProfile = {
+      ...mockProfile,
       id: 1,
       userId: _userId,
-      dateOfBirth: data.dateOfBirth || null,
-      gender: data.gender || null,
-      maritalStatus: data.maritalStatus || null,
-      numberOfChildren: data.numberOfChildren ?? 0,
-      childrenAges: data.childrenAges || null,
-      employmentStatus: data.employmentStatus || null,
-      incomeRange: data.incomeRange || null,
-      ownsApartment: data.ownsApartment ?? false,
-      hasActiveMortgage: data.hasActiveMortgage ?? false,
-      numberOfVehicles: data.numberOfVehicles ?? 0,
-      hasExtremeSports: data.hasExtremeSports ?? false,
-      hasSpecialHealthConditions: data.hasSpecialHealthConditions ?? false,
-      healthConditionsDetails: data.healthConditionsDetails || null,
-      hasPets: data.hasPets ?? false,
-      createdAt: new Date(),
+      dateOfBirth: data.dateOfBirth ?? mockProfile?.dateOfBirth ?? null,
+      gender: data.gender ?? mockProfile?.gender ?? null,
+      maritalStatus: data.maritalStatus ?? mockProfile?.maritalStatus ?? null,
+      numberOfChildren: data.numberOfChildren ?? mockProfile?.numberOfChildren ?? 0,
+      childrenAges: data.childrenAges ?? mockProfile?.childrenAges ?? null,
+      employmentStatus: data.employmentStatus ?? mockProfile?.employmentStatus ?? null,
+      incomeRange: data.incomeRange ?? mockProfile?.incomeRange ?? null,
+      ownsApartment: data.ownsApartment ?? mockProfile?.ownsApartment ?? false,
+      hasActiveMortgage: data.hasActiveMortgage ?? mockProfile?.hasActiveMortgage ?? false,
+      numberOfVehicles: data.numberOfVehicles ?? mockProfile?.numberOfVehicles ?? 0,
+      hasExtremeSports: data.hasExtremeSports ?? mockProfile?.hasExtremeSports ?? false,
+      hasSpecialHealthConditions: data.hasSpecialHealthConditions ?? mockProfile?.hasSpecialHealthConditions ?? false,
+      healthConditionsDetails: data.healthConditionsDetails ?? mockProfile?.healthConditionsDetails ?? null,
+      hasPets: data.hasPets ?? mockProfile?.hasPets ?? false,
+      profileImageKey: data.profileImageKey ?? mockProfile?.profileImageKey ?? null,
+      createdAt: mockProfile?.createdAt ?? new Date(),
       updatedAt: new Date(),
     };
     return mockProfile;
@@ -267,5 +275,140 @@ describe("profile.update", () => {
     await expect(
       caller.profile.update({ maritalStatus: "single" })
     ).rejects.toThrow();
+  });
+});
+
+describe("profile.uploadImage", () => {
+  const tinyJpegBase64 = "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP//";
+
+  it("uploads a valid jpeg image", async () => {
+    const caller = appRouter.createCaller(makeAuthCtx());
+    const result = await caller.profile.uploadImage({
+      name: "photo.jpg",
+      base64: tinyJpegBase64,
+    });
+    expect(result.fileKey).toContain("avatars/1/");
+    expect(result.fileKey).toContain("photo.jpg");
+  });
+
+  it("uploads a valid png image", async () => {
+    const caller = appRouter.createCaller(makeAuthCtx());
+    const result = await caller.profile.uploadImage({
+      name: "avatar.png",
+      base64: tinyJpegBase64,
+    });
+    expect(result.fileKey).toContain("avatars/1/");
+  });
+
+  it("uploads a valid webp image", async () => {
+    const caller = appRouter.createCaller(makeAuthCtx());
+    const result = await caller.profile.uploadImage({
+      name: "pic.webp",
+      base64: tinyJpegBase64,
+    });
+    expect(result.fileKey).toContain("avatars/1/");
+  });
+
+  it("rejects non-image files", async () => {
+    const caller = appRouter.createCaller(makeAuthCtx());
+    await expect(
+      caller.profile.uploadImage({ name: "document.pdf", base64: tinyJpegBase64 })
+    ).rejects.toThrow("Only jpg, png, webp images are allowed");
+  });
+
+  it("rejects exe files", async () => {
+    const caller = appRouter.createCaller(makeAuthCtx());
+    await expect(
+      caller.profile.uploadImage({ name: "malware.exe", base64: tinyJpegBase64 })
+    ).rejects.toThrow("Only jpg, png, webp images are allowed");
+  });
+
+  it("rejects unauthenticated requests", async () => {
+    const caller = appRouter.createCaller(makeAnonCtx());
+    await expect(
+      caller.profile.uploadImage({ name: "photo.jpg", base64: tinyJpegBase64 })
+    ).rejects.toThrow();
+  });
+});
+
+describe("profile.getImageUrl", () => {
+  it("returns null when no profile image exists", async () => {
+    const caller = appRouter.createCaller(makeAuthCtx());
+    const result = await caller.profile.getImageUrl();
+    expect(result).toBeNull();
+  });
+
+  it("returns signed URL when profile image exists", async () => {
+    mockProfile = {
+      id: 1,
+      userId: 1,
+      profileImageKey: "avatars/1/test.jpg",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    const caller = appRouter.createCaller(makeAuthCtx());
+    const result = await caller.profile.getImageUrl();
+    expect(result).toContain("/api/files/avatars/1/test.jpg");
+  });
+
+  it("rejects unauthenticated requests", async () => {
+    const caller = appRouter.createCaller(makeAnonCtx());
+    await expect(caller.profile.getImageUrl()).rejects.toThrow();
+  });
+});
+
+describe("profile.get with profileImageKey", () => {
+  it("returns profileImageKey when set", async () => {
+    mockProfile = {
+      id: 1,
+      userId: 1,
+      dateOfBirth: null,
+      gender: null,
+      maritalStatus: null,
+      numberOfChildren: 0,
+      childrenAges: null,
+      employmentStatus: null,
+      incomeRange: null,
+      ownsApartment: false,
+      hasActiveMortgage: false,
+      numberOfVehicles: 0,
+      hasExtremeSports: false,
+      hasSpecialHealthConditions: false,
+      healthConditionsDetails: null,
+      hasPets: false,
+      profileImageKey: "avatars/1/photo.jpg",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    const caller = appRouter.createCaller(makeAuthCtx());
+    const result = await caller.profile.get();
+    expect(result!.profileImageKey).toBe("avatars/1/photo.jpg");
+  });
+
+  it("returns null profileImageKey when not set", async () => {
+    mockProfile = {
+      id: 1,
+      userId: 1,
+      dateOfBirth: null,
+      gender: null,
+      maritalStatus: null,
+      numberOfChildren: 0,
+      childrenAges: null,
+      employmentStatus: null,
+      incomeRange: null,
+      ownsApartment: false,
+      hasActiveMortgage: false,
+      numberOfVehicles: 0,
+      hasExtremeSports: false,
+      hasSpecialHealthConditions: false,
+      healthConditionsDetails: null,
+      hasPets: false,
+      profileImageKey: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    const caller = appRouter.createCaller(makeAuthCtx());
+    const result = await caller.profile.get();
+    expect(result!.profileImageKey).toBeNull();
   });
 });
