@@ -97,24 +97,32 @@ export async function saveGmailConnection(
 
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db
-    .insert(gmailConnections)
-    .values({
+
+  const [existing] = await db
+    .select({ id: gmailConnections.id })
+    .from(gmailConnections)
+    .where(and(eq(gmailConnections.userId, userId), eq(gmailConnections.email, email)))
+    .limit(1);
+
+  if (existing) {
+    await db
+      .update(gmailConnections)
+      .set({
+        accessToken: encryptedAccess,
+        refreshToken: encryptedRefresh,
+        expiresAt,
+        updatedAt: new Date(),
+      })
+      .where(eq(gmailConnections.id, existing.id));
+  } else {
+    await db.insert(gmailConnections).values({
       userId,
       accessToken: encryptedAccess,
       refreshToken: encryptedRefresh,
       email,
       expiresAt,
-    })
-    .onConflictDoUpdate({
-      target: [gmailConnections.userId, gmailConnections.email],
-      set: {
-        accessToken: encryptedAccess,
-        refreshToken: encryptedRefresh,
-        expiresAt,
-        updatedAt: new Date(),
-      },
     });
+  }
 }
 
 export async function getGmailConnection(userId: number) {
