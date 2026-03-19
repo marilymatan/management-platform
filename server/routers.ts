@@ -7,7 +7,6 @@ import { nanoid } from "nanoid";
 import { storagePut, storageGet, storageRead } from "./storage";
 import { invokeLLM } from "./_core/llm";
 import { ENV } from "./_core/env";
-import { PDFParse } from "pdf-parse";
 import {
   createAnalysis,
   getAnalysisBySessionId,
@@ -184,41 +183,25 @@ export const appRouter = router({
         try {
           let userContent: any[];
 
-          if (ENV.llmSupportsFileUrl) {
-            const fileContents = await Promise.all(
-              analysis.files.map(async (file: { name: string; fileKey?: string; url?: string }) => {
-                const fileUrl = file.fileKey
-                  ? (await storageGet(file.fileKey)).url
-                  : file.url!;
-                return {
-                  type: "file_url" as const,
-                  file_url: {
-                    url: fileUrl,
-                    mime_type: "application/pdf" as const,
-                  },
-                };
-              })
-            );
-            userContent = [
-              { type: "text", text: `נא לנתח את פוליסות הביטוח הבאות (${analysis.files.length} קבצים) ולהחזיר את המידע בפורמט JSON המבוקש:` },
-              ...fileContents,
-            ];
-          } else {
-            const textParts: string[] = [];
-            for (const file of analysis.files as Array<{ name: string; fileKey?: string; url?: string }>) {
+          const fileParts = await Promise.all(
+            analysis.files.map(async (file: { name: string; fileKey?: string; url?: string }) => {
               const fileKey = file.fileKey || file.url;
-              if (!fileKey) continue;
+              if (!fileKey) return null;
               const buffer = await storageRead(fileKey);
-              if (buffer) {
-                const parser = new PDFParse({ data: buffer });
-                const result = await parser.getText();
-                textParts.push(`--- קובץ: ${file.name} ---\n${result.text}`);
-              }
-            }
-            userContent = [
-              { type: "text", text: `נא לנתח את פוליסות הביטוח הבאות (${analysis.files.length} קבצים) ולהחזיר את המידע בפורמט JSON המבוקש:\n\n${textParts.join("\n\n")}` },
-            ];
-          }
+              if (!buffer) return null;
+              const base64 = buffer.toString("base64");
+              return {
+                type: "image_url" as const,
+                image_url: {
+                  url: `data:application/pdf;base64,${base64}`,
+                },
+              };
+            })
+          );
+          userContent = [
+            { type: "text", text: `נא לנתח את פוליסות הביטוח הבאות (${analysis.files.length} קבצים) ולהחזיר את המידע בפורמט JSON המבוקש:` },
+            ...fileParts.filter(Boolean),
+          ];
 
           const response = await invokeLLM({
             messages: [

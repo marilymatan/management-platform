@@ -15,7 +15,7 @@ import { convert as htmlToText } from "html-to-text";
 import { storagePut, storageRead } from "./storage";
 import { encryptField, encryptJson } from "./encryption";
 import { ENV } from "./_core/env";
-import { PDFParse } from "pdf-parse";
+
 
 // ─── Encryption helpers ───────────────────────────────────────────────────────
 
@@ -501,43 +501,37 @@ async function downloadAndUploadPdfAttachment(
 
 async function extractTextFromPdf(pdfUrl: string, fileKey?: string): Promise<string> {
   try {
-    if (!ENV.llmSupportsFileUrl && fileKey) {
+    if (fileKey) {
       const buffer = await storageRead(fileKey);
       if (buffer) {
-        const parser = new PDFParse({ data: buffer });
-        const result = await parser.getText();
-        return result.text;
-      }
-    }
-
-    if (ENV.llmSupportsFileUrl) {
-      const response = await invokeLLM({
-        messages: [
-          {
-            role: "system",
-            content: "אתה מומחה לקריאת מסמכי PDF בעברית ובאנגלית. חלץ את כל הטקסט הרלוונטי מהמסמך. התמקד בפרטים כמו: שם ספק, סכום לתשלום, תאריכים, מספר חשבונית, פירוט שירותים/מוצרים. החזר טקסט נקי בלבד.",
-          },
-          {
-            role: "user",
-            content: [
-              {
-                type: "file_url",
-                file_url: {
-                  url: pdfUrl,
-                  mime_type: "application/pdf",
+        const base64 = buffer.toString("base64");
+        const response = await invokeLLM({
+          messages: [
+            {
+              role: "system",
+              content: "אתה מומחה לקריאת מסמכי PDF בעברית ובאנגלית. חלץ את כל הטקסט הרלוונטי מהמסמך. התמקד בפרטים כמו: שם ספק, סכום לתשלום, תאריכים, מספר חשבונית, פירוט שירותים/מוצרים. החזר טקסט נקי בלבד.",
+            },
+            {
+              role: "user",
+              content: [
+                {
+                  type: "image_url",
+                  image_url: {
+                    url: `data:application/pdf;base64,${base64}`,
+                  },
                 },
-              },
-              {
-                type: "text",
-                text: "חלץ את כל הטקסט הרלוונטי מהחשבונית/קבלה הזו. כלול: שם ספק, סכום, תאריך, מספר חשבונית, פירוט פריטים.",
-              },
-            ],
-          },
-        ],
-      });
+                {
+                  type: "text",
+                  text: "חלץ את כל הטקסט הרלוונטי מהחשבונית/קבלה הזו. כלול: שם ספק, סכום, תאריך, מספר חשבונית, פירוט פריטים.",
+                },
+              ],
+            },
+          ],
+        });
 
-      const content = response.choices?.[0]?.message?.content;
-      if (typeof content === "string") return content;
+        const content = response.choices?.[0]?.message?.content;
+        if (typeof content === "string") return content;
+      }
     }
 
     return "";
