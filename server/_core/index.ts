@@ -15,7 +15,6 @@ import { serveStatic, setupVite } from "./vite";
 import { registerSecurityMiddleware } from "../security";
 import { ENV } from "./env";
 import { verifyFileSignature } from "../storage";
-import { getSharedPool } from "../db";
 
 async function runMigrations() {
   if (!process.env.DATABASE_URL) {
@@ -23,7 +22,7 @@ async function runMigrations() {
     return;
   }
   try {
-    const db = drizzle({ client: getSharedPool() });
+    const db = drizzle(process.env.DATABASE_URL);
 
     await db.execute(sql`CREATE SCHEMA IF NOT EXISTS "drizzle"`);
     await db.execute(sql`
