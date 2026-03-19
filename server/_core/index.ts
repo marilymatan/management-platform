@@ -4,6 +4,7 @@ import type { Request, Response, NextFunction } from "express";
 import { createServer } from "http";
 import path from "path";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
+import { sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { registerOAuthRoutes } from "./oauth";
@@ -22,6 +23,35 @@ async function runMigrations() {
   }
   try {
     const db = drizzle(process.env.DATABASE_URL);
+
+    await db.execute(sql`CREATE SCHEMA IF NOT EXISTS "drizzle"`);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "drizzle"."__drizzle_migrations" (
+        id SERIAL PRIMARY KEY,
+        hash text NOT NULL,
+        created_at bigint
+      )
+    `);
+
+    const existing = await db.execute(
+      sql`SELECT count(*)::int as cnt FROM "drizzle"."__drizzle_migrations"`
+    );
+    const count = (existing.rows[0] as any)?.cnt ?? 0;
+
+    if (count === 0) {
+      const alreadyApplied = [
+        { hash: "d44a864d46ccc0cb528b32ccceb823a3ca15b497c2f01a168b211a7e09f6e3e4", when: 1773946209358 },
+        { hash: "88b794cb33faeae8a30e62f7770479e05520693869d7ad5faf8b0d107ef12503", when: 1773947415674 },
+        { hash: "598c7bc6eb7a745152b6028f1bc6816f0ee304568a5933011d08e42c3413f5de", when: 1773952814543 },
+      ];
+      for (const m of alreadyApplied) {
+        await db.execute(
+          sql`INSERT INTO "drizzle"."__drizzle_migrations" ("hash", "created_at") VALUES (${m.hash}, ${m.when})`
+        );
+      }
+      console.log("[Migrate] Seeded migration tracking for 3 pre-existing migrations");
+    }
+
     const migrationsFolder = path.resolve(process.cwd(), "drizzle");
     await migrate(db, { migrationsFolder });
     console.log("[Migrate] Migrations applied successfully");
