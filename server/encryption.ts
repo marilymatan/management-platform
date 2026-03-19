@@ -37,12 +37,26 @@ function deriveKey(): Buffer {
 
 const FIELD_ENCRYPTION_KEY = deriveKey();
 
+function deriveLegacyKey(): Buffer | null {
+  const raw = process.env.ENCRYPTION_KEY || process.env.JWT_SECRET;
+  if (!raw) return null;
+  return Buffer.from(raw.slice(0, 32).padEnd(32, "0"));
+}
+
+const LEGACY_KEY = deriveLegacyKey();
+
 // ─── Encrypt / Decrypt ──────────────────────────────────────────────────────
 
-/**
- * Encrypt a string value using AES-256-GCM.
- * Returns format: iv:authTag:ciphertext (hex-encoded)
- */
+function decryptWithKey(encryptedText: string, key: Buffer): string {
+  const [ivHex, tagHex, dataHex] = encryptedText.split(":");
+  const iv = Buffer.from(ivHex, "hex");
+  const tag = Buffer.from(tagHex, "hex");
+  const data = Buffer.from(dataHex, "hex");
+  const decipher = crypto.createDecipheriv(ALGORITHM, key, iv);
+  decipher.setAuthTag(tag);
+  return Buffer.concat([decipher.update(data), decipher.final()]).toString("utf8");
+}
+
 export function encryptField(plaintext: string): string {
   if (!plaintext) return plaintext;
   const iv = crypto.randomBytes(16);
@@ -63,32 +77,21 @@ export function encryptField(plaintext: string): string {
   ].join(":");
 }
 
-/**
- * Decrypt an AES-256-GCM encrypted string.
- * Expects format: iv:authTag:ciphertext (hex-encoded)
- */
 export function decryptField(encryptedText: string): string {
   if (!encryptedText) return encryptedText;
-  // If it doesn't look encrypted (no colons), return as-is (legacy data)
   if (!encryptedText.includes(":") || encryptedText.split(":").length !== 3) {
     return encryptedText;
   }
   try {
-    const [ivHex, tagHex, dataHex] = encryptedText.split(":");
-    const iv = Buffer.from(ivHex, "hex");
-    const tag = Buffer.from(tagHex, "hex");
-    const data = Buffer.from(dataHex, "hex");
-    const decipher = crypto.createDecipheriv(
-      ALGORITHM,
-      Buffer.from(FIELD_ENCRYPTION_KEY),
-      iv
-    );
-    decipher.setAuthTag(tag);
-    return Buffer.concat([decipher.update(data), decipher.final()]).toString(
-      "utf8"
-    );
+    return decryptWithKey(encryptedText, FIELD_ENCRYPTION_KEY);
   } catch {
-    // If decryption fails, return as-is (legacy unencrypted data)
+    if (LEGACY_KEY) {
+      try {
+        return decryptWithKey(encryptedText, LEGACY_KEY);
+      } catch {
+        return encryptedText;
+      }
+    }
     return encryptedText;
   }
 }
