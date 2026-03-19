@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import crypto from "crypto";
 import { ENV } from "./_core/env";
 
 function getStoragePath(): string {
@@ -11,7 +12,47 @@ function getStoragePath(): string {
 }
 
 function normalizeKey(relKey: string): string {
-  return relKey.replace(/^\/+/, "");
+  return relKey.replace(/^\/+/, "").replace(/\0/g, "");
+}
+
+function ensureWithinStorage(basePath: string, key: string): string {
+  const filePath = path.join(basePath, key);
+  const resolved = path.resolve(filePath);
+  const resolvedBase = path.resolve(basePath);
+  if (!resolved.startsWith(resolvedBase + path.sep) && resolved !== resolvedBase) {
+    throw new Error("Path traversal detected");
+  }
+  return resolved;
+}
+
+export function sanitizeFilename(name: string): string {
+  const basename = path.basename(name);
+  const sanitized = basename
+    .replace(/\0/g, "")
+    .replace(/\.\./g, "")
+    .replace(/[\/\\]/g, "")
+    .replace(/[^a-zA-Z0-9._\-\u0590-\u05FF ]/g, "_");
+  return sanitized || "unnamed";
+}
+
+export function generateSignedFileUrl(key: string, expiresInSec: number = 3600): string {
+  const exp = Math.floor(Date.now() / 1000) + expiresInSec;
+  const data = `${key}:${exp}`;
+  const secret = ENV.cookieSecret;
+  const token = crypto.createHmac("sha256", secret).update(data).digest("hex");
+  return `/api/files/${key}?token=${token}&exp=${exp}`;
+}
+
+export function verifyFileSignature(key: string, token: string, exp: string): boolean {
+  const expNum = parseInt(exp, 10);
+  if (isNaN(expNum) || expNum < Math.floor(Date.now() / 1000)) {
+    return false;
+  }
+  const data = `${key}:${expNum}`;
+  const secret = ENV.cookieSecret;
+  const expected = crypto.createHmac("sha256", secret).update(data).digest("hex");
+  if (token.length !== expected.length) return false;
+  return crypto.timingSafeEqual(Buffer.from(token), Buffer.from(expected));
 }
 
 export async function storagePut(
@@ -21,7 +62,7 @@ export async function storagePut(
 ): Promise<{ key: string; url: string }> {
   const basePath = getStoragePath();
   const key = normalizeKey(relKey);
-  const filePath = path.join(basePath, key);
+  const filePath = ensureWithinStorage(basePath, key);
 
   const dir = path.dirname(filePath);
   if (!fs.existsSync(dir)) {
@@ -42,14 +83,14 @@ export async function storageGet(relKey: string): Promise<{ key: string; url: st
   const key = normalizeKey(relKey);
   return {
     key,
-    url: `/api/files/${key}`,
+    url: generateSignedFileUrl(key),
   };
 }
 
 export async function storageRead(relKey: string): Promise<Buffer | null> {
   const basePath = getStoragePath();
   const key = normalizeKey(relKey);
-  const filePath = path.join(basePath, key);
+  const filePath = ensureWithinStorage(basePath, key);
 
   if (!fs.existsSync(filePath)) {
     return null;
@@ -61,7 +102,7 @@ export async function storageRead(relKey: string): Promise<Buffer | null> {
 export async function storageDelete(relKey: string): Promise<void> {
   const basePath = getStoragePath();
   const key = normalizeKey(relKey);
-  const filePath = path.join(basePath, key);
+  const filePath = ensureWithinStorage(basePath, key);
 
   if (fs.existsSync(filePath)) {
     fs.unlinkSync(filePath);

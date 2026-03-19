@@ -18,18 +18,20 @@ const ALGORITHM = "aes-256-gcm";
 function deriveKey(): Buffer {
   const envKey = process.env.ENCRYPTION_KEY;
   if (envKey && envKey.length >= 32) {
-    // Use dedicated key — if hex, decode; otherwise hash it to 32 bytes
     if (/^[0-9a-f]{64}$/i.test(envKey)) {
       return Buffer.from(envKey, "hex");
     }
-    // Non-hex key: derive 32 bytes via SHA-256
     return crypto.createHash("sha256").update(envKey).digest();
   }
-  // Fallback: derive from JWT_SECRET via HKDF (backward compat)
-  const BASE_SECRET = process.env.JWT_SECRET || "fallback-dev-secret-do-not-use";
+  const jwtSecret = process.env.JWT_SECRET;
+  if (!jwtSecret) {
+    throw new Error(
+      "[Security] ENCRYPTION_KEY or JWT_SECRET must be set. Refusing to start with fallback keys."
+    );
+  }
   const SALT = "insurance-analyzer-field-encryption-v1";
   return Buffer.from(
-    crypto.hkdfSync("sha256", BASE_SECRET, SALT, "field-encryption", 32)
+    crypto.hkdfSync("sha256", jwtSecret, SALT, "field-encryption", 32)
   );
 }
 

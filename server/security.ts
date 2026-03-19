@@ -148,18 +148,16 @@ export function securityHeadersMiddleware(req: Request, res: Response, next: Nex
     "Content-Security-Policy",
     [
       "default-src 'self'",
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://fonts.googleapis.com https://cdn.jsdelivr.net https://accounts.google.com",
+      "script-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net https://accounts.google.com https://forge.butterfly-effect.dev",
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
       "font-src 'self' https://fonts.gstatic.com",
-      "img-src 'self' data: blob: https: http:",
-      "connect-src 'self' https: wss:",
-      "frame-ancestors 'self'",
+      "img-src 'self' data: blob: https:",
+      "connect-src 'self' https://accounts.google.com https://generativelanguage.googleapis.com wss:",
+      "frame-ancestors 'none'",
       "base-uri 'self'",
       "form-action 'self'",
     ].join("; ")
   );
-
-  res.setHeader("X-Frame-Options", "SAMEORIGIN");
 
   // HSTS — only in production
   if (process.env.NODE_ENV !== "development") {
@@ -201,7 +199,8 @@ export function rateLimitMiddleware(options: RateLimitOptions) {
 
   return (req: Request, res: Response, next: NextFunction): void => {
     const ip = getClientIp(req);
-    const key = `${ip}:${req.path}`;
+    const normalizedPath = req.baseUrl || req.path;
+    const key = `${ip}:${normalizedPath}`;
     const now = Date.now();
 
     let entry = rateLimitStore.get(key);
@@ -306,8 +305,12 @@ export function registerSecurityMiddleware(app: Express): void {
   app.use(
     cors({
       origin: (origin, callback) => {
-        // Allow requests with no origin (server-to-server, mobile apps)
-        if (!origin) return callback(null, true);
+        if (!origin) {
+          if (process.env.NODE_ENV === "development") {
+            return callback(null, true);
+          }
+          return callback(new Error("Origin required"));
+        }
         const isAllowed = ALLOWED_ORIGINS.some((allowed) =>
           typeof allowed === "string" ? allowed === origin : allowed.test(origin)
         );

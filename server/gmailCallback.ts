@@ -1,5 +1,6 @@
 import type { Express, Request, Response } from "express";
 import { exchangeCodeForTokens, saveGmailConnection, verifyGmailScopes } from "./gmail";
+import { verifyOAuthState } from "./routers";
 import { ENV } from "./_core/env";
 
 export function registerGmailCallbackRoute(app: Express) {
@@ -20,11 +21,11 @@ export function registerGmailCallbackRoute(app: Express) {
 
     let userId: number;
     try {
-      const decoded = JSON.parse(Buffer.from(state, "base64").toString("utf8"));
-      userId = decoded.userId;
+      const payload = verifyOAuthState(state);
+      userId = payload.userId as number;
       if (!userId || typeof userId !== "number") throw new Error("Invalid userId in state");
     } catch (err) {
-      console.error("[Gmail OAuth] Failed to decode state:", err);
+      console.error("[Gmail OAuth] Invalid or expired state parameter");
       return res.redirect(302, "/smart-invoices?gmail_error=invalid_state");
     }
 
@@ -51,8 +52,7 @@ export function registerGmailCallbackRoute(app: Express) {
       return res.redirect(302, "/smart-invoices?gmail_connected=1");
     } catch (err) {
       console.error("[Gmail OAuth] Token exchange failed:", err);
-      const msg = err instanceof Error ? err.message : "unknown_error";
-      return res.redirect(302, "/smart-invoices?gmail_error=" + encodeURIComponent(msg));
+      return res.redirect(302, "/smart-invoices?gmail_error=connection_failed");
     }
   });
 }

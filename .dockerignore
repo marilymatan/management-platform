@@ -1,0 +1,17 @@
+.env
+.env.*
+.git
+*.bak
+*.swp
+*.swo
+*~
+node_modules
+dist
+data
+*.test.ts
+*.spec.ts
+SECURITY_AUDIT.md
+todo.md
+notes.md
+.cursor
+agent-transcripts

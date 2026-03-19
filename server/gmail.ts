@@ -13,32 +13,8 @@ import { eq, and } from "drizzle-orm";
 import { invokeLLM } from "./_core/llm";
 import { convert as htmlToText } from "html-to-text";
 import { storagePut, storageRead } from "./storage";
-import { encryptField, encryptJson } from "./encryption";
+import { encryptField, decryptField, encryptJson } from "./encryption";
 import { ENV } from "./_core/env";
-
-
-// ─── Encryption helpers ───────────────────────────────────────────────────────
-
-const ENCRYPTION_KEY = (process.env.ENCRYPTION_KEY || process.env.JWT_SECRET || "dev-fallback-key-not-for-production").slice(0, 32).padEnd(32, "0");
-const ALGORITHM = "aes-256-gcm";
-
-function encrypt(text: string): string {
-  const iv = crypto.randomBytes(16);
-  const cipher = crypto.createCipheriv(ALGORITHM, Buffer.from(ENCRYPTION_KEY), iv);
-  const encrypted = Buffer.concat([cipher.update(text, "utf8"), cipher.final()]);
-  const tag = cipher.getAuthTag();
-  return [iv.toString("hex"), tag.toString("hex"), encrypted.toString("hex")].join(":");
-}
-
-function decrypt(encryptedText: string): string {
-  const [ivHex, tagHex, dataHex] = encryptedText.split(":");
-  const iv = Buffer.from(ivHex, "hex");
-  const tag = Buffer.from(tagHex, "hex");
-  const data = Buffer.from(dataHex, "hex");
-  const decipher = crypto.createDecipheriv(ALGORITHM, Buffer.from(ENCRYPTION_KEY), iv);
-  decipher.setAuthTag(tag);
-  return Buffer.concat([decipher.update(data), decipher.final()]).toString("utf8");
-}
 
 // ─── OAuth2 client factory ────────────────────────────────────────────────────
 
@@ -116,8 +92,8 @@ export async function saveGmailConnection(
   email: string,
   expiresAt: Date
 ) {
-  const encryptedAccess = encrypt(accessToken);
-  const encryptedRefresh = encrypt(refreshToken);
+  const encryptedAccess = encryptField(accessToken);
+  const encryptedRefresh = encryptField(refreshToken);
 
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -186,8 +162,8 @@ async function getAuthenticatedClient(connectionId: number) {
   const conn = await getGmailConnectionById(connectionId);
   if (!conn) throw new Error("Gmail connection not found");
 
-  const accessToken = decrypt(conn.accessToken);
-  const refreshToken = decrypt(conn.refreshToken);
+  const accessToken = decryptField(conn.accessToken);
+  const refreshToken = decryptField(conn.refreshToken);
 
   const oauth2Client = createOAuth2Client("");
   oauth2Client.setCredentials({
@@ -198,7 +174,7 @@ async function getAuthenticatedClient(connectionId: number) {
 
   oauth2Client.on("tokens", async (tokens) => {
     if (tokens.access_token) {
-      const encryptedAccess = encrypt(tokens.access_token);
+      const encryptedAccess = encryptField(tokens.access_token);
       const refreshDb = await getDb();
       if (refreshDb) {
         await refreshDb

@@ -1,10 +1,11 @@
+import crypto from "crypto";
 import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
 import { z } from "zod";
 import { nanoid } from "nanoid";
-import { storagePut, storageGet, storageRead } from "./storage";
+import { storagePut, storageGet, storageRead, sanitizeFilename } from "./storage";
 import { invokeLLM } from "./_core/llm";
 import { ENV } from "./_core/env";
 import {
@@ -36,6 +37,25 @@ import { smartInvoices } from "../drizzle/schema";
 import { decryptField, decryptJson } from "./encryption";
 import { eq, desc } from "drizzle-orm";
 import { audit, getClientIp, getRecentAuditLogs, getSecurityEvents } from "./auditLog";
+
+function signOAuthState(payload: Record<string, unknown>): string {
+  const json = JSON.stringify(payload);
+  const sig = crypto.createHmac("sha256", ENV.cookieSecret).update(json).digest("hex");
+  return Buffer.from(JSON.stringify({ d: json, s: sig })).toString("base64");
+}
+
+export function verifyOAuthState(state: string): Record<string, unknown> {
+  const { d, s } = JSON.parse(Buffer.from(state, "base64").toString("utf8"));
+  const expected = crypto.createHmac("sha256", ENV.cookieSecret).update(d).digest("hex");
+  if (s.length !== expected.length || !crypto.timingSafeEqual(Buffer.from(s), Buffer.from(expected))) {
+    throw new Error("Invalid state signature");
+  }
+  const payload = JSON.parse(d);
+  if (payload.exp && payload.exp < Math.floor(Date.now() / 1000)) {
+    throw new Error("State expired");
+  }
+  return payload;
+}
 
 const ANALYSIS_SYSTEM_PROMPT = `אתה מומחה לניתוח פוליסות ביטוח בעברית. תפקידך לנתח את הטקסט של פוליסת הביטוח ולחלץ ממנו מידע מובנה.
 
@@ -137,7 +157,8 @@ export const appRouter = router({
 
         for (const file of input.files) {
           const buffer = Buffer.from(file.base64, "base64");
-          const fileKey = `policies/${sessionId}/${nanoid(8)}-${file.name}`;
+          const safeName = sanitizeFilename(file.name);
+          const fileKey = `policies/${sessionId}/${nanoid(8)}-${safeName}`;
           await storagePut(fileKey, buffer, "application/pdf");
           uploadedFiles.push({ name: file.name, size: file.size, fileKey });
         }
@@ -167,10 +188,9 @@ export const appRouter = router({
         if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
         const analysis = await getAnalysisBySessionId(input.sessionId);
         if (!analysis) throw new TRPCError({ code: "NOT_FOUND" });
-        if (analysis.userId && analysis.userId !== ctx.user.id) {
+        if (!analysis.userId || analysis.userId !== ctx.user.id) {
           throw new TRPCError({ code: "FORBIDDEN", message: "Access denied" });
         }
-        // Verify the fileKey belongs to this analysis
         const files = analysis.files as Array<{ name: string; fileKey?: string; url?: string }>;
         const fileExists = files.some(f => (f.fileKey || f.url) === input.fileKey);
         if (!fileExists) {
@@ -195,6 +215,12 @@ export const appRouter = router({
         if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
         const analysis = await getAnalysisBySessionId(input.sessionId);
         if (!analysis) throw new Error("Session not found");
+        if (analysis.userId && analysis.userId !== ctx.user.id) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Access denied" });
+        }
+        if (!analysis.userId) {
+          await linkAnalysisToUser(input.sessionId, ctx.user.id);
+        }
 
         await updateAnalysisStatus(input.sessionId, "processing");
 
@@ -347,8 +373,7 @@ export const appRouter = router({
         if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
         const analysis = await getAnalysisBySessionId(input.sessionId);
         if (!analysis) return null;
-        // Verify ownership — prevent cross-user access
-        if (analysis.userId && analysis.userId !== ctx.user.id) {
+        if (!analysis.userId || analysis.userId !== ctx.user.id) {
           throw new TRPCError({ code: "FORBIDDEN", message: "Access denied" });
         }
         // Audit log
@@ -380,8 +405,7 @@ export const appRouter = router({
         if (!analysis || !analysis.analysisResult) {
           throw new Error("No analysis found for this session");
         }
-        // Verify ownership — prevent cross-user access
-        if (analysis.userId && analysis.userId !== ctx.user.id) {
+        if (!analysis.userId || analysis.userId !== ctx.user.id) {
           throw new TRPCError({ code: "FORBIDDEN", message: "Access denied" });
         }
 
@@ -447,9 +471,8 @@ export const appRouter = router({
       .input(z.object({ sessionId: z.string() }))
       .query(async ({ ctx, input }) => {
         if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
-        // Verify ownership via the parent analysis
         const analysis = await getAnalysisBySessionId(input.sessionId);
-        if (analysis && analysis.userId && analysis.userId !== ctx.user.id) {
+        if (!analysis || !analysis.userId || analysis.userId !== ctx.user.id) {
           throw new TRPCError({ code: "FORBIDDEN", message: "Access denied" });
         }
         const history = await getChatHistory(input.sessionId);
@@ -470,7 +493,14 @@ export const appRouter = router({
       .input(z.object({ sessionId: z.string() }))
       .mutation(async ({ ctx, input }) => {
         if (!ctx.user) throw new Error("Not authenticated");
-        await linkAnalysisToUser(input.sessionId, ctx.user.id);
+        const analysis = await getAnalysisBySessionId(input.sessionId);
+        if (!analysis) throw new TRPCError({ code: "NOT_FOUND" });
+        if (analysis.userId && analysis.userId !== ctx.user.id) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Access denied" });
+        }
+        if (!analysis.userId) {
+          await linkAnalysisToUser(input.sessionId, ctx.user.id);
+        }
         return { success: true };
       }),
 
@@ -504,7 +534,8 @@ export const appRouter = router({
       .input(z.object({ redirectUri: z.string().optional() }))
       .query(async ({ ctx }) => {
         if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
-        const state = Buffer.from(JSON.stringify({ userId: ctx.user.id })).toString("base64");
+        const exp = Math.floor(Date.now() / 1000) + 600;
+        const state = signOAuthState({ userId: ctx.user.id, exp });
         const redirectUri = `${ENV.appUrl}/api/gmail/callback`;
         const url = getGmailAuthUrl(redirectUri, state);
         return { url };

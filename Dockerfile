@@ -20,12 +20,15 @@ COPY --from=build /app/drizzle ./drizzle
 COPY --from=build /app/package.json ./
 COPY --from=build /app/drizzle.config.ts ./
 
-RUN mkdir -p /data/uploads
+RUN addgroup --system app && adduser --system --ingroup app app
+RUN mkdir -p /data/uploads && chown -R app:app /data/uploads
 
 ENV NODE_ENV=production
 ENV PORT=3000
 ENV STORAGE_PATH=/data/uploads
 
 EXPOSE 3000
+
+USER app
 
 CMD ["node", "dist/index.js"]
