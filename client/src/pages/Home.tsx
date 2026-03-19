@@ -10,9 +10,8 @@ import { Button } from "@/components/ui/button";
 import { FileUpload } from "@/components/FileUpload";
 import { CoverageCards } from "@/components/CoverageCards";
 import { FinancialSummary } from "@/components/FinancialSummary";
-import { PolicyNames } from "@/components/PolicyNames";
-import { FileFilter } from "@/components/FileFilter";
 import { PolicyChatbot } from "@/components/PolicyChatbot";
+import { DuplicateCoveragesAlert } from "@/components/DuplicateCoveragesAlert";
 import {
   Shield,
   FileSearch,
@@ -20,18 +19,24 @@ import {
   Banknote,
   MessageCircle,
   Loader2,
-  LogOut,
-  LayoutGrid,
-  User,
   FileText,
+  Sparkles,
+  ArrowLeft,
+  CheckCircle2,
 } from "lucide-react";
 import type { UploadedFile, PolicyAnalysis } from "@shared/insurance";
 
+const STEPS = [
+  { icon: <FileSearch className="size-5" />, title: "העלה", desc: "העלה קבצי PDF של הפוליסה" },
+  { icon: <Sparkles className="size-5" />, title: "ניתוח", desc: "AI מנתח את הפרטים" },
+  { icon: <LayoutDashboard className="size-5" />, title: "תוצאות", desc: "צפה בכיסויים והמלצות" },
+];
+
 export default function Home() {
-  const { user, logout } = useAuth({ redirectOnUnauthenticated: true });
+  const { user } = useAuth({ redirectOnUnauthenticated: true });
   const [, setLocation] = useLocation();
   const [match, params] = useRoute("/analysis/:sessionId");
-  
+
   const [files, setFiles] = useState<UploadedFile[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [analysisResult, setAnalysisResult] = useState<PolicyAnalysis | null>(null);
@@ -48,13 +53,10 @@ export default function Home() {
   );
   const linkToUserMutation = trpc.policy.linkToUser.useMutation();
 
-  // Load analysis if viewing from URL
   useEffect(() => {
     if (getAnalysisMutation.data && params?.sessionId) {
       setSessionId(params.sessionId);
       setAnalysisResult(getAnalysisMutation.data.result);
-      
-      // Link to user if authenticated
       if (user && !getAnalysisMutation.data.result?.generalInfo?.policyName?.includes("לא צוין")) {
         linkToUserMutation.mutate({ sessionId: params.sessionId });
       }
@@ -83,7 +85,6 @@ export default function Home() {
     setFiles(prev => prev.map(f => ({ ...f, status: "uploading" as const })));
 
     try {
-      // Convert files to base64
       const fileData = await Promise.all(
         files.map(async (f) => {
           const fileObj = (f as any)._file as File;
@@ -98,13 +99,11 @@ export default function Home() {
         })
       );
 
-      // Upload files
       const result = await uploadMutation.mutateAsync({ files: fileData });
       setSessionId(result.sessionId);
       setFiles(prev => prev.map(f => ({ ...f, status: "uploaded" as const })));
       setIsUploading(false);
 
-      // Start analysis
       setIsAnalyzing(true);
       setFiles(prev => prev.map(f => ({ ...f, status: "analyzing" as const })));
 
@@ -115,12 +114,11 @@ export default function Home() {
       setAnalysisResult(analysisResponse.result);
       setFiles(prev => prev.map(f => ({ ...f, status: "done" as const })));
       setIsAnalyzing(false);
-      
-      // Link to user if authenticated
+
       if (user) {
         await linkToUserMutation.mutateAsync({ sessionId: result.sessionId });
       }
-      
+
       toast.success("הניתוח הושלם בהצלחה!");
     } catch (error: any) {
       setIsUploading(false);
@@ -137,228 +135,206 @@ export default function Home() {
     setIsUploading(false);
     setIsAnalyzing(false);
     setActiveTab("coverages");
-  }, []);
+    setSelectedFileFilter(null);
+    setLocation("/");
+  }, [setLocation]);
+
+  const currentStep = isAnalyzing ? 1 : analysisResult ? 2 : 0;
 
   return (
-    <div className="min-h-screen bg-background" dir="rtl">
-      {/* Header */}
-      <header className="border-b bg-card/80 backdrop-blur-sm sticky top-0 z-50">
-        <div className="container py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="rounded-xl bg-primary/10 p-2.5">
-                <Shield className="size-6 text-primary" />
-              </div>
-              <div>
-                <h1 className="text-xl font-bold text-foreground">מנתח פוליסות ביטוח</h1>
-                <p className="text-xs text-muted-foreground">ניתוח חכם של פוליסות ביטוח באמצעות AI</p>
-              </div>
-            </div>
-            {user && (
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setLocation("/dashboard")}
-                  className="gap-2"
-                >
-                  <LayoutGrid className="size-4" />
-                  דשבורד
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setLocation("/profile")}
-                  className="gap-2"
-                >
-                  <User className="size-4" />
-                  פרופיל
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={async () => {
-                    await logout();
-                  }}
-                  className="gap-2"
-                >
-                  <LogOut className="size-4" />
-                  התנתקות
-                </Button>
-              </div>
-            )}
-          </div>
-        </div>
-      </header>
-
-      <main className="container py-6">
-        {/* Upload Section */}
-        {!analysisResult && (
+    <div className="min-h-full">
+      {!analysisResult && (
+        <div className="page-container">
           <div className="max-w-2xl mx-auto">
-            {/* Hero */}
-            <div className="text-center mb-8">
-              <h2 className="text-2xl font-bold text-foreground mb-2">
-                הבן את הפוליסה שלך בקלות
-              </h2>
-              <p className="text-muted-foreground">
-                העלה את קובץ ה-PDF של פוליסת הביטוח שלך וקבל ניתוח מפורט של כל הכיסויים, העלויות והתנאים
-              </p>
-            </div>
+            <div className="relative overflow-hidden rounded-2xl bg-gradient-to-bl from-[#1a2744] via-[#1e3a5f] to-[#2563eb] p-8 md:p-10 mb-8 animate-fade-in-up">
+              <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHZpZXdCb3g9IjAgMCA2MCA2MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZyBmaWxsPSJub25lIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiPjxnIGZpbGw9IiNmZmYiIGZpbGwtb3BhY2l0eT0iMC4wMyI+PHBhdGggZD0iTTM2IDE4YzMuMzE0IDAgNi0yLjY4NiA2LTZzLTIuNjg2LTYtNi02LTYgMi42ODYtNiA2IDIuNjg2IDYgNiA2em0wIDJjLTQuNDE4IDAtOCAzLjU4Mi04IDhzMy41ODIgOCA4IDggOC0zLjU4MiA4LTgtMy41ODItOC04LTh6Ii8+PC9nPjwvZz48L3N2Zz4=')] opacity-40" />
 
-            {/* Steps */}
-            <div className="grid grid-cols-3 gap-4 mb-8">
-              {[
-                { icon: <FileSearch className="size-5" />, title: "העלה", desc: "העלה קבצי PDF" },
-                { icon: <Loader2 className="size-5" />, title: "ניתוח", desc: "AI מנתח את הפוליסה" },
-                { icon: <LayoutDashboard className="size-5" />, title: "תוצאות", desc: "צפה בכיסויים" },
-              ].map((step, i) => (
-                <div key={i} className="text-center">
-                  <div className="rounded-full bg-primary/10 p-3 w-fit mx-auto mb-2">
-                    {step.icon}
-                  </div>
-                  <p className="text-sm font-semibold">{step.title}</p>
-                  <p className="text-xs text-muted-foreground">{step.desc}</p>
+              <div className="relative z-10 text-center">
+                <div className="inline-flex items-center gap-2 rounded-full bg-white/10 backdrop-blur-sm px-4 py-1.5 mb-5">
+                  <Shield className="size-4 text-blue-300" />
+                  <span className="text-xs font-medium text-blue-100">ניתוח חכם עם AI</span>
                 </div>
-              ))}
+                <h2 className="text-2xl md:text-3xl font-bold text-white mb-3">
+                  הבן את הפוליסה שלך בקלות
+                </h2>
+                <p className="text-sm md:text-base text-blue-100/80 max-w-lg mx-auto leading-relaxed">
+                  העלה את קובץ ה-PDF של פוליסת הביטוח שלך וקבל ניתוח מפורט של כל הכיסויים, העלויות והתנאים
+                </p>
+              </div>
+
+              <div className="relative z-10 flex items-center justify-center gap-3 mt-8">
+                {STEPS.map((step, i) => (
+                  <div key={i} className="flex items-center gap-3">
+                    <div className="flex flex-col items-center gap-1.5">
+                      <div className={`rounded-full p-2.5 transition-all duration-300 ${
+                        i <= currentStep
+                          ? "bg-white text-[#1a2744]"
+                          : "bg-white/10 text-white/50"
+                      }`}>
+                        {i < currentStep ? (
+                          <CheckCircle2 className="size-5" />
+                        ) : (
+                          step.icon
+                        )}
+                      </div>
+                      <span className={`text-xs font-medium ${
+                        i <= currentStep ? "text-white" : "text-white/40"
+                      }`}>
+                        {step.title}
+                      </span>
+                    </div>
+                    {i < STEPS.length - 1 && (
+                      <div className={`w-12 md:w-20 h-px mb-5 transition-colors duration-300 ${
+                        i < currentStep ? "bg-white/50" : "bg-white/15"
+                      }`} />
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
 
-            <FileUpload
-              files={files}
-              onFilesSelected={handleFilesSelected}
-              onRemoveFile={handleRemoveFile}
-              onAnalyze={handleAnalyze}
-              isUploading={isUploading}
-              isAnalyzing={isAnalyzing}
-              hasResults={!!analysisResult}
-            />
+            <div className="animate-fade-in-up stagger-2">
+              <FileUpload
+                files={files}
+                onFilesSelected={handleFilesSelected}
+                onRemoveFile={handleRemoveFile}
+                onAnalyze={handleAnalyze}
+                isUploading={isUploading}
+                isAnalyzing={isAnalyzing}
+                hasResults={!!analysisResult}
+              />
+            </div>
 
-            {/* Loading state with progress */}
             {isAnalyzing && (
-              <Card className="mt-6 border-primary/20 bg-primary/5">
-                <CardContent className="py-6 text-center">
-                  <Loader2 className="size-8 text-primary animate-spin mx-auto mb-3" />
-                  <p className="text-sm font-medium text-foreground">
-                    מנתח את הפוליסה... זה עשוי לקחת עד דקה
+              <Card className="mt-6 border-primary/20 bg-primary/5 animate-fade-in-up">
+                <CardContent className="py-8 text-center">
+                  <div className="relative size-14 mx-auto mb-4">
+                    <div className="absolute inset-0 rounded-full border-2 border-primary/20" />
+                    <div className="absolute inset-0 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+                    <Sparkles className="absolute inset-0 m-auto size-6 text-primary" />
+                  </div>
+                  <p className="text-sm font-semibold text-foreground">
+                    מנתח את הפוליסה...
                   </p>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    ה-AI קורא ומנתח את כל הפרטים בפוליסה שלך
+                  <p className="text-xs text-muted-foreground mt-1.5">
+                    ה-AI קורא ומנתח את כל הפרטים — זה עשוי לקחת עד דקה
                   </p>
                 </CardContent>
               </Card>
             )}
           </div>
-        )}
-
-        {/* Results Dashboard */}
-        {analysisResult && (
-          <div className="space-y-6">
-            {/* Summary Banner */}
-            <Card className="bg-gradient-to-l from-primary/5 to-primary/10 border-primary/20">
-              <CardContent className="py-5">
-                <div className="flex items-start justify-between">
-                  <div className="flex-1">
-                    <div className="flex items-start gap-3 mb-2">
-                      <div className="rounded-xl bg-primary/10 p-2.5 shrink-0 mt-0.5">
-                        <Shield className="size-6 text-primary" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        {/* PDF file badges */}
-                        {analysisResult.generalInfo.policyNames && analysisResult.generalInfo.policyNames.length > 0 ? (
-                          <div className="flex flex-wrap gap-2 mb-2 justify-end" dir="rtl">
-                            {analysisResult.generalInfo.policyNames.map((name) => (
-                              <button
-                                key={name}
-                                onClick={() => {
-                                  setSelectedFileFilter(selectedFileFilter === name ? null : name);
-                                  setActiveTab("coverages");
-                                }}
-                                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border transition-all cursor-pointer ${
-                                  selectedFileFilter === name
-                                    ? "bg-primary text-primary-foreground border-primary shadow-sm"
-                                    : "bg-white text-foreground border-border hover:bg-primary/5 hover:border-primary/40"
-                                }`}
-                              >
-                                <FileText className="size-3.5 shrink-0" />
-                                <span className="max-w-[200px] truncate">{name}</span>
-                              </button>
-                            ))}
-                            {selectedFileFilter && (
-                              <button
-                                onClick={() => setSelectedFileFilter(null)}
-                                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs text-muted-foreground border border-dashed border-muted-foreground/30 hover:border-muted-foreground/60 transition-all"
-                              >
-                                הצג הכל
-                              </button>
-                            )}
-                          </div>
-                        ) : (
-                          <h2 className="text-lg font-bold text-foreground mb-1">ניתוח הפוליסה הושלם</h2>
-                        )}
-                        <p className="text-sm text-muted-foreground text-right" dir="rtl">
-                          {analysisResult.summary}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleReset}
-                    className="shrink-0"
-                  >
-                    ניתוח חדש
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-
-
-
-            {/* Tabs */}
-            <Tabs value={activeTab} onValueChange={setActiveTab} dir="rtl">
-              <TabsList className="w-full justify-start bg-muted/50 p-1">
-                <TabsTrigger value="coverages" className="gap-1.5 text-sm">
-                  <LayoutDashboard className="size-4" />
-                  כיסויים
-                </TabsTrigger>
-                <TabsTrigger value="financial" className="gap-1.5 text-sm">
-                  <Banknote className="size-4" />
-                  מידע כללי ועלויות
-                </TabsTrigger>
-                <TabsTrigger value="chat" className="gap-1.5 text-sm">
-                  <MessageCircle className="size-4" />
-                  שאלות ותשובות
-                </TabsTrigger>
-              </TabsList>
-
-              <TabsContent value="coverages" className="mt-4">
-                <CoverageCards coverages={analysisResult.coverages} selectedFileFilter={selectedFileFilter} />
-              </TabsContent>
-
-              <TabsContent value="financial" className="mt-4">
-                <FinancialSummary
-                  generalInfo={analysisResult.generalInfo}
-                  coverages={analysisResult.coverages}
-                  summary={analysisResult.summary}
-                />
-              </TabsContent>
-
-              <TabsContent value="chat" className="mt-4">
-                {sessionId && <PolicyChatbot sessionId={sessionId} />}
-              </TabsContent>
-            </Tabs>
-          </div>
-        )}
-      </main>
-
-      {/* Footer */}
-      <footer className="border-t mt-12 py-6 bg-muted/30">
-        <div className="container text-center">
-          <p className="text-xs text-muted-foreground">
-            הכלי מספק ניתוח ראשוני בלבד ואינו מהווה ייעוץ משפטי או ביטוחי. יש לבדוק את הפוליסה המקורית לפרטים מלאים.
-          </p>
         </div>
-      </footer>
+      )}
+
+      {analysisResult && (
+        <div className="page-container space-y-6">
+          <div className="relative overflow-hidden rounded-2xl bg-gradient-to-bl from-[#1a2744] via-[#1e3a5f] to-[#2563eb] p-6 md:p-8 animate-fade-in-up">
+            <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHZpZXdCb3g9IjAgMCA2MCA2MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZyBmaWxsPSJub25lIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiPjxnIGZpbGw9IiNmZmYiIGZpbGwtb3BhY2l0eT0iMC4wMyI+PHBhdGggZD0iTTM2IDE4YzMuMzE0IDAgNi0yLjY4NiA2LTZzLTIuNjg2LTYtNi02LTYgMi42ODYtNiA2IDIuNjg2IDYgNiA2em0wIDJjLTQuNDE4IDAtOCAzLjU4Mi04IDhzMy41ODIgOCA4IDggOC0zLjU4MiA4LTgtMy41ODItOC04LTh6Ii8+PC9nPjwvZz48L3N2Zz4=')] opacity-40" />
+
+            <div className="relative z-10">
+              <div className="flex items-start justify-between gap-4 flex-wrap">
+                <div className="flex-1 min-w-0">
+                  {analysisResult.generalInfo.policyNames && analysisResult.generalInfo.policyNames.length > 0 ? (
+                    <div className="flex flex-wrap gap-2 mb-3">
+                      {analysisResult.generalInfo.policyNames.map((name) => (
+                        <button
+                          key={name}
+                          onClick={() => {
+                            setSelectedFileFilter(selectedFileFilter === name ? null : name);
+                            setActiveTab("coverages");
+                          }}
+                          className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
+                            selectedFileFilter === name
+                              ? "bg-white text-[#1a2744] shadow-md"
+                              : "bg-white/15 text-white hover:bg-white/25 backdrop-blur-sm"
+                          }`}
+                        >
+                          <FileText className="size-3.5 shrink-0" />
+                          <span className="max-w-[200px] truncate">{name}</span>
+                        </button>
+                      ))}
+                      {selectedFileFilter && (
+                        <button
+                          onClick={() => setSelectedFileFilter(null)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs text-white/60 border border-white/20 hover:bg-white/10 transition-all"
+                        >
+                          הצג הכל
+                        </button>
+                      )}
+                    </div>
+                  ) : (
+                    <h2 className="text-xl font-bold text-white mb-2">ניתוח הפוליסה הושלם</h2>
+                  )}
+
+                  <p className="text-sm text-blue-100/70 leading-relaxed max-w-2xl">
+                    {analysisResult.summary}
+                  </p>
+
+                  <div className="flex flex-wrap gap-2 mt-4">
+                    {analysisResult.coverages && (
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-white/10 backdrop-blur-sm px-3 py-1 text-xs font-medium text-blue-100">
+                        <Shield className="size-3" />
+                        {analysisResult.coverages.length} כיסויים
+                      </span>
+                    )}
+                    {analysisResult.generalInfo.monthlyPremium && analysisResult.generalInfo.monthlyPremium !== "לא צוין בפוליסה" && (
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-white/10 backdrop-blur-sm px-3 py-1 text-xs font-medium text-blue-100">
+                        <Banknote className="size-3" />
+                        {analysisResult.generalInfo.monthlyPremium}
+                      </span>
+                    )}
+                    {analysisResult.generalInfo.endDate && analysisResult.generalInfo.endDate !== "לא צוין בפוליסה" && (
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-white/10 backdrop-blur-sm px-3 py-1 text-xs font-medium text-blue-100">
+                        תקף עד {analysisResult.generalInfo.endDate}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <Button
+                  onClick={handleReset}
+                  className="bg-white/15 hover:bg-white/25 text-white border-0 backdrop-blur-sm shrink-0 gap-2"
+                >
+                  <ArrowLeft className="size-4" />
+                  ניתוח חדש
+                </Button>
+              </div>
+            </div>
+          </div>
+
+          <Tabs value={activeTab} onValueChange={setActiveTab} dir="rtl" className="animate-fade-in-up stagger-2">
+            <TabsList className="w-full justify-start bg-card border p-1.5 rounded-xl gap-1">
+              <TabsTrigger value="coverages" className="gap-2 text-sm rounded-lg data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-sm">
+                <LayoutDashboard className="size-4" />
+                כיסויים
+              </TabsTrigger>
+              <TabsTrigger value="financial" className="gap-2 text-sm rounded-lg data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-sm">
+                <Banknote className="size-4" />
+                מידע כללי ועלויות
+              </TabsTrigger>
+              <TabsTrigger value="chat" className="gap-2 text-sm rounded-lg data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-sm">
+                <MessageCircle className="size-4" />
+                שאלות ותשובות
+              </TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="coverages" className="mt-5">
+              <CoverageCards coverages={analysisResult.coverages} selectedFileFilter={selectedFileFilter} />
+            </TabsContent>
+
+            <TabsContent value="financial" className="mt-5">
+              <FinancialSummary
+                generalInfo={analysisResult.generalInfo}
+                coverages={analysisResult.coverages}
+                summary={analysisResult.summary}
+              />
+            </TabsContent>
+
+            <TabsContent value="chat" className="mt-5">
+              {sessionId && <PolicyChatbot sessionId={sessionId} />}
+            </TabsContent>
+          </Tabs>
+        </div>
+      )}
     </div>
   );
 }

@@ -131,11 +131,10 @@ export async function saveGmailConnection(
       expiresAt,
     })
     .onConflictDoUpdate({
-      target: gmailConnections.userId,
+      target: [gmailConnections.userId, gmailConnections.email],
       set: {
         accessToken: encryptedAccess,
         refreshToken: encryptedRefresh,
-        email,
         expiresAt,
         updatedAt: new Date(),
       },
@@ -153,17 +152,39 @@ export async function getGmailConnection(userId: number) {
   return conn ?? null;
 }
 
-export async function disconnectGmail(userId: number) {
+export async function getAllGmailConnections(userId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select()
+    .from(gmailConnections)
+    .where(eq(gmailConnections.userId, userId));
+}
+
+export async function getGmailConnectionById(connectionId: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const [conn] = await db
+    .select()
+    .from(gmailConnections)
+    .where(eq(gmailConnections.id, connectionId))
+    .limit(1);
+  return conn ?? null;
+}
+
+export async function disconnectGmail(connectionId: number, userId: number) {
   const db = await getDb();
   if (!db) return;
-  await db.delete(gmailConnections).where(eq(gmailConnections.userId, userId));
+  await db
+    .delete(gmailConnections)
+    .where(and(eq(gmailConnections.id, connectionId), eq(gmailConnections.userId, userId)));
 }
 
 // ─── OAuth2 client with stored tokens ────────────────────────────────────────
 
-async function getAuthenticatedClient(userId: number) {
-  const conn = await getGmailConnection(userId);
-  if (!conn) throw new Error("Gmail not connected for this user");
+async function getAuthenticatedClient(connectionId: number) {
+  const conn = await getGmailConnectionById(connectionId);
+  if (!conn) throw new Error("Gmail connection not found");
 
   const accessToken = decrypt(conn.accessToken);
   const refreshToken = decrypt(conn.refreshToken);
@@ -175,7 +196,6 @@ async function getAuthenticatedClient(userId: number) {
     expiry_date: conn.expiresAt?.getTime(),
   });
 
-  // Auto-refresh if expired
   oauth2Client.on("tokens", async (tokens) => {
     if (tokens.access_token) {
       const encryptedAccess = encrypt(tokens.access_token);
@@ -187,7 +207,7 @@ async function getAuthenticatedClient(userId: number) {
             accessToken: encryptedAccess,
             expiresAt: new Date(tokens.expiry_date ?? Date.now() + 3600 * 1000),
           })
-          .where(eq(gmailConnections.userId, userId));
+          .where(eq(gmailConnections.id, connectionId));
       }
     }
   });
@@ -340,10 +360,10 @@ interface ScannedEmail {
 }
 
 async function fetchRecentEmails(
-  userId: number,
+  connectionId: number,
   daysBack: number = 7
 ): Promise<ScannedEmail[]> {
-  const auth = await getAuthenticatedClient(userId);
+  const auth = await getAuthenticatedClient(connectionId);
   const gmail = google.gmail({ version: "v1", auth });
 
   // Build query: last N days, only relevant emails
@@ -460,13 +480,14 @@ async function fetchRecentEmails(
  * Returns the S3 URL of the uploaded PDF.
  */
 async function downloadAndUploadPdfAttachment(
+  connectionId: number,
   userId: number,
   messageId: string,
   attachmentId: string,
   filename: string
 ): Promise<string | null> {
   try {
-    const auth = await getAuthenticatedClient(userId);
+    const auth = await getAuthenticatedClient(connectionId);
     const gmail = google.gmail({ version: "v1", auth });
 
     const attachRes = await gmail.users.messages.attachments.get({
@@ -478,16 +499,13 @@ async function downloadAndUploadPdfAttachment(
     const data = attachRes.data.data;
     if (!data) return null;
 
-    // Gmail returns base64url-encoded data
     const pdfBuffer = Buffer.from(data, "base64");
 
-    // Skip very large files (>10MB)
     if (pdfBuffer.length > 10 * 1024 * 1024) {
       console.log(`[Gmail] Skipping large PDF (${pdfBuffer.length} bytes): ${filename}`);
       return null;
     }
 
-    // Upload to S3 with a unique key
     const suffix = crypto.randomBytes(4).toString("hex");
     const fileKey = `gmail-invoices/${userId}/${messageId}-${suffix}-${filename}`;
     const { url } = await storagePut(fileKey, pdfBuffer, "application/pdf");
@@ -681,109 +699,114 @@ export async function scanGmailForInvoices(
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
-  const emails = await fetchRecentEmails(userId, daysBack);
+  const connections = await getAllGmailConnections(userId);
+  if (connections.length === 0) throw new Error("No Gmail accounts connected");
 
+  let totalScanned = 0;
   let found = 0;
   let saved = 0;
   const invoices: ScanResult["invoices"] = [];
 
-  for (const email of emails) {
-    // Check for existing invoice (avoid duplicates)
-    const existing = await db
-      .select({ id: smartInvoices.id })
-      .from(smartInvoices)
-      .where(
-        and(
-          eq(smartInvoices.userId, userId),
-          eq(smartInvoices.gmailMessageId, email.messageId)
+  for (const conn of connections) {
+    let connSaved = 0;
+
+    const emails = await fetchRecentEmails(conn.id, daysBack);
+    totalScanned += emails.length;
+
+    for (const email of emails) {
+      const existing = await db
+        .select({ id: smartInvoices.id })
+        .from(smartInvoices)
+        .where(
+          and(
+            eq(smartInvoices.userId, userId),
+            eq(smartInvoices.gmailMessageId, email.messageId)
+          )
         )
-      )
-      .limit(1);
+        .limit(1);
 
-    if (existing.length > 0) continue;
+      if (existing.length > 0) continue;
 
-    // Filter: must look like an invoice
-    if (!isInvoiceEmail(email.subject, email.body)) continue;
+      if (!isInvoiceEmail(email.subject, email.body)) continue;
 
-    // Detect provider
-    const detectedProvider = detectProvider(email.subject, email.from, email.body);
+      const detectedProvider = detectProvider(email.subject, email.from, email.body);
 
-    found++;
+      found++;
 
-    // ─── Handle PDF attachments ──────────────────────────────────────────
-    let pdfText: string | null = null;
-    let pdfUrl: string | null = null;
+      let pdfText: string | null = null;
+      let pdfUrl: string | null = null;
 
-    if (email.pdfAttachments.length > 0) {
-      // Process the first PDF attachment (most likely the invoice)
-      const firstPdf = email.pdfAttachments[0];
-      console.log(`[Gmail] Processing PDF attachment: ${firstPdf.filename} (${firstPdf.size} bytes)`);
+      if (email.pdfAttachments.length > 0) {
+        const firstPdf = email.pdfAttachments[0];
+        console.log(`[Gmail] Processing PDF attachment: ${firstPdf.filename} (${firstPdf.size} bytes)`);
 
-      pdfUrl = await downloadAndUploadPdfAttachment(
-        userId,
-        email.messageId,
-        firstPdf.attachmentId,
-        firstPdf.filename
+        pdfUrl = await downloadAndUploadPdfAttachment(
+          conn.id,
+          userId,
+          email.messageId,
+          firstPdf.attachmentId,
+          firstPdf.filename
+        );
+
+        if (pdfUrl) {
+          const fileKey = pdfUrl.replace(/^\/api\/files\//, "");
+          pdfText = await extractTextFromPdf(pdfUrl, fileKey);
+          console.log(`[Gmail] Extracted ${pdfText.length} chars from PDF: ${firstPdf.filename}`);
+        }
+      }
+
+      const extracted = await extractInvoiceData(
+        email.subject,
+        email.from,
+        email.body,
+        pdfText,
+        detectedProvider
       );
 
-      if (pdfUrl) {
-        const fileKey = pdfUrl.replace(/^\/api\/files\//, "");
-        pdfText = await extractTextFromPdf(pdfUrl, fileKey);
-        console.log(`[Gmail] Extracted ${pdfText.length} chars from PDF: ${firstPdf.filename}`);
-      }
+      const provider = extracted?.provider ?? detectedProvider?.name ?? "ספק לא ידוע";
+      const category = extracted?.category ?? detectedProvider?.category ?? "אחר";
+      const description = extracted?.description ?? email.subject;
+
+      const extractedDataObj = {
+        ...(extracted ?? {}),
+        pdfUrl: pdfUrl ?? undefined,
+        pdfFilename: email.pdfAttachments[0]?.filename ?? undefined,
+        fromEmail: email.from,
+      };
+      await db.insert(smartInvoices).values({
+        userId,
+        gmailConnectionId: conn.id,
+        sourceEmail: conn.email ?? null,
+        gmailMessageId: email.messageId,
+        provider,
+        category: category as "תקשורת" | "חשמל" | "מים" | "ארנונה" | "ביטוח" | "בנק" | "רכב" | "אחר",
+        amount: extracted?.amount?.toString() ?? null,
+        invoiceDate: extracted?.invoiceDate ? new Date(extracted.invoiceDate) : email.date,
+        dueDate: extracted?.dueDate ? new Date(extracted.dueDate) : null,
+        status: (extracted?.status ?? "unknown") as "pending" | "paid" | "overdue" | "unknown",
+        subject: encryptField(email.subject),
+        rawText: encryptField(email.body.slice(0, 2000)),
+        extractedData: encryptJson(extractedDataObj) as any,
+        parsed: extracted !== null,
+      });
+
+      saved++;
+      connSaved++;
+      invoices.push({
+        provider,
+        amount: extracted?.amount ?? null,
+        category,
+        date: extracted?.invoiceDate ?? null,
+        subject: email.subject,
+        description,
+      });
     }
 
-    // Extract invoice data with AI (using both email body and PDF text)
-    const extracted = await extractInvoiceData(
-      email.subject,
-      email.from,
-      email.body,
-      pdfText,
-      detectedProvider
-    );
-
-    const provider = extracted?.provider ?? detectedProvider?.name ?? "ספק לא ידוע";
-    const category = extracted?.category ?? detectedProvider?.category ?? "אחר";
-    const description = extracted?.description ?? email.subject;
-
-    // Save to database — encrypt sensitive fields before storage
-    const extractedDataObj = {
-      ...(extracted ?? {}),
-      pdfUrl: pdfUrl ?? undefined,
-      pdfFilename: email.pdfAttachments[0]?.filename ?? undefined,
-      fromEmail: email.from,
-    };
-    await db.insert(smartInvoices).values({
-      userId,
-      gmailMessageId: email.messageId,
-      provider,
-      category: category as "תקשורת" | "חשמל" | "מים" | "ארנונה" | "ביטוח" | "בנק" | "רכב" | "אחר",
-      amount: extracted?.amount?.toString() ?? null,
-      invoiceDate: extracted?.invoiceDate ? new Date(extracted.invoiceDate) : email.date,
-      dueDate: extracted?.dueDate ? new Date(extracted.dueDate) : null,
-      status: (extracted?.status ?? "unknown") as "pending" | "paid" | "overdue" | "unknown",
-      subject: encryptField(email.subject),
-      rawText: encryptField(email.body.slice(0, 2000)),
-      extractedData: encryptJson(extractedDataObj) as any,
-      parsed: extracted !== null,
-    });
-
-    saved++;
-    invoices.push({
-      provider,
-      amount: extracted?.amount ?? null,
-      category,
-      date: extracted?.invoiceDate ?? null,
-      subject: email.subject,
-      description,
-    });
+    await db
+      .update(gmailConnections)
+      .set({ lastSyncedAt: new Date(), lastSyncCount: connSaved })
+      .where(eq(gmailConnections.id, conn.id));
   }
 
-  // Update last sync timestamp
-  await db
-    .update(gmailConnections)
-    .set({ lastSyncedAt: new Date(), lastSyncCount: saved })
-    .where(eq(gmailConnections.userId, userId));
-
-  return { scanned: emails.length, found, saved, invoices };
+  return { scanned: totalScanned, found, saved, invoices };
 }

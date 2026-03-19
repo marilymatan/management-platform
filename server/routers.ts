@@ -27,7 +27,7 @@ import {
   getGmailAuthUrl,
   exchangeCodeForTokens,
   saveGmailConnection,
-  getGmailConnection,
+  getAllGmailConnections,
   disconnectGmail,
   scanGmailForInvoices,
 } from "./gmail";
@@ -68,7 +68,17 @@ const ANALYSIS_SYSTEM_PROMPT = `אתה מומחה לניתוח פוליסות ב
     "importantNotes": ["הערות חשובות"],
     "fineprint": ["אותיות קטנות וחריגים בולטים"]
   },
-  "summary": "סיכום כללי קצר של הפוליסה ב-2-3 משפטים"
+  "summary": "סיכום כללי קצר של הפוליסה ב-2-3 משפטים",
+  "duplicateCoverages": [
+    {
+      "id": "מזהה ייחודי",
+      "title": "שם הכיסוי הכפול",
+      "coverageIds": ["מזהה כיסוי 1", "מזהה כיסוי 2"],
+      "sourceFiles": ["שם קובץ 1", "שם קובץ 2"],
+      "explanation": "הסבר קצר מדוע כיסויים אלו נחשבים כפולים או חופפים",
+      "recommendation": "המלצה למשתמש, למשל: לבדוק אם משלם כפל ביטוח"
+    }
+  ]
 }
 
 הנחיות:
@@ -77,7 +87,15 @@ const ANALYSIS_SYSTEM_PROMPT = `אתה מומחה לניתוח פוליסות ב
 - אם מידע מסוים לא נמצא, רשום "לא מצוין בפוליסה" (לא "לא צוין")
 - הקפד על דיוק בנתונים הכספיים
 - שמור על שפה ברורה ומובנת בעברית
-- החזר JSON תקין בלבד`;
+- החזר JSON תקין בלבד
+
+הנחיות לזיהוי כיסויים כפולים:
+- בדוק אם יש כיסויים זהים או חופפים שמופיעים ביותר מקובץ אחד, או אפילו בתוך אותו קובץ
+- כיסוי נחשב כפול כאשר שני כיסויים מכסים את אותו סוג טיפול/שירות, גם אם השמות שונים במקצת
+- לכל קבוצת כיסויים כפולים, ציין את ה-id של הכיסויים הרלוונטיים מתוך מערך ה-coverages
+- הסבר בבירור למה הכיסויים נחשבים כפולים (למשל: שניהם מכסים ביקור רופא מומחה)
+- תן המלצה מעשית למשתמש (למשל: כדאי לבדוק אם ניתן לבטל אחד מהכיסויים ולחסוך בפרמיה)
+- אם אין כיסויים כפולים, החזר מערך ריק []`;
 
 const CHAT_SYSTEM_PROMPT = `אתה עוזר וירטואלי מומחה בפוליסות ביטוח. תפקידך לענות על שאלות של המשתמש לגבי פוליסת הביטוח שלו.
 
@@ -258,8 +276,24 @@ export const appRouter = router({
                       additionalProperties: false,
                     },
                     summary: { type: "string" },
+                    duplicateCoverages: {
+                      type: "array",
+                      items: {
+                        type: "object",
+                        properties: {
+                          id: { type: "string" },
+                          title: { type: "string" },
+                          coverageIds: { type: "array", items: { type: "string" } },
+                          sourceFiles: { type: "array", items: { type: "string" } },
+                          explanation: { type: "string" },
+                          recommendation: { type: "string" },
+                        },
+                        required: ["id", "title", "coverageIds", "sourceFiles", "explanation", "recommendation"],
+                        additionalProperties: false,
+                      },
+                    },
                   },
-                  required: ["coverages", "generalInfo", "summary"],
+                  required: ["coverages", "generalInfo", "summary", "duplicateCoverages"],
                   additionalProperties: false,
                 },
               },
@@ -489,28 +523,30 @@ export const appRouter = router({
         return { success: true, email };
       }),
 
-    /** Get current Gmail connection status */
     connectionStatus: protectedProcedure.query(async ({ ctx }) => {
       if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
-      const conn = await getGmailConnection(ctx.user.id);
-      if (!conn) return { connected: false, email: null, lastSyncedAt: null, lastSyncCount: 0 };
+      const connections = await getAllGmailConnections(ctx.user.id);
       return {
-        connected: true,
-        email: conn.email,
-        lastSyncedAt: conn.lastSyncedAt,
-        lastSyncCount: conn.lastSyncCount ?? 0,
+        connected: connections.length > 0,
+        connections: connections.map((c) => ({
+          id: c.id,
+          email: c.email,
+          lastSyncedAt: c.lastSyncedAt,
+          lastSyncCount: c.lastSyncCount ?? 0,
+        })),
       };
     }),
 
-    /** Disconnect Gmail */
-    disconnect: protectedProcedure.mutation(async ({ ctx }) => {
-      if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
-        await disconnectGmail(ctx.user.id);
-        // Audit log
+    disconnect: protectedProcedure
+      .input(z.object({ connectionId: z.number() }))
+      .mutation(async ({ ctx, input }) => {
+        if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
+        await disconnectGmail(input.connectionId, ctx.user.id);
         await audit({
           userId: ctx.user.id,
           action: "disconnect_gmail",
           resource: "gmail",
+          resourceId: String(input.connectionId),
         });
         return { success: true };
       }),
@@ -531,7 +567,6 @@ export const appRouter = router({
         return result;
       }),
 
-    /** Get user's extracted invoices */
     getInvoices: protectedProcedure
       .input(z.object({ limit: z.number().min(1).max(100).default(50) }))
       .query(async ({ ctx, input }) => {
@@ -544,7 +579,6 @@ export const appRouter = router({
           .where(eq(smartInvoices.userId, ctx.user.id))
           .orderBy(desc(smartInvoices.createdAt))
           .limit(input.limit);
-        // Decrypt sensitive fields
         return invoices.map(inv => ({
           ...inv,
           subject: inv.subject ? decryptField(inv.subject) : inv.subject,

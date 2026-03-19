@@ -1,4 +1,4 @@
-import { serial, pgTable, pgEnum, text, timestamp, varchar, jsonb, index, numeric, boolean, integer } from "drizzle-orm/pg-core";
+import { serial, pgTable, pgEnum, text, timestamp, varchar, jsonb, index, numeric, boolean, integer, uniqueIndex } from "drizzle-orm/pg-core";
 
 export const roleEnum = pgEnum("role", ["user", "admin"]);
 export const analysisStatusEnum = pgEnum("analysis_status", ["pending", "processing", "completed", "error"]);
@@ -77,7 +77,7 @@ export type InsertApiUsageLog = typeof apiUsageLogs.$inferInsert;
 
 export const gmailConnections = pgTable("gmail_connections", {
   id: serial("id").primaryKey(),
-  userId: integer("user_id").notNull().unique(),
+  userId: integer("user_id").notNull(),
   accessToken: text("access_token").notNull(),
   refreshToken: text("refresh_token").notNull(),
   email: varchar("email", { length: 320 }),
@@ -88,6 +88,7 @@ export const gmailConnections = pgTable("gmail_connections", {
   updatedAt: timestamp("updated_at").defaultNow().notNull().$onUpdate(() => new Date()),
 }, (table) => ({
   userIdIdx: index("gmail_user_id_idx").on(table.userId),
+  userEmailUniq: uniqueIndex("gmail_user_email_uniq").on(table.userId, table.email),
 }));
 
 export type GmailConnection = typeof gmailConnections.$inferSelect;
@@ -96,6 +97,8 @@ export type InsertGmailConnection = typeof gmailConnections.$inferInsert;
 export const smartInvoices = pgTable("smart_invoices", {
   id: serial("id").primaryKey(),
   userId: integer("user_id").notNull(),
+  gmailConnectionId: integer("gmail_connection_id"),
+  sourceEmail: varchar("source_email", { length: 320 }),
   gmailMessageId: varchar("gmail_message_id", { length: 128 }).notNull(),
   provider: varchar("provider", { length: 128 }),
   category: invoiceCategoryEnum("category").default("אחר"),
@@ -110,6 +113,7 @@ export const smartInvoices = pgTable("smart_invoices", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 }, (table) => ({
   userIdIdx: index("invoice_user_id_idx").on(table.userId),
+  gmailConnIdx: index("invoice_gmail_conn_idx").on(table.gmailConnectionId),
   gmailMsgIdx: index("invoice_gmail_msg_idx").on(table.gmailMessageId),
   createdAtIdx: index("invoice_created_at_idx").on(table.createdAt),
 }));

@@ -28,11 +28,21 @@ export interface GeneralInfo {
   fineprint: string[];
 }
 
+export interface DuplicateCoverageGroup {
+  id: string;
+  title: string;
+  coverageIds: string[];
+  sourceFiles: string[];
+  explanation: string;
+  recommendation: string;
+}
+
 /** Full analysis result returned by the AI */
 export interface PolicyAnalysis {
   coverages: Coverage[];
   generalInfo: GeneralInfo;
   summary: string;
+  duplicateCoverages?: DuplicateCoverageGroup[];
 }
 
 /** Status of a file in the upload queue */

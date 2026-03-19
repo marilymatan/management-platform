@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
   Dialog,
@@ -19,8 +19,8 @@ import {
   Brain,
   Activity,
   Shield,
-  ChevronLeft,
   Search,
+  ChevronLeft,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import type { Coverage } from "@shared/insurance";
@@ -30,38 +30,31 @@ interface CoverageCardsProps {
   selectedFileFilter?: string | null;
 }
 
-function getCategoryIcon(category: string) {
-  const lower = category.toLowerCase();
-  if (lower.includes("רפואה משלימה") || lower.includes("משלים")) return <Heart className="size-5" />;
-  if (lower.includes("אשפוז")) return <Activity className="size-5" />;
-  if (lower.includes("שיניים")) return <Stethoscope className="size-5" />;
-  if (lower.includes("עיניים")) return <Eye className="size-5" />;
-  if (lower.includes("תרופות")) return <Pill className="size-5" />;
-  if (lower.includes("ניתוח")) return <Scissors className="size-5" />;
-  if (lower.includes("נפש") || lower.includes("פסיכ")) return <Brain className="size-5" />;
-  return <Shield className="size-5" />;
-}
+const CATEGORY_CONFIG: Record<string, { icon: React.ReactNode; color: string; border: string; bg: string }> = {
+  "רפואה משלימה": { icon: <Heart className="size-4" />, color: "text-pink-600", border: "border-r-pink-400", bg: "bg-pink-50" },
+  "משלים": { icon: <Heart className="size-4" />, color: "text-pink-600", border: "border-r-pink-400", bg: "bg-pink-50" },
+  "אשפוז": { icon: <Activity className="size-4" />, color: "text-blue-600", border: "border-r-blue-400", bg: "bg-blue-50" },
+  "שיניים": { icon: <Stethoscope className="size-4" />, color: "text-cyan-600", border: "border-r-cyan-400", bg: "bg-cyan-50" },
+  "עיניים": { icon: <Eye className="size-4" />, color: "text-purple-600", border: "border-r-purple-400", bg: "bg-purple-50" },
+  "תרופות": { icon: <Pill className="size-4" />, color: "text-green-600", border: "border-r-green-400", bg: "bg-green-50" },
+  "ניתוח": { icon: <Scissors className="size-4" />, color: "text-orange-600", border: "border-r-orange-400", bg: "bg-orange-50" },
+  "נפש": { icon: <Brain className="size-4" />, color: "text-indigo-600", border: "border-r-indigo-400", bg: "bg-indigo-50" },
+  "פסיכ": { icon: <Brain className="size-4" />, color: "text-indigo-600", border: "border-r-indigo-400", bg: "bg-indigo-50" },
+};
 
-function getCategoryColor(category: string): string {
+function getCategoryConfig(category: string) {
   const lower = category.toLowerCase();
-  if (lower.includes("רפואה משלימה") || lower.includes("משלים")) return "bg-pink-50 text-pink-700 border-pink-200";
-  if (lower.includes("אשפוז")) return "bg-blue-50 text-blue-700 border-blue-200";
-  if (lower.includes("שיניים")) return "bg-cyan-50 text-cyan-700 border-cyan-200";
-  if (lower.includes("עיניים")) return "bg-purple-50 text-purple-700 border-purple-200";
-  if (lower.includes("תרופות")) return "bg-green-50 text-green-700 border-green-200";
-  if (lower.includes("ניתוח")) return "bg-orange-50 text-orange-700 border-orange-200";
-  if (lower.includes("נפש") || lower.includes("פסיכ")) return "bg-indigo-50 text-indigo-700 border-indigo-200";
-  return "bg-slate-50 text-slate-700 border-slate-200";
+  for (const [key, config] of Object.entries(CATEGORY_CONFIG)) {
+    if (lower.includes(key)) return config;
+  }
+  return { icon: <Shield className="size-4" />, color: "text-slate-600", border: "border-r-slate-400", bg: "bg-slate-50" };
 }
 
 function DetailRow({ label, value }: { label: string; value?: string }) {
   return (
     <div className="py-3 text-right" dir="rtl">
       <dt className="text-sm font-medium text-muted-foreground mb-1">{label}</dt>
-      <dd className="text-sm text-foreground" style={{
-        textAlign: 'right',
-        direction: 'rtl'
-      }}>
+      <dd className="text-sm text-foreground" style={{ textAlign: 'right', direction: 'rtl' }}>
         {value}
       </dd>
       <style>{`
@@ -81,25 +74,28 @@ function DetailRow({ label, value }: { label: string; value?: string }) {
 export function CoverageCards({ coverages, selectedFileFilter }: CoverageCardsProps) {
   const [selectedCoverage, setSelectedCoverage] = useState<Coverage | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [activeCategory, setActiveCategory] = useState<string | null>(null);
 
   if (coverages.length === 0) {
     return (
-      <div className="text-center py-8 text-muted-foreground">
-        <Shield className="size-12 mx-auto mb-3 opacity-30" />
-        <p>לא נמצאו כיסויים בפוליסה</p>
+      <div className="text-center py-16">
+        <div className="size-16 rounded-2xl bg-muted/60 flex items-center justify-center mx-auto mb-4">
+          <Shield className="size-8 text-muted-foreground/40" />
+        </div>
+        <h3 className="text-base font-semibold text-foreground mb-1">לא נמצאו כיסויים</h3>
+        <p className="text-sm text-muted-foreground">לא נמצאו כיסויים בפוליסה שהועלתה</p>
       </div>
     );
   }
 
-  // Filter coverages by search query and selected file
   const filteredCoverages = coverages.filter(cov => {
     const matchesSearch = cov.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
       cov.category.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesFile = !selectedFileFilter || cov.sourceFile === selectedFileFilter;
-    return matchesSearch && matchesFile;
+    const matchesCategory = !activeCategory || cov.category === activeCategory;
+    return matchesSearch && matchesFile && matchesCategory;
   });
 
-  // Group coverages by category
   const grouped = filteredCoverages.reduce<Record<string, Coverage[]>>((acc, cov) => {
     const cat = cov.category || "אחר";
     if (!acc[cat]) acc[cat] = [];
@@ -107,82 +103,127 @@ export function CoverageCards({ coverages, selectedFileFilter }: CoverageCardsPr
     return acc;
   }, {});
 
+  const allCategories = Array.from(new Set(coverages.map(c => c.category || "אחר")));
+
   return (
     <>
-      {/* Search Filter */}
-      <div className="mb-6">
-        <div className="relative">
-          <Search className="absolute right-3 top-1/2 transform -translate-y-1/2 size-4 text-muted-foreground" />
+      <div className="flex flex-col sm:flex-row gap-3 mb-6">
+        <div className="relative flex-1">
+          <Search className="absolute right-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
           <Input
             type="text"
             placeholder="חיפוש כיסויים..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="pr-10 text-right"
+            className="pr-10 text-right bg-card"
             dir="rtl"
           />
         </div>
-        {searchQuery && (
-          <p className="text-xs text-muted-foreground mt-2">
-            נמצאו {filteredCoverages.length} כיסויים
-          </p>
-        )}
       </div>
 
-      <div className="space-y-6">
+      {allCategories.length > 1 && (
+        <div className="flex flex-wrap gap-2 mb-6">
+          <button
+            onClick={() => setActiveCategory(null)}
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${
+              !activeCategory
+                ? "bg-primary text-primary-foreground border-primary shadow-sm"
+                : "bg-card text-muted-foreground border-border hover:border-primary/30 hover:text-foreground"
+            }`}
+          >
+            הכל ({coverages.filter(c => !selectedFileFilter || c.sourceFile === selectedFileFilter).length})
+          </button>
+          {allCategories.map(cat => {
+            const config = getCategoryConfig(cat);
+            const count = coverages.filter(c =>
+              c.category === cat && (!selectedFileFilter || c.sourceFile === selectedFileFilter)
+            ).length;
+            return (
+              <button
+                key={cat}
+                onClick={() => setActiveCategory(activeCategory === cat ? null : cat)}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${
+                  activeCategory === cat
+                    ? "bg-primary text-primary-foreground border-primary shadow-sm"
+                    : "bg-card text-muted-foreground border-border hover:border-primary/30 hover:text-foreground"
+                }`}
+              >
+                <span className={config.color}>{config.icon}</span>
+                {cat} ({count})
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {searchQuery && (
+        <p className="text-xs text-muted-foreground mb-4">
+          נמצאו {filteredCoverages.length} כיסויים
+        </p>
+      )}
+
+      <div className="space-y-8">
         {Object.entries(grouped).length === 0 ? (
-          <div className="text-center py-8 text-muted-foreground">
-            <Shield className="size-12 mx-auto mb-3 opacity-30" />
-            <p>לא נמצאו כיסויים התואמים לחיפוש</p>
+          <div className="text-center py-12">
+            <div className="size-14 rounded-2xl bg-muted/60 flex items-center justify-center mx-auto mb-3">
+              <Search className="size-6 text-muted-foreground/40" />
+            </div>
+            <p className="text-sm text-muted-foreground">לא נמצאו כיסויים התואמים לחיפוש</p>
           </div>
         ) : (
-          Object.entries(grouped).map(([category, items]) => (
-            <div key={category}>
-              <div className="flex items-center gap-2 mb-3">
-                <div className={`rounded-lg p-1.5 ${getCategoryColor(category)}`}>
-                  {getCategoryIcon(category)}
+          Object.entries(grouped).map(([category, items]) => {
+            const config = getCategoryConfig(category);
+            return (
+              <div key={category}>
+                <div className="flex items-center gap-2.5 mb-4">
+                  <div className={`size-8 rounded-lg ${config.bg} flex items-center justify-center ${config.color}`}>
+                    {config.icon}
+                  </div>
+                  <h3 className="text-sm font-semibold">{category}</h3>
+                  <Badge variant="secondary" className="text-[11px] h-5">
+                    {items.length}
+                  </Badge>
                 </div>
-                <h3 className="text-base font-semibold">{category}</h3>
-                <Badge variant="secondary" className="text-xs">
-                  {items.length}
-                </Badge>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {items.map(coverage => {
+                    const catConfig = getCategoryConfig(coverage.category);
+                    return (
+                      <Card
+                        key={coverage.id}
+                        className={`group cursor-pointer hover:shadow-md transition-all duration-200 hover:border-primary/20 border-r-[3px] ${catConfig.border}`}
+                        onClick={() => setSelectedCoverage(coverage)}
+                      >
+                        <CardContent className="p-4">
+                          <div className="flex items-start justify-between gap-2">
+                            <h4 className="text-sm font-semibold leading-snug flex-1">
+                              {coverage.title}
+                            </h4>
+                            <ChevronLeft className="size-4 text-muted-foreground/30 group-hover:text-primary transition-colors shrink-0 mt-0.5" />
+                          </div>
+                          <p className="text-xs text-primary font-medium mt-2">
+                            {coverage.limit}
+                          </p>
+                          {coverage.copay && coverage.copay !== "לא מצוין בפוליסה" && coverage.copay !== "לא צוין בפוליסה" && (
+                            <p className="text-[11px] text-muted-foreground mt-1.5">
+                              השתתפות עצמית: {coverage.copay}
+                            </p>
+                          )}
+                          {coverage.sourceFile && (
+                            <div className="flex items-center gap-1 mt-3 pt-2.5 border-t">
+                              <span className="text-[11px] text-muted-foreground truncate">{coverage.sourceFile}</span>
+                            </div>
+                          )}
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
+                </div>
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                {items.map(coverage => (
-                  <Card
-                    key={coverage.id}
-                    className="cursor-pointer hover:shadow-md transition-all duration-200 hover:border-primary/30 group"
-                    onClick={() => setSelectedCoverage(coverage)}
-                  >
-                    <CardHeader className="pb-2 pt-4 px-4">
-                      <CardTitle className="text-sm font-semibold leading-tight">
-                        {coverage.title}
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent className="px-4 pb-4">
-                      <p className="text-xs text-primary font-medium mb-2">
-                        {coverage.limit}
-                      </p>
-                      {coverage.copay && coverage.copay !== "לא מצוין בפוליסה" && coverage.copay !== "לא צוין בפוליסה" && (
-                        <p className="text-xs text-muted-foreground">
-                          השתתפות עצמית: {coverage.copay}
-                        </p>
-                      )}
-                      {coverage.sourceFile && (
-                        <p className="text-xs text-muted-foreground mt-2 border-t pt-2">
-                          📄 {coverage.sourceFile}
-                        </p>
-                      )}
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
-            </div>
-          ))
+            );
+          })
         )}
       </div>
 
-      {/* Detail Modal */}
       <Dialog open={!!selectedCoverage} onOpenChange={(open) => !open && setSelectedCoverage(null)}>
         <DialogContent className="max-w-2xl max-h-[80vh]">
           <DialogHeader>
@@ -200,7 +241,7 @@ export function CoverageCards({ coverages, selectedFileFilter }: CoverageCardsPr
                 <>
                   <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
                     <p className="text-sm text-blue-900">
-                      <span className="font-semibold">📄 מקור:</span> {selectedCoverage.sourceFile}
+                      <span className="font-semibold">מקור:</span> {selectedCoverage.sourceFile}
                     </p>
                   </div>
                   <Separator />

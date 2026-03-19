@@ -76,7 +76,6 @@ export function FileUpload({
     e.preventDefault();
     e.stopPropagation();
     setIsDragOver(false);
-
     const droppedFiles = Array.from(e.dataTransfer.files).filter(
       f => f.type === "application/pdf"
     );
@@ -97,16 +96,15 @@ export function FileUpload({
 
   return (
     <div className="space-y-4">
-      {/* Drop zone */}
       <div
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
         className={cn(
-          "relative border-2 border-dashed rounded-xl p-8 text-center transition-all duration-200 cursor-pointer",
+          "relative border-2 border-dashed rounded-xl p-10 text-center transition-all duration-300 cursor-pointer group bg-card",
           isDragOver
-            ? "border-primary bg-primary/5 scale-[1.01]"
-            : "border-border hover:border-primary/50 hover:bg-muted/30",
+            ? "border-primary bg-primary/5 scale-[1.01] shadow-lg"
+            : "border-border hover:border-primary/40 hover:bg-muted/20 hover:shadow-sm",
           (isUploading || isAnalyzing) && "pointer-events-none opacity-60"
         )}
         onClick={() => document.getElementById("file-input")?.click()}
@@ -120,46 +118,45 @@ export function FileUpload({
           className="hidden"
         />
         <div className="flex flex-col items-center gap-3">
-          <div className="rounded-full bg-primary/10 p-4">
+          <div className={cn(
+            "rounded-2xl p-4 transition-all duration-300",
+            isDragOver ? "bg-primary/15 scale-110" : "bg-primary/8 group-hover:bg-primary/12"
+          )}>
             <Upload className="size-8 text-primary" />
           </div>
           <div>
-            <p className="text-lg font-semibold text-foreground">
+            <p className="text-base font-semibold text-foreground">
               גרור קבצי PDF לכאן
             </p>
             <p className="text-sm text-muted-foreground mt-1">
-              או לחץ לבחירת קבצים • קבצי PDF של פוליסות ביטוח
+              או לחץ לבחירת קבצים · קבצי PDF של פוליסות ביטוח
             </p>
           </div>
         </div>
       </div>
 
-      {/* File list */}
       {files.length > 0 && (
         <div className="space-y-2">
-          <h3 className="text-sm font-medium text-muted-foreground">
+          <h3 className="text-xs font-medium text-muted-foreground">
             קבצים שנבחרו ({files.length})
           </h3>
-          <div className="space-y-2">
+          <div className="space-y-1.5">
             {files.map(file => (
-              <Card
-                key={file.id}
-                className="flex items-center gap-3 p-3 bg-card"
-              >
+              <Card key={file.id} className="flex items-center gap-3 p-3 bg-card">
                 {getStatusIcon(file.status)}
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium truncate">{file.name}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {formatFileSize(file.size)} • {getStatusText(file.status)}
+                  <p className="text-[11px] text-muted-foreground">
+                    {formatFileSize(file.size)} · {getStatusText(file.status)}
                   </p>
                   {file.error && (
-                    <p className="text-xs text-destructive mt-0.5">{file.error}</p>
+                    <p className="text-[11px] text-destructive mt-0.5">{file.error}</p>
                   )}
                 </div>
                 {file.status === "pending" && !isUploading && !isAnalyzing && (
                   <button
                     onClick={(e) => { e.stopPropagation(); onRemoveFile(file.id); }}
-                    className="p-1 rounded-md hover:bg-muted transition-colors"
+                    className="p-1.5 rounded-lg hover:bg-muted transition-colors"
                   >
                     <X className="size-4 text-muted-foreground" />
                   </button>
@@ -170,34 +167,21 @@ export function FileUpload({
         </div>
       )}
 
-      {/* Analyze button */}
       {files.length > 0 && (
         <Button
           onClick={onAnalyze}
           disabled={!canAnalyze}
           size="lg"
-          className="w-full text-base font-semibold gap-2"
+          className="w-full text-base font-semibold gap-2 h-12 shadow-md"
         >
           {isUploading ? (
-            <>
-              <Loader2 className="size-5 animate-spin" />
-              מעלה קבצים...
-            </>
+            <><Loader2 className="size-5 animate-spin" /> מעלה קבצים...</>
           ) : isAnalyzing ? (
-            <>
-              <Loader2 className="size-5 animate-spin" />
-              מנתח פוליסות...
-            </>
+            <><Loader2 className="size-5 animate-spin" /> מנתח פוליסות...</>
           ) : hasResults ? (
-            <>
-              <CheckCircle2 className="size-5" />
-              הניתוח הושלם
-            </>
+            <><CheckCircle2 className="size-5" /> הניתוח הושלם</>
           ) : (
-            <>
-              <Upload className="size-5" />
-              העלה ונתח פוליסות
-            </>
+            <><Upload className="size-5" /> העלה ונתח פוליסות</>
           )}
         </Button>
       )}
