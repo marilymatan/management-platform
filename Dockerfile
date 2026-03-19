@@ -31,4 +31,4 @@ EXPOSE 3000
 
 USER app
 
-CMD ["sh", "-c", "npx drizzle-kit push --force && node dist/index.js"]
+CMD ["node", "dist/index.js"]
