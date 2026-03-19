@@ -1,7 +1,7 @@
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/NotFound";
-import { Route, Switch } from "wouter";
+import { Route, Switch, useLocation } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { useAuth } from "@/_core/hooks/useAuth";
@@ -12,9 +12,15 @@ import Profile from "./pages/Profile";
 import AdminDashboard from "./pages/AdminDashboard";
 import UsagePage from "./pages/UsagePage";
 import SmartInvoices from "./pages/SmartInvoices";
+import Login from "./pages/Login";
 
 function Router() {
+  const [location] = useLocation();
   const { user, loading } = useAuth();
+
+  if (location === "/login") {
+    return <Login />;
+  }
 
   if (loading) {
     return (

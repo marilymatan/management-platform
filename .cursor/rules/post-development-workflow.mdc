@@ -1,0 +1,13 @@
+---
+description: Always push to GitHub after completing development tasks
+alwaysApply: true
+---
+
+# Post-Development Workflow
+
+After completing any development task:
+
+1. Run the app locally and verify the changes work
+2. Run existing tests and confirm they pass
+3. **Never modify existing tests** to make them pass - fix the implementation instead
+4. Commit and push to GitHub automatically (without waiting for the user to ask)
