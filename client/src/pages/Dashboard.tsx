@@ -40,11 +40,11 @@ export default function Dashboard() {
   });
   const deleteAnalysisMutation = trpc.policy.delete.useMutation({
     onSuccess: () => {
-      toast.success("הניתוח נמחק בהצלחה");
+      toast.success("הסריקה נמחקה בהצלחה");
       trpc.useUtils().policy.getUserAnalyses.invalidate();
     },
     onError: (error) => {
-      toast.error("שגיאה במחיקת הניתוח: " + error.message);
+      toast.error("שגיאה במחיקת הסריקה: " + error.message);
     },
   });
 
@@ -109,7 +109,7 @@ export default function Dashboard() {
             שלום, {user.name?.split(" ")[0]}
           </h2>
           <p className="text-sm text-muted-foreground mt-1">
-            כאן תוכל לנהל את כל הניתוחים שלך
+            כאן תוכל לנהל את כל הסריקות שלך
           </p>
         </div>
         <Button
@@ -118,14 +118,14 @@ export default function Dashboard() {
           className="gap-2 shadow-md"
         >
           <Plus className="size-5" />
-          ניתוח חדש
+          סריקה חדשה
         </Button>
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
         {[
           {
-            label: "סה\"כ ניתוחים",
+            label: "סה\"כ סריקות",
             value: analyses?.length || 0,
             icon: <BarChart3 className="size-5" />,
             color: "from-blue-500/10 to-blue-500/5 text-blue-600",
@@ -139,7 +139,7 @@ export default function Dashboard() {
             iconBg: "bg-emerald-100",
           },
           {
-            label: "קבצים שנותחו",
+            label: "קבצים שנסרקו",
             value: analyses?.reduce((sum, a) => sum + (a.files?.length || 0), 0) || 0,
             icon: <FileText className="size-5" />,
             color: "from-violet-500/10 to-violet-500/5 text-violet-600",
@@ -178,8 +178,8 @@ export default function Dashboard() {
             <div className="size-10 rounded-xl bg-white/15 flex items-center justify-center mb-3">
               <Plus className="size-5 text-white" />
             </div>
-            <p className="text-base font-bold text-white">ניתוח חדש</p>
-            <p className="text-xs text-white/60 mt-1">העלה פוליסה חדשה לניתוח</p>
+            <p className="text-base font-bold text-white">סריקה חדשה</p>
+            <p className="text-xs text-white/60 mt-1">העלה פוליסה חדשה לסריקה</p>
           </div>
           <ArrowLeft className="absolute left-4 bottom-5 size-5 text-white/30 group-hover:text-white/60 transition-colors" />
         </button>
@@ -202,7 +202,7 @@ export default function Dashboard() {
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-base font-semibold text-foreground flex items-center gap-2">
             <Layers className="size-4 text-muted-foreground" />
-            הניתוחים שלך
+            הסריקות שלך
             {analyses && analyses.length > 0 && (
               <Badge variant="secondary" className="text-xs">{analyses.length}</Badge>
             )}
@@ -240,7 +240,7 @@ export default function Dashboard() {
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-1">
                         <p className="text-sm font-semibold truncate">
-                          {analysis.analysisResult?.generalInfo?.policyName || "ניתוח פוליסה"}
+                          {analysis.analysisResult?.generalInfo?.policyName || "סריקת פוליסה"}
                         </p>
                         {getStatusBadge(analysis.status)}
                       </div>
@@ -289,9 +289,9 @@ export default function Dashboard() {
                           </Button>
                         </AlertDialogTrigger>
                         <AlertDialogContent dir="rtl">
-                          <AlertDialogTitle>מחק ניתוח</AlertDialogTitle>
+                          <AlertDialogTitle>מחק סריקה</AlertDialogTitle>
                           <AlertDialogDescription>
-                            האם אתה בטוח שברצונך למחוק ניתוח זה? לא ניתן לבטל פעולה זו.
+                            האם אתה בטוח שברצונך למחוק סריקה זו? לא ניתן לבטל פעולה זו.
                           </AlertDialogDescription>
                           <div className="flex gap-2 justify-end">
                             <AlertDialogCancel>ביטול</AlertDialogCancel>
@@ -316,11 +316,11 @@ export default function Dashboard() {
               <div className="size-16 rounded-2xl bg-muted/60 flex items-center justify-center mx-auto mb-4">
                 <FileText className="size-8 text-muted-foreground/40" />
               </div>
-              <h3 className="text-base font-semibold text-foreground mb-1">אין ניתוחים עדיין</h3>
-              <p className="text-sm text-muted-foreground mb-5">העלה את הפוליסה הראשונה שלך וקבל ניתוח מפורט</p>
+              <h3 className="text-base font-semibold text-foreground mb-1">אין סריקות עדיין</h3>
+              <p className="text-sm text-muted-foreground mb-5">העלה את הפוליסה הראשונה שלך וקבל סריקה מפורטת</p>
               <Button onClick={() => setLocation("/")} className="gap-2">
                 <Plus className="size-4" />
-                הוסף ניתוח ראשון
+                הוסף סריקה ראשונה
               </Button>
             </CardContent>
           </Card>

@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { useLocation } from "wouter";
 import { useForm } from "react-hook-form";
@@ -50,9 +50,10 @@ import {
   FileText,
   Info,
   TrendingUp,
+  Camera,
 } from "lucide-react";
 import { toast } from "sonner";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   BarChart,
   Bar,
@@ -147,7 +148,12 @@ export default function Settings() {
 
   const profileQuery = trpc.profile.get.useQuery(undefined, { enabled: !!user });
   const updateMutation = trpc.profile.update.useMutation();
+  const uploadImageMutation = trpc.profile.uploadImage.useMutation();
+  const { data: profileImageUrl } = trpc.profile.getImageUrl.useQuery(undefined, { enabled: !!user });
   const { data: usage } = trpc.policy.myUsage.useQuery(undefined, { enabled: !!user });
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const utils = trpc.useUtils();
 
   const isAdmin = user?.role === "admin";
   const { data: adminStats } = trpc.admin.platformStats.useQuery(undefined, {
@@ -218,6 +224,32 @@ export default function Settings() {
     }
   };
 
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingImage(true);
+    try {
+      const reader = new FileReader();
+      const base64 = await new Promise<string>((resolve, reject) => {
+        reader.onload = () => {
+          const result = reader.result as string;
+          resolve(result.split(",")[1]);
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      await uploadImageMutation.mutateAsync({ name: file.name, base64 });
+      utils.profile.getImageUrl.invalidate();
+      utils.profile.get.invalidate();
+      toast.success("התמונה עודכנה בהצלחה");
+    } catch {
+      toast.error("שגיאה בהעלאת התמונה");
+    } finally {
+      setUploadingImage(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
   if (!user) return null;
 
   const userInitials = user.name
@@ -263,11 +295,29 @@ export default function Settings() {
 
         <TabsContent value="profile">
           <div className="text-center mb-6">
-            <Avatar className="size-20 mx-auto mb-4 border-4 border-primary/10">
-              <AvatarFallback className="bg-primary/8 text-primary text-2xl font-bold">
-                {userInitials}
-              </AvatarFallback>
-            </Avatar>
+            <div className="relative inline-block">
+              <Avatar className="size-20 mx-auto mb-4 border-4 border-primary/10">
+                {profileImageUrl && <AvatarImage src={profileImageUrl} alt={user.name || "Profile"} />}
+                <AvatarFallback className="bg-primary/8 text-primary text-2xl font-bold">
+                  {userInitials}
+                </AvatarFallback>
+              </Avatar>
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploadingImage}
+                className="absolute bottom-3 right-0 size-7 rounded-full bg-primary text-primary-foreground flex items-center justify-center shadow-md hover:bg-primary/90 transition-colors disabled:opacity-50"
+              >
+                {uploadingImage ? <Loader2 className="size-3.5 animate-spin" /> : <Camera className="size-3.5" />}
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                className="hidden"
+                onChange={handleImageUpload}
+              />
+            </div>
             <h2 className="text-xl font-bold">{user.name}</h2>
             <p className="text-sm text-muted-foreground">{user.email}</p>
           </div>
@@ -677,7 +727,7 @@ export default function Settings() {
                   <Info className="size-4 text-blue-600" />
                 </div>
                 <p className="text-sm text-blue-900/80">
-                  המידע שלך נשמר בצורה מאובטחת ומשמש אך ורק לצורך התאמת המלצות אישיות. ניתוחים עתידיים יכללו המלצות מותאמות למצבך האישי.
+                  המידע שלך נשמר בצורה מאובטחת ומשמש אך ורק לצורך התאמת המלצות אישיות. סריקות עתידיות יכללו המלצות מותאמות למצבך האישי.
                 </p>
               </div>
             </CardContent>
@@ -685,12 +735,10 @@ export default function Settings() {
         </TabsContent>
 
         <TabsContent value="usage">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+          <div className="grid grid-cols-2 gap-4 mb-6">
             {[
-              { icon: <FileText className="size-5" />, label: "ניתוחים", value: usage?.analyzeCount ?? 0, color: "bg-violet-100 text-violet-600" },
+              { icon: <FileText className="size-5" />, label: "סריקות", value: usage?.analyzeCount ?? 0, color: "bg-violet-100 text-violet-600" },
               { icon: <MessageSquare className="size-5" />, label: "שאלות צ׳אט", value: usage?.chatCount ?? 0, color: "bg-blue-100 text-blue-600" },
-              { icon: <Zap className="size-5" />, label: "סה״כ טוקנים", value: formatTokens(usage?.totalTokens ?? 0), color: "bg-amber-100 text-amber-600" },
-              { icon: <DollarSign className="size-5" />, label: "עלות מוערכת", value: formatCost(usage?.totalCost ?? 0), color: "bg-rose-100 text-rose-600" },
             ].map((stat, i) => (
               <Card key={i}>
                 <CardContent className="pt-5 pb-4">
@@ -719,34 +767,33 @@ export default function Settings() {
                     <tr className="border-b bg-muted/30">
                       <th className="text-right px-4 py-3 font-medium text-xs text-muted-foreground">תאריך</th>
                       <th className="text-right px-4 py-3 font-medium text-xs text-muted-foreground">פעולה</th>
-                      <th className="text-left px-4 py-3 font-medium text-xs text-muted-foreground">טוקני קלט</th>
-                      <th className="text-left px-4 py-3 font-medium text-xs text-muted-foreground">טוקני פלט</th>
-                      <th className="text-left px-4 py-3 font-medium text-xs text-muted-foreground">סה״כ</th>
-                      <th className="text-left px-4 py-3 font-medium text-xs text-muted-foreground">עלות</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {usageRows.map((row) => (
-                      <tr key={row.id} className="border-b last:border-0 hover:bg-muted/20 transition-colors">
-                        <td className="px-4 py-3 text-xs text-muted-foreground">
-                          {new Date(row.createdAt).toLocaleString("he-IL")}
-                        </td>
-                        <td className="px-4 py-3">
-                          <Badge variant={row.action === "analyze" ? "default" : "secondary"} className="text-[11px]">
-                            {row.action === "analyze" ? "ניתוח" : "צ׳אט"}
-                          </Badge>
-                        </td>
-                        <td className="px-4 py-3 text-left font-mono text-xs">{formatTokens(row.promptTokens)}</td>
-                        <td className="px-4 py-3 text-left font-mono text-xs">{formatTokens(row.completionTokens)}</td>
-                        <td className="px-4 py-3 text-left font-mono text-xs font-medium">{formatTokens(row.totalTokens)}</td>
-                        <td className="px-4 py-3 text-left font-mono text-xs text-rose-600">
-                          {formatCost(parseFloat(row.costUsd as string))}
-                        </td>
-                      </tr>
-                    ))}
+                    {usageRows.map((row) => {
+                      const actionLabels: Record<string, string> = {
+                        analyze: "סריקה",
+                        chat: "צ׳אט",
+                        scan: "סריקה",
+                        alert: "התראה",
+                      };
+                      const label = actionLabels[row.action] ?? row.action;
+                      return (
+                        <tr key={row.id} className="border-b last:border-0 hover:bg-muted/20 transition-colors">
+                          <td className="px-4 py-3 text-xs text-muted-foreground">
+                            {new Date(row.createdAt).toLocaleString("he-IL")}
+                          </td>
+                          <td className="px-4 py-3">
+                            <Badge variant={row.action === "analyze" ? "default" : "secondary"} className="text-[11px]">
+                              {label}
+                            </Badge>
+                          </td>
+                        </tr>
+                      );
+                    })}
                     {usageRows.length === 0 && (
                       <tr>
-                        <td colSpan={6} className="px-4 py-12 text-center">
+                        <td colSpan={2} className="px-4 py-12 text-center">
                           <div className="size-12 rounded-2xl bg-muted/60 flex items-center justify-center mx-auto mb-3">
                             <Zap className="size-6 text-muted-foreground/40" />
                           </div>
@@ -760,9 +807,6 @@ export default function Settings() {
             </CardContent>
           </Card>
 
-          <p className="text-[11px] text-muted-foreground text-center mt-4">
-            * העלות מחושבת לפי $0.0025 לכל 1,000 טוקנים. הנתונים לצורך מעקב בלבד.
-          </p>
         </TabsContent>
 
         {isAdmin && (
@@ -771,7 +815,7 @@ export default function Settings() {
               {[
                 { key: "totalUsers", icon: Users, label: "סה״כ משתמשים", color: "bg-blue-100 text-blue-600" },
                 { key: "activeUsersThisMonth", icon: TrendingUp, label: "פעילים החודש", color: "bg-emerald-100 text-emerald-600" },
-                { key: "totalAnalyses", icon: FileText, label: "ניתוחים", color: "bg-violet-100 text-violet-600" },
+                { key: "totalAnalyses", icon: FileText, label: "סריקות", color: "bg-violet-100 text-violet-600" },
                 { key: "totalCalls", icon: Zap, label: "סה״כ קריאות", color: "bg-amber-100 text-amber-600" },
                 { key: "totalTokens", icon: Activity, label: "טוקנים", color: "bg-cyan-100 text-cyan-600", format: "tokens" },
                 { key: "totalCost", icon: DollarSign, label: "עלות מוערכת", color: "bg-rose-100 text-rose-600", format: "cost" },

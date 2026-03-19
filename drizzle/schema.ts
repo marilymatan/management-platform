@@ -11,6 +11,7 @@ export const maritalStatusEnum = pgEnum("marital_status", ["single", "married", 
 export const employmentStatusEnum = pgEnum("employment_status", ["salaried", "self_employed", "business_owner", "student", "retired", "unemployed"]);
 export const incomeRangeEnum = pgEnum("income_range", ["below_5k", "5k_10k", "10k_15k", "15k_25k", "25k_40k", "above_40k"]);
 export const genderEnum = pgEnum("gender", ["male", "female", "other"]);
+export const insuranceCategoryEnum = pgEnum("insurance_category_type", ["health", "life", "car", "home"]);
 
 export const users = pgTable("users", {
   id: serial("id").primaryKey(),
@@ -37,6 +38,7 @@ export const analyses = pgTable("analyses", {
   extractedText: text("extracted_text"),
   analysisResult: jsonb("analysis_result").$type<import("@shared/insurance").PolicyAnalysis | null>(),
   status: analysisStatusEnum("status").default("pending").notNull(),
+  insuranceCategory: insuranceCategoryEnum("insurance_category"),
   errorMessage: text("error_message"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull().$onUpdate(() => new Date()),
@@ -162,6 +164,7 @@ export const userProfiles = pgTable("user_profiles", {
   hasSpecialHealthConditions: boolean("has_special_health_conditions").default(false),
   healthConditionsDetails: text("health_conditions_details"),
   hasPets: boolean("has_pets").default(false),
+  profileImageKey: text("profile_image_key"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull().$onUpdate(() => new Date()),
 }, (table) => ({

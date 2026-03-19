@@ -1,3 +1,5 @@
+export type InsuranceCategory = "health" | "life" | "car" | "home";
+
 /** A single coverage/benefit found in the policy */
 export interface Coverage {
   id: string;
@@ -20,6 +22,7 @@ export interface GeneralInfo {
   insurerName: string;
   policyNumber: string;
   policyType: string;
+  insuranceCategory?: InsuranceCategory;
   monthlyPremium: string;
   annualPremium: string;
   startDate: string;
@@ -70,6 +73,18 @@ export interface PolicyAnalysis {
   summary: string;
   duplicateCoverages?: DuplicateCoverageGroup[];
   personalizedInsights?: PersonalizedInsight[];
+}
+
+export function inferInsuranceCategory(policyType?: string, coverages?: Coverage[]): InsuranceCategory {
+  const text = [
+    policyType ?? "",
+    ...(coverages?.map(c => `${c.category} ${c.title}`) ?? []),
+  ].join(" ").toLowerCase();
+
+  if (/רכב|מקיף|צד ג|חובה|car|vehicle|auto/.test(text)) return "car";
+  if (/דירה|מבנה|תכולה|רעידת אדמה|צנרת|home|apartment|property/.test(text)) return "home";
+  if (/חיים|ריסק|אובדן כושר|נכות|מוות|סיעוד|פנסי|life/.test(text)) return "life";
+  return "health";
 }
 
 /** Status of a file in the upload queue */

@@ -6,6 +6,15 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import { toast } from "sonner";
 import {
   Mail,
@@ -29,13 +38,13 @@ import {
   FileText,
   Calendar,
   Hash,
-  ExternalLink,
   Trash2,
   BarChart3,
   Search,
   Filter,
   X,
   Download,
+  PencilLine,
 } from "lucide-react";
 
 const CATEGORY_ICONS: Record<string, React.ReactNode> = {
@@ -89,8 +98,14 @@ const STATUS_LABELS: Record<string, { label: string; color: string; icon: React.
   unknown: { label: "לא ידוע", color: "text-gray-500", icon: <Clock className="w-3.5 h-3.5" /> },
 };
 
-const ALL_CATEGORIES = ["תקשורת", "חשמל", "מים", "ארנונה", "ביטוח", "בנק", "רכב", "אחר"];
-const ALL_STATUSES = ["pending", "paid", "overdue", "unknown"];
+const ALL_CATEGORIES = ["תקשורת", "חשמל", "מים", "ארנונה", "ביטוח", "בנק", "רכב", "אחר"] as const;
+const ALL_STATUSES = ["pending", "paid", "overdue", "unknown"] as const;
+
+const HEBREW_MONTHS: Record<string, string> = {
+  "01": "ינואר", "02": "פברואר", "03": "מרץ", "04": "אפריל",
+  "05": "מאי", "06": "יוני", "07": "יולי", "08": "אוגוסט",
+  "09": "ספטמבר", "10": "אוקטובר", "11": "נובמבר", "12": "דצמבר",
+};
 
 type ExtractedData = {
   description?: string;
@@ -150,6 +165,11 @@ type ProviderGroup = {
   hasPdf: boolean;
 };
 
+function formatMonthLabel(monthKey: string): string {
+  const [year, month] = monthKey.split("-");
+  return `${HEBREW_MONTHS[month] ?? month} ${year}`;
+}
+
 export default function SmartInvoices() {
   const { user, loading: authLoading } = useAuth();
   const [, navigate] = useLocation();
@@ -160,6 +180,16 @@ export default function SmartInvoices() {
   const [searchQuery, setSearchQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
+  const [expandedMonths, setExpandedMonths] = useState<Set<string>>(new Set());
+  const [manualDialogOpen, setManualDialogOpen] = useState(false);
+  const [manualForm, setManualForm] = useState({
+    provider: "",
+    amount: "",
+    category: "אחר" as (typeof ALL_CATEGORIES)[number],
+    invoiceDate: new Date().toISOString().slice(0, 10),
+    status: "paid" as (typeof ALL_STATUSES)[number],
+    description: "",
+  });
 
   const utils = trpc.useUtils();
 
@@ -218,6 +248,26 @@ export default function SmartInvoices() {
     },
   });
 
+  const addManualMutation = trpc.gmail.addManualExpense.useMutation({
+    onSuccess: () => {
+      toast.success("הוצאה נוספה בהצלחה");
+      setManualDialogOpen(false);
+      setManualForm({
+        provider: "",
+        amount: "",
+        category: "אחר",
+        invoiceDate: new Date().toISOString().slice(0, 10),
+        status: "paid",
+        description: "",
+      });
+      utils.gmail.getInvoices.invalidate();
+      utils.gmail.getMonthlySummary.invalidate();
+    },
+    onError: (err) => {
+      toast.error(`שגיאה בהוספת הוצאה: ${err.message}`);
+    },
+  });
+
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const connected = params.get("gmail_connected");
@@ -242,6 +292,31 @@ export default function SmartInvoices() {
   function handleScan() {
     setIsScanning(true);
     scanMutation.mutate({ daysBack: scanDays });
+  }
+
+  function handleSubmitManual() {
+    const amt = parseFloat(manualForm.amount);
+    if (!manualForm.provider.trim() || isNaN(amt) || amt <= 0) {
+      toast.error("יש למלא שם ספק וסכום תקין");
+      return;
+    }
+    addManualMutation.mutate({
+      provider: manualForm.provider.trim(),
+      amount: amt,
+      category: manualForm.category,
+      invoiceDate: manualForm.invoiceDate,
+      status: manualForm.status,
+      description: manualForm.description.trim() || undefined,
+    });
+  }
+
+  function toggleMonth(monthKey: string) {
+    setExpandedMonths((prev) => {
+      const next = new Set(prev);
+      if (next.has(monthKey)) next.delete(monthKey);
+      else next.add(monthKey);
+      return next;
+    });
   }
 
   const filteredInvoices = useMemo(() => {
@@ -321,7 +396,8 @@ export default function SmartInvoices() {
     );
   }
 
-  const totalMonthly = monthlySummary?.reduce((sum, cat) => sum + cat.total, 0) ?? 0;
+  const grandTotal = monthlySummary?.reduce((sum, m) => sum + m.total, 0) ?? 0;
+  const grandCount = monthlySummary?.reduce((sum, m) => sum + m.categories.reduce((s, c) => s + c.count, 0), 0) ?? 0;
 
   return (
     <div className="page-container">
@@ -335,15 +411,98 @@ export default function SmartInvoices() {
             <p className="text-xs text-muted-foreground">חשבוניות חכמות, מעקב הוצאות וסריקת מיילים</p>
           </div>
         </div>
-        {connectionStatus?.connected && (
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <CheckCircle className="w-4 h-4 text-green-500" />
-            <span className="hidden sm:inline">
-              {connectionStatus.connections.length} {connectionStatus.connections.length === 1 ? "חשבון" : "חשבונות"} מחוברים
-            </span>
-          </div>
-        )}
+        <Button onClick={() => setManualDialogOpen(true)} size="sm" variant="outline" className="gap-1.5">
+          <PencilLine className="w-4 h-4" />
+          הוסף הוצאה
+        </Button>
       </div>
+
+      <Dialog open={manualDialogOpen} onOpenChange={setManualDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>הוספת הוצאה ידנית</DialogTitle>
+            <DialogDescription>הזן את פרטי ההוצאה</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-2">
+            <div className="grid gap-1.5">
+              <Label htmlFor="m-provider">שם ספק / הוצאה</Label>
+              <Input
+                id="m-provider"
+                placeholder='למשל "חברת חשמל"'
+                value={manualForm.provider}
+                onChange={(e) => setManualForm((p) => ({ ...p, provider: e.target.value }))}
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="grid gap-1.5">
+                <Label htmlFor="m-amount">סכום (₪)</Label>
+                <Input
+                  id="m-amount"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  placeholder="0.00"
+                  value={manualForm.amount}
+                  onChange={(e) => setManualForm((p) => ({ ...p, amount: e.target.value }))}
+                />
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor="m-category">קטגוריה</Label>
+                <select
+                  id="m-category"
+                  value={manualForm.category}
+                  onChange={(e) => setManualForm((p) => ({ ...p, category: e.target.value as typeof manualForm.category }))}
+                  className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                >
+                  {ALL_CATEGORIES.map((cat) => (
+                    <option key={cat} value={cat}>{cat}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="grid gap-1.5">
+                <Label htmlFor="m-date">תאריך</Label>
+                <Input
+                  id="m-date"
+                  type="date"
+                  value={manualForm.invoiceDate}
+                  onChange={(e) => setManualForm((p) => ({ ...p, invoiceDate: e.target.value }))}
+                />
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor="m-status">סטטוס</Label>
+                <select
+                  id="m-status"
+                  value={manualForm.status}
+                  onChange={(e) => setManualForm((p) => ({ ...p, status: e.target.value as typeof manualForm.status }))}
+                  className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                >
+                  {ALL_STATUSES.map((s) => (
+                    <option key={s} value={s}>{STATUS_LABELS[s].label}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="m-desc">תיאור (אופציונלי)</Label>
+              <Input
+                id="m-desc"
+                placeholder="פרטים נוספים..."
+                value={manualForm.description}
+                onChange={(e) => setManualForm((p) => ({ ...p, description: e.target.value }))}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setManualDialogOpen(false)}>ביטול</Button>
+            <Button onClick={handleSubmitManual} disabled={addManualMutation.isPending} className="gap-1.5">
+              {addManualMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+              הוסף
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <div className="space-y-6">
         {statusLoading ? (
@@ -374,57 +533,49 @@ export default function SmartInvoices() {
           </Card>
         ) : (
           <>
-            <div className="space-y-2 animate-fade-in-up">
-              {connectionStatus.connections.map((conn) => (
-                <Card key={conn.id}>
-                  <CardContent className="py-3 px-4">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div className="flex items-center gap-3">
-                        <div className="size-9 rounded-xl bg-emerald-100 flex items-center justify-center">
-                          <CheckCircle className="size-4 text-emerald-600" />
-                        </div>
-                        <div>
-                          <p className="font-medium text-sm">{conn.email}</p>
-                          <p className="text-xs text-muted-foreground">
-                            {conn.lastSyncedAt
-                              ? `סריקה אחרונה: ${new Date(conn.lastSyncedAt).toLocaleString("he-IL")} · ${conn.lastSyncCount} חשבוניות`
-                              : "טרם בוצעה סריקה"}
-                          </p>
-                        </div>
+            <Card className="animate-fade-in-up">
+              <CardContent className="py-4 px-4">
+                <div className="flex flex-wrap gap-2.5 mb-3">
+                  {connectionStatus.connections.map((conn) => (
+                    <div
+                      key={conn.id}
+                      className="flex items-center gap-2.5 rounded-xl border bg-muted/30 px-3 py-2 min-w-0"
+                    >
+                      <div className="size-2 rounded-full bg-emerald-500 shrink-0" />
+                      <div className="min-w-0">
+                        <p className="text-xs font-medium truncate max-w-[180px]">{conn.email}</p>
+                        <p className="text-[10px] text-muted-foreground">
+                          {conn.lastSyncCount ?? 0} חשבוניות
+                          {conn.lastSyncedAt && (
+                            <> · {new Date(conn.lastSyncedAt).toLocaleDateString("he-IL")}</>
+                          )}
+                        </p>
                       </div>
-                      <Button
-                        variant="ghost"
-                        size="sm"
+                      <button
                         onClick={() => disconnectMutation.mutate({ connectionId: conn.id })}
                         disabled={disconnectMutation.isPending}
-                        className="text-muted-foreground hover:text-destructive gap-1.5"
+                        className="p-1 rounded-md text-muted-foreground/60 hover:text-destructive hover:bg-destructive/10 transition-colors shrink-0"
+                        title="נתק חשבון"
                       >
                         <Unlink className="w-3.5 h-3.5" />
-                        נתק
-                      </Button>
+                      </button>
                     </div>
-                  </CardContent>
-                </Card>
-              ))}
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleConnect}
-                disabled={!authUrlData?.url}
-                className="gap-1.5"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                חבר חשבון Gmail נוסף
-              </Button>
-            </div>
+                  ))}
+                  <button
+                    onClick={handleConnect}
+                    disabled={!authUrlData?.url}
+                    className="flex items-center gap-2 rounded-xl border-2 border-dashed border-muted-foreground/25 px-3 py-2 text-xs text-muted-foreground hover:border-primary/40 hover:text-primary transition-colors"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    חבר חשבון
+                  </button>
+                </div>
 
-            <Card className="animate-fade-in-up">
-              <CardContent className="py-4">
-                <div className="flex flex-wrap items-center gap-2">
+                <div className="border-t pt-3 flex flex-wrap items-center gap-2">
                   <select
                     value={scanDays}
                     onChange={(e) => setScanDays(Number(e.target.value))}
-                    className="text-sm border rounded-lg px-2.5 py-1.5 bg-card"
+                    className="text-xs border rounded-lg px-2 py-1.5 bg-card"
                   >
                     <option value={7}>7 ימים</option>
                     <option value={14}>14 ימים</option>
@@ -432,7 +583,7 @@ export default function SmartInvoices() {
                     <option value={60}>60 ימים</option>
                     <option value={90}>90 ימים</option>
                   </select>
-                  <Button onClick={handleScan} disabled={isScanning} size="sm" className="gap-1.5">
+                  <Button onClick={handleScan} disabled={isScanning} size="sm" className="gap-1.5 h-8 text-xs">
                     {isScanning ? (
                       <><Loader2 className="w-3.5 h-3.5 animate-spin" /> סורק...</>
                     ) : (
@@ -450,7 +601,7 @@ export default function SmartInvoices() {
                         }
                       }}
                       disabled={isScanning}
-                      className="text-orange-600 border-orange-200 hover:bg-orange-50 gap-1.5"
+                      className="text-orange-600 border-orange-200 hover:bg-orange-50 gap-1.5 h-8 text-xs"
                     >
                       <Trash2 className="w-3.5 h-3.5" /> מחק וסרוק מחדש
                     </Button>
@@ -460,66 +611,87 @@ export default function SmartInvoices() {
             </Card>
 
             {monthlySummary && monthlySummary.length > 0 && (
-              <div className="animate-fade-in-up stagger-2 space-y-4">
+              <div className="animate-fade-in-up stagger-2 space-y-3">
                 <Card className="relative overflow-hidden border-0 shadow-lg bg-gradient-to-br from-primary/5 via-background to-primary/3">
                   <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-l from-primary via-primary/60 to-transparent" />
-                  <CardContent className="py-6 px-6">
-                    <div className="flex items-center gap-2 mb-4">
-                      <div className="size-8 rounded-lg bg-primary/10 flex items-center justify-center">
-                        <BarChart3 className="size-4 text-primary" />
+                  <CardContent className="py-5 px-5">
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-2">
+                        <div className="size-8 rounded-lg bg-primary/10 flex items-center justify-center">
+                          <BarChart3 className="size-4 text-primary" />
+                        </div>
+                        <h3 className="text-sm font-semibold">סיכום הוצאות</h3>
                       </div>
-                      <h3 className="text-sm font-semibold">סיכום הוצאות</h3>
-                    </div>
-
-                    <div className="grid grid-cols-3 gap-6 mb-6">
-                      <div>
-                        <p className="text-xs text-muted-foreground mb-1">סה"כ הוצאות</p>
-                        <p className="text-3xl font-bold tracking-tight text-primary">
-                          ₪{totalMonthly.toLocaleString("he-IL")}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-muted-foreground mb-1">חשבוניות</p>
-                        <p className="text-3xl font-bold tracking-tight">
-                          {monthlySummary.reduce((sum, c) => sum + c.count, 0)}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-muted-foreground mb-1">ממוצע לחשבונית</p>
-                        <p className="text-3xl font-bold tracking-tight">
-                          ₪{monthlySummary.reduce((sum, c) => sum + c.count, 0) > 0
-                            ? Math.round(totalMonthly / monthlySummary.reduce((sum, c) => sum + c.count, 0)).toLocaleString("he-IL")
-                            : "0"}
-                        </p>
+                      <div className="flex items-center gap-4 text-sm">
+                        <div className="text-left">
+                          <p className="text-[10px] text-muted-foreground">סה"כ</p>
+                          <p className="font-bold text-primary">₪{grandTotal.toLocaleString("he-IL")}</p>
+                        </div>
+                        <div className="text-left">
+                          <p className="text-[10px] text-muted-foreground">חשבוניות</p>
+                          <p className="font-bold">{grandCount}</p>
+                        </div>
                       </div>
                     </div>
 
-                    <div className="space-y-3">
-                      {monthlySummary.map((cat) => {
-                        const pct = totalMonthly > 0 ? (cat.total / totalMonthly) * 100 : 0;
+                    <div className="space-y-2">
+                      {monthlySummary.map((monthData) => {
+                        const isExpanded = expandedMonths.has(monthData.month);
+                        const monthInvoiceCount = monthData.categories.reduce((s, c) => s + c.count, 0);
                         return (
-                          <div key={cat.category} className="group">
-                            <div className="flex items-center justify-between mb-1.5">
+                          <div key={monthData.month} className="rounded-xl border bg-card/60 overflow-hidden">
+                            <button
+                              onClick={() => toggleMonth(monthData.month)}
+                              className="w-full flex items-center justify-between px-4 py-3 hover:bg-muted/40 transition-colors"
+                            >
                               <div className="flex items-center gap-2.5">
-                                <div className={`size-7 rounded-lg flex items-center justify-center ${CATEGORY_ICON_BG[cat.category] ?? "bg-gray-100 text-gray-600"}`}>
-                                  {CATEGORY_ICONS[cat.category] ?? <TrendingUp className="w-3.5 h-3.5" />}
-                                </div>
-                                <span className="text-sm font-medium">{cat.category}</span>
-                                <Badge variant="outline" className="text-[10px] px-1.5 py-0 font-normal text-muted-foreground">
-                                  {cat.count} {cat.count === 1 ? "חשבונית" : "חשבוניות"}
+                                <Calendar className="w-4 h-4 text-muted-foreground" />
+                                <span className="text-sm font-semibold">{formatMonthLabel(monthData.month)}</span>
+                                <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
+                                  {monthInvoiceCount} {monthInvoiceCount === 1 ? "חשבונית" : "חשבוניות"}
                                 </Badge>
                               </div>
                               <div className="flex items-center gap-2">
-                                <span className="text-xs text-muted-foreground">{pct.toFixed(0)}%</span>
-                                <span className="text-sm font-semibold">₪{cat.total.toLocaleString("he-IL")}</span>
+                                <span className="text-sm font-bold">₪{monthData.total.toLocaleString("he-IL")}</span>
+                                {isExpanded ? (
+                                  <ChevronUp className="w-4 h-4 text-muted-foreground" />
+                                ) : (
+                                  <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                                )}
                               </div>
-                            </div>
-                            <div className="h-2 rounded-full bg-muted/50 overflow-hidden">
-                              <div
-                                className={`h-full rounded-full transition-all duration-700 ease-out ${CATEGORY_BAR_COLORS[cat.category] ?? "bg-gray-400"}`}
-                                style={{ width: `${Math.max(pct, 2)}%` }}
-                              />
-                            </div>
+                            </button>
+                            {isExpanded && (
+                              <div className="px-4 pb-3 space-y-2.5 border-t">
+                                {monthData.categories.map((cat) => {
+                                  const pct = monthData.total > 0 ? (cat.total / monthData.total) * 100 : 0;
+                                  return (
+                                    <div key={cat.category} className="pt-2.5">
+                                      <div className="flex items-center justify-between mb-1">
+                                        <div className="flex items-center gap-2">
+                                          <div className={`size-6 rounded-md flex items-center justify-center ${CATEGORY_ICON_BG[cat.category] ?? "bg-gray-100 text-gray-600"}`}>
+                                            {CATEGORY_ICONS[cat.category] ?? <TrendingUp className="w-3 h-3" />}
+                                          </div>
+                                          <span className="text-xs font-medium">{cat.category}</span>
+                                          <span className="text-[10px] text-muted-foreground">
+                                            {cat.count} {cat.count === 1 ? "חשבונית" : "חשבוניות"}
+                                          </span>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                          <span className="text-[10px] text-muted-foreground">{pct.toFixed(0)}%</span>
+                                          <span className="text-xs font-semibold">₪{cat.total.toLocaleString("he-IL")}</span>
+                                        </div>
+                                      </div>
+                                      <div className="h-1.5 rounded-full bg-muted/50 overflow-hidden">
+                                        <div
+                                          className={`h-full rounded-full transition-all duration-700 ease-out ${CATEGORY_BAR_COLORS[cat.category] ?? "bg-gray-400"}`}
+                                          style={{ width: `${Math.max(pct, 2)}%` }}
+                                        />
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
                           </div>
                         );
                       })}

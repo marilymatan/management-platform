@@ -5,30 +5,67 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
-import {
   Shield,
   Plus,
   FileText,
-  Trash2,
-  Eye,
-  CheckCircle,
-  Clock,
-  AlertCircle,
+  Heart,
+  Car,
+  Home,
+  User,
+  ScanLine,
   BarChart3,
-  Layers,
-  Banknote,
+  ArrowLeft,
 } from "lucide-react";
-import { toast } from "sonner";
-import { format } from "date-fns";
-import { he } from "date-fns/locale";
+import type { InsuranceCategory } from "@shared/insurance";
+import { inferInsuranceCategory } from "@shared/insurance";
+import { useMemo } from "react";
+
+const CATEGORY_CONFIG: Record<
+  InsuranceCategory,
+  {
+    label: string;
+    icon: React.ReactNode;
+    gradient: string;
+    iconBg: string;
+    textColor: string;
+    description: string;
+  }
+> = {
+  health: {
+    label: "ביטוחי בריאות",
+    icon: <Heart className="size-6" />,
+    gradient: "from-rose-500/12 to-pink-500/6",
+    iconBg: "bg-rose-100",
+    textColor: "text-rose-600",
+    description: "רפואה משלימה, אשפוז, שיניים, תרופות",
+  },
+  life: {
+    label: "ביטוחי חיים",
+    icon: <User className="size-6" />,
+    gradient: "from-blue-500/12 to-indigo-500/6",
+    iconBg: "bg-blue-100",
+    textColor: "text-blue-600",
+    description: "ביטוח חיים, ריסק, אובדן כושר עבודה",
+  },
+  car: {
+    label: "ביטוחי רכב",
+    icon: <Car className="size-6" />,
+    gradient: "from-amber-500/12 to-orange-500/6",
+    iconBg: "bg-amber-100",
+    textColor: "text-amber-600",
+    description: "מקיף, צד ג׳, חובה",
+  },
+  home: {
+    label: "ביטוחי דירה",
+    icon: <Home className="size-6" />,
+    gradient: "from-emerald-500/12 to-teal-500/6",
+    iconBg: "bg-emerald-100",
+    textColor: "text-emerald-600",
+    description: "מבנה, תכולה, צנרת, רעידת אדמה",
+  },
+};
+
+const CATEGORIES: InsuranceCategory[] = ["health", "life", "car", "home"];
 
 export default function Insurance() {
   const { user } = useAuth({ redirectOnUnauthenticated: true });
@@ -36,58 +73,37 @@ export default function Insurance() {
   const { data: analyses, isLoading } = trpc.policy.getUserAnalyses.useQuery(undefined, {
     enabled: !!user,
   });
-  const utils = trpc.useUtils();
-  const deleteAnalysisMutation = trpc.policy.delete.useMutation({
-    onSuccess: () => {
-      toast.success("הניתוח נמחק בהצלחה");
-      utils.policy.getUserAnalyses.invalidate();
-    },
-    onError: (error) => {
-      toast.error("שגיאה במחיקת הניתוח: " + error.message);
-    },
-  });
+
+  const categoryStats = useMemo(() => {
+    const stats: Record<InsuranceCategory, { scans: number; pdfs: number }> = {
+      health: { scans: 0, pdfs: 0 },
+      life: { scans: 0, pdfs: 0 },
+      car: { scans: 0, pdfs: 0 },
+      home: { scans: 0, pdfs: 0 },
+    };
+
+    analyses?.forEach((analysis) => {
+      const cat =
+        (analysis as any).insuranceCategory ??
+        analysis.analysisResult?.generalInfo?.insuranceCategory ??
+        inferInsuranceCategory(
+          analysis.analysisResult?.generalInfo?.policyType,
+          analysis.analysisResult?.coverages
+        );
+      if (stats[cat as InsuranceCategory]) {
+        stats[cat as InsuranceCategory].scans += 1;
+        stats[cat as InsuranceCategory].pdfs += analysis.files?.length || 0;
+      }
+    });
+
+    return stats;
+  }, [analyses]);
+
+  const totalScans = analyses?.length || 0;
+  const totalPdfs = analyses?.reduce((sum, a) => sum + (a.files?.length || 0), 0) || 0;
+  const completedScans = analyses?.filter((a) => a.status === "completed").length || 0;
 
   if (!user) return null;
-
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case "completed":
-        return (
-          <Badge className="bg-emerald-50 text-emerald-700 border-emerald-200 gap-1">
-            <CheckCircle className="size-3" />
-            הושלם
-          </Badge>
-        );
-      case "processing":
-        return (
-          <Badge className="bg-blue-50 text-blue-700 border-blue-200 gap-1">
-            <Clock className="size-3" />
-            בעיבוד
-          </Badge>
-        );
-      case "pending":
-        return (
-          <Badge className="bg-amber-50 text-amber-700 border-amber-200 gap-1">
-            <Clock className="size-3" />
-            בהמתנה
-          </Badge>
-        );
-      case "error":
-        return (
-          <Badge className="bg-red-50 text-red-700 border-red-200 gap-1">
-            <AlertCircle className="size-3" />
-            שגיאה
-          </Badge>
-        );
-      default:
-        return <Badge variant="secondary">{status}</Badge>;
-    }
-  };
-
-  const completedAnalyses = analyses?.filter(a => a.status === "completed") || [];
-  const totalCoverages = completedAnalyses.reduce(
-    (sum, a) => sum + (a.analysisResult?.coverages?.length || 0), 0
-  );
 
   return (
     <div className="page-container">
@@ -98,7 +114,7 @@ export default function Insurance() {
           </div>
           <div>
             <h2 className="text-xl font-bold">ביטוחים</h2>
-            <p className="text-xs text-muted-foreground">ניהול פוליסות, כיסויים וניתוחים</p>
+            <p className="text-xs text-muted-foreground">ניהול פוליסות, כיסויים וסריקות</p>
           </div>
         </div>
         <Button
@@ -107,45 +123,38 @@ export default function Insurance() {
           className="gap-2 shadow-md"
         >
           <Plus className="size-5" />
-          ניתוח חדש
+          סריקה חדשה
         </Button>
       </div>
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+      <div className="grid grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
         {[
           {
-            label: "סה\"כ ניתוחים",
-            value: analyses?.length || 0,
+            label: "סה\"כ סריקות",
+            value: totalScans,
             icon: <BarChart3 className="size-5" />,
-            color: "from-blue-500/10 to-blue-500/5 text-blue-600",
             iconBg: "bg-blue-100",
+            textColor: "text-blue-600",
           },
           {
-            label: "כיסויים פעילים",
-            value: totalCoverages,
-            icon: <Shield className="size-5" />,
-            color: "from-emerald-500/10 to-emerald-500/5 text-emerald-600",
-            iconBg: "bg-emerald-100",
-          },
-          {
-            label: "קבצים שנותחו",
-            value: analyses?.reduce((sum, a) => sum + (a.files?.length || 0), 0) || 0,
+            label: "קבצים שנסרקו",
+            value: totalPdfs,
             icon: <FileText className="size-5" />,
-            color: "from-violet-500/10 to-violet-500/5 text-violet-600",
             iconBg: "bg-violet-100",
+            textColor: "text-violet-600",
           },
           {
-            label: "הושלמו",
-            value: completedAnalyses.length,
-            icon: <CheckCircle className="size-5" />,
-            color: "from-amber-500/10 to-amber-500/5 text-amber-600",
-            iconBg: "bg-amber-100",
+            label: "סריקות שהושלמו",
+            value: completedScans,
+            icon: <ScanLine className="size-5" />,
+            iconBg: "bg-emerald-100",
+            textColor: "text-emerald-600",
           },
         ].map((stat, i) => (
           <Card key={i} className={`overflow-hidden animate-fade-in-up stagger-${i + 1}`}>
             <CardContent className="pt-5 pb-4">
               <div className="flex items-center gap-3">
-                <div className={`size-10 rounded-xl ${stat.iconBg} flex items-center justify-center ${stat.color.split(" ").pop()}`}>
+                <div className={`size-10 rounded-xl ${stat.iconBg} flex items-center justify-center ${stat.textColor}`}>
                   {stat.icon}
                 </div>
                 <div>
@@ -158,134 +167,96 @@ export default function Insurance() {
         ))}
       </div>
 
-      <div className="animate-fade-in-up stagger-5">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-base font-semibold text-foreground flex items-center gap-2">
-            <Layers className="size-4 text-muted-foreground" />
-            הפוליסות שלך
-            {analyses && analyses.length > 0 && (
-              <Badge variant="secondary" className="text-xs">{analyses.length}</Badge>
-            )}
-          </h3>
+      {isLoading ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {[1, 2, 3, 4].map((i) => (
+            <Card key={i} className="animate-pulse">
+              <CardContent className="py-8">
+                <div className="flex items-center gap-4">
+                  <div className="size-14 rounded-2xl bg-muted" />
+                  <div className="flex-1 space-y-3">
+                    <div className="h-5 bg-muted rounded w-1/2" />
+                    <div className="h-3 bg-muted rounded w-2/3" />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
         </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-fade-in-up stagger-4">
+          {CATEGORIES.map((cat) => {
+            const config = CATEGORY_CONFIG[cat];
+            const stats = categoryStats[cat];
+            const hasData = stats.scans > 0;
 
-        {isLoading ? (
-          <div className="space-y-3">
-            {[1, 2, 3].map((i) => (
-              <Card key={i} className="animate-pulse">
-                <CardContent className="py-5">
-                  <div className="flex items-center gap-4">
-                    <div className="size-10 rounded-xl bg-muted" />
-                    <div className="flex-1 space-y-2">
-                      <div className="h-4 bg-muted rounded w-1/3" />
-                      <div className="h-3 bg-muted rounded w-2/3" />
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        ) : analyses && analyses.length > 0 ? (
-          <div className="space-y-3">
-            {analyses.map((analysis) => (
+            return (
               <Card
-                key={analysis.sessionId}
-                className="group hover:shadow-md hover:border-primary/20 transition-all duration-200"
+                key={cat}
+                className={`group cursor-pointer overflow-hidden transition-all duration-300 hover:shadow-lg hover:scale-[1.01] hover:border-primary/20 ${
+                  hasData ? "" : "opacity-75"
+                }`}
+                onClick={() => setLocation(`/insurance/category/${cat}`)}
               >
-                <CardContent className="py-4 px-5">
-                  <div className="flex items-center gap-4">
-                    <div className="size-10 rounded-xl bg-primary/8 flex items-center justify-center shrink-0">
-                      <FileText className="size-5 text-primary" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1">
-                        <p className="text-sm font-semibold truncate">
-                          {analysis.analysisResult?.generalInfo?.policyName || "ניתוח פוליסה"}
-                        </p>
-                        {getStatusBadge(analysis.status)}
+                <CardContent className="p-0">
+                  <div className={`bg-gradient-to-bl ${config.gradient} p-6`}>
+                    <div className="flex items-start justify-between">
+                      <div className="flex items-center gap-4">
+                        <div className={`size-14 rounded-2xl ${config.iconBg} flex items-center justify-center ${config.textColor} shadow-sm`}>
+                          {config.icon}
+                        </div>
+                        <div>
+                          <h3 className="text-lg font-bold text-foreground">{config.label}</h3>
+                          <p className="text-xs text-muted-foreground mt-0.5">{config.description}</p>
+                        </div>
                       </div>
-                      <p className="text-xs text-muted-foreground truncate">
-                        {analysis.analysisResult?.summary || "אין סיכום זמין"}
-                      </p>
+                      <ArrowLeft className="size-5 text-muted-foreground/40 group-hover:text-primary transition-colors mt-1" />
                     </div>
 
-                    <div className="hidden sm:flex items-center gap-6 shrink-0 text-center">
-                      <div>
-                        <p className="text-xs text-muted-foreground">תאריך</p>
-                        <p className="text-xs font-medium">
-                          {format(new Date(analysis.createdAt), "dd.MM.yy", { locale: he })}
-                        </p>
+                    <div className="flex items-center gap-6 mt-5 pt-4 border-t border-border/40">
+                      <div className="flex items-center gap-2">
+                        <FileText className="size-4 text-muted-foreground" />
+                        <div>
+                          <p className="text-lg font-bold">{stats.pdfs}</p>
+                          <p className="text-[11px] text-muted-foreground">קבצי PDF</p>
+                        </div>
                       </div>
-                      <div>
-                        <p className="text-xs text-muted-foreground">קבצים</p>
-                        <p className="text-xs font-medium">{analysis.files.length}</p>
+                      <div className="flex items-center gap-2">
+                        <ScanLine className="size-4 text-muted-foreground" />
+                        <div>
+                          <p className="text-lg font-bold">{stats.scans}</p>
+                          <p className="text-[11px] text-muted-foreground">סריקות</p>
+                        </div>
                       </div>
-                      <div>
-                        <p className="text-xs text-muted-foreground">כיסויים</p>
-                        <p className="text-xs font-medium">{analysis.analysisResult?.coverages?.length || 0}</p>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      {analysis.status === "completed" && (
-                        <Button
-                          onClick={() => setLocation(`/insurance/${analysis.sessionId}`)}
-                          variant="default"
-                          size="sm"
-                          className="gap-1.5 h-8"
-                        >
-                          <Eye className="size-3.5" />
-                          <span className="hidden sm:inline">צפה</span>
-                        </Button>
+                      {hasData && (
+                        <Badge variant="secondary" className="mr-auto text-xs">
+                          {stats.scans} {stats.scans === 1 ? "סריקה" : "סריקות"}
+                        </Badge>
                       )}
-                      <AlertDialog>
-                        <AlertDialogTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
-                          >
-                            <Trash2 className="size-3.5" />
-                          </Button>
-                        </AlertDialogTrigger>
-                        <AlertDialogContent dir="rtl">
-                          <AlertDialogTitle>מחק ניתוח</AlertDialogTitle>
-                          <AlertDialogDescription>
-                            האם אתה בטוח שברצונך למחוק ניתוח זה? לא ניתן לבטל פעולה זו.
-                          </AlertDialogDescription>
-                          <div className="flex gap-2 justify-end">
-                            <AlertDialogCancel>ביטול</AlertDialogCancel>
-                            <AlertDialogAction
-                              onClick={() => deleteAnalysisMutation.mutate({ sessionId: analysis.sessionId })}
-                              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                            >
-                              מחק
-                            </AlertDialogAction>
-                          </div>
-                        </AlertDialogContent>
-                      </AlertDialog>
                     </div>
                   </div>
                 </CardContent>
               </Card>
-            ))}
-          </div>
-        ) : (
-          <Card className="border-dashed">
-            <CardContent className="py-16 text-center">
-              <div className="size-16 rounded-2xl bg-muted/60 flex items-center justify-center mx-auto mb-4">
-                <FileText className="size-8 text-muted-foreground/40" />
-              </div>
-              <h3 className="text-base font-semibold text-foreground mb-1">אין ביטוחים עדיין</h3>
-              <p className="text-sm text-muted-foreground mb-5">העלה את הפוליסה הראשונה שלך וקבל ניתוח מפורט</p>
-              <Button onClick={() => setLocation("/insurance/new")} className="gap-2">
-                <Plus className="size-4" />
-                ניתוח ראשון
-              </Button>
-            </CardContent>
-          </Card>
-        )}
-      </div>
+            );
+          })}
+        </div>
+      )}
+
+      {!isLoading && totalScans === 0 && (
+        <Card className="border-dashed mt-6 animate-fade-in-up stagger-5">
+          <CardContent className="py-16 text-center">
+            <div className="size-16 rounded-2xl bg-muted/60 flex items-center justify-center mx-auto mb-4">
+              <FileText className="size-8 text-muted-foreground/40" />
+            </div>
+            <h3 className="text-base font-semibold text-foreground mb-1">אין ביטוחים עדיין</h3>
+            <p className="text-sm text-muted-foreground mb-5">העלה את הפוליסה הראשונה שלך וקבל סריקה מפורטת</p>
+            <Button onClick={() => setLocation("/insurance/new")} className="gap-2">
+              <Plus className="size-4" />
+              סריקה ראשונה
+            </Button>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

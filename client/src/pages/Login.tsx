@@ -10,7 +10,7 @@ const FEATURES = [
   {
     icon: Shield,
     title: "ניהול ביטוחים",
-    description: "ניתוח פוליסות עם AI, השוואת כיסויים וזיהוי חיסכון",
+    description: "סריקת פוליסות עם AI, השוואת כיסויים וזיהוי חיסכון",
   },
   {
     icon: Wallet,

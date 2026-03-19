@@ -41,7 +41,7 @@ const STAT_CONFIG: Array<{
 }> = [
   { key: "totalUsers", icon: Users, label: "סה״כ משתמשים", color: "bg-blue-100 text-blue-600" },
   { key: "activeUsersThisMonth", icon: TrendingUp, label: "פעילים החודש", color: "bg-emerald-100 text-emerald-600" },
-  { key: "totalAnalyses", icon: FileText, label: "ניתוחים", color: "bg-violet-100 text-violet-600" },
+  { key: "totalAnalyses", icon: FileText, label: "סריקות", color: "bg-violet-100 text-violet-600" },
   { key: "totalCalls", icon: Zap, label: "סה״כ קריאות", color: "bg-amber-100 text-amber-600" },
   { key: "totalTokens", icon: Activity, label: "טוקנים", color: "bg-cyan-100 text-cyan-600", format: "tokens" },
   { key: "totalCost", icon: DollarSign, label: "עלות מוערכת", color: "bg-rose-100 text-rose-600", format: "cost" },

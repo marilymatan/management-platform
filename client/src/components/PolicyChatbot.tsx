@@ -10,7 +10,7 @@ export function PolicyChatbot({ sessionId }: PolicyChatbotProps) {
   const [messages, setMessages] = useState<Message[]>([
     {
       role: "system",
-      content: "אני עוזר וירטואלי לניתוח פוליסות ביטוח. אני יכול לענות על שאלות לגבי הפוליסה שהעלית.",
+      content: "אני עוזר וירטואלי לפוליסות ביטוח. אני יכול לענות על שאלות לגבי הפוליסה שהעלית.",
     },
   ]);
 
@@ -22,7 +22,7 @@ export function PolicyChatbot({ sessionId }: PolicyChatbotProps) {
       setMessages([
         {
           role: "system",
-          content: "אני עוזר וירטואלי לניתוח פוליסות ביטוח. אני יכול לענות על שאלות לגבי הפוליסה שהעלית.",
+          content: "אני עוזר וירטואלי לפוליסות ביטוח. אני יכול לענות על שאלות לגבי הפוליסה שהעלית.",
         },
         ...history.map(msg => ({
           role: msg.role as "user" | "assistant",

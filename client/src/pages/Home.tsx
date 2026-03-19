@@ -29,7 +29,7 @@ import type { UploadedFile, PolicyAnalysis } from "@shared/insurance";
 
 const STEPS = [
   { icon: <FileSearch className="size-5" />, title: "העלה", desc: "העלה קבצי PDF של הפוליסה" },
-  { icon: <Sparkles className="size-5" />, title: "ניתוח", desc: "AI מנתח את הפרטים" },
+  { icon: <Sparkles className="size-5" />, title: "סריקה", desc: "AI סורק את הפרטים" },
   { icon: <LayoutDashboard className="size-5" />, title: "תוצאות", desc: "צפה בכיסויים והמלצות" },
 ];
 
@@ -120,12 +120,12 @@ export default function Home() {
         await linkToUserMutation.mutateAsync({ sessionId: result.sessionId });
       }
 
-      toast.success("הניתוח הושלם בהצלחה!");
+      toast.success("הסריקה הושלמה בהצלחה!");
     } catch (error: any) {
       setIsUploading(false);
       setIsAnalyzing(false);
       setFiles(prev => prev.map(f => ({ ...f, status: "error" as const, error: error.message })));
-      toast.error("שגיאה בניתוח הפוליסה: " + (error.message || "נסה שוב"));
+      toast.error("שגיאה בסריקת הפוליסה: " + (error.message || "נסה שוב"));
     }
   }, [files, uploadMutation, analyzeMutation, user, linkToUserMutation]);
 
@@ -153,13 +153,13 @@ export default function Home() {
               <div className="relative z-10 text-center">
                 <div className="inline-flex items-center gap-2 rounded-full bg-white/10 backdrop-blur-sm px-4 py-1.5 mb-5">
                   <Shield className="size-4 text-blue-300" />
-                  <span className="text-xs font-medium text-blue-100">ניתוח פוליסות עם AI</span>
+                  <span className="text-xs font-medium text-blue-100">סריקת פוליסות עם AI</span>
                 </div>
                 <h2 className="text-2xl md:text-3xl font-bold text-white mb-3">
                   הבן את הפוליסה שלך בקלות
                 </h2>
                 <p className="text-sm md:text-base text-blue-100/80 max-w-lg mx-auto leading-relaxed">
-                  העלה את קובץ ה-PDF של פוליסת הביטוח שלך וקבל ניתוח מפורט של כל הכיסויים, העלויות והתנאים
+                  העלה את קובץ ה-PDF של פוליסת הביטוח שלך וקבל סריקה מפורטת של כל הכיסויים, העלויות והתנאים
                 </p>
               </div>
 
@@ -215,10 +215,10 @@ export default function Home() {
                     <Sparkles className="absolute inset-0 m-auto size-6 text-primary" />
                   </div>
                   <p className="text-sm font-semibold text-foreground">
-                    מנתח את הפוליסה...
+                    סורק את הפוליסה...
                   </p>
                   <p className="text-xs text-muted-foreground mt-1.5">
-                    ה-AI קורא ומנתח את כל הפרטים — זה עשוי לקחת עד דקה
+                    ה-AI קורא וסורק את כל הפרטים — זה עשוי לקחת עד דקה
                   </p>
                 </CardContent>
               </Card>
@@ -264,7 +264,7 @@ export default function Home() {
                       )}
                     </div>
                   ) : (
-                    <h2 className="text-xl font-bold text-white mb-2">ניתוח הפוליסה הושלם</h2>
+                    <h2 className="text-xl font-bold text-white mb-2">סריקת הפוליסה הושלמה</h2>
                   )}
 
                   <p className="text-sm text-blue-100/70 leading-relaxed max-w-2xl">
@@ -296,7 +296,7 @@ export default function Home() {
                   className="bg-white/15 hover:bg-white/25 text-white border-0 backdrop-blur-sm shrink-0 gap-2"
                 >
                   <ArrowLeft className="size-4" />
-                  ניתוח חדש
+                  סריקה חדשה
                 </Button>
               </div>
             </div>

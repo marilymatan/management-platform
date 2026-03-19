@@ -16,7 +16,7 @@ export function PolicyNames({ policyNames }: PolicyNamesProps) {
       <CardHeader className="pb-3">
         <div className="flex items-center gap-2">
           <FileText className="size-5 text-blue-600" />
-          <CardTitle className="text-sm">הפוליסות בניתוח</CardTitle>
+          <CardTitle className="text-sm">הפוליסות בסריקה</CardTitle>
         </div>
       </CardHeader>
       <CardContent>

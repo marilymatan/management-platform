@@ -69,7 +69,7 @@ export default function Documents() {
           name: typeof file === "string" ? file : (file as any).name || "פוליסה",
           type: "insurance",
           date: new Date(analysis.createdAt),
-          description: analysis.analysisResult?.generalInfo?.policyName || "ניתוח פוליסה",
+          description: analysis.analysisResult?.generalInfo?.policyName || "סריקת פוליסה",
           link: `/insurance/${analysis.sessionId}`,
         });
       });

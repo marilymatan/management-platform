@@ -103,10 +103,17 @@ export default function LumiDashboard() {
     return Math.max(0, Math.min(100, score));
   })();
 
-  const chartData = monthlySummary?.map(cat => ({
+  const chartData = monthlySummary?.flatMap(m => m.categories.map(cat => ({
     name: cat.category,
     amount: cat.total,
-  })) ?? [];
+  }))) ?? [];
+  const aggregatedChartData = Object.values(
+    chartData.reduce<Record<string, { name: string; amount: number }>>((acc, item) => {
+      if (!acc[item.name]) acc[item.name] = { name: item.name, amount: 0 };
+      acc[item.name].amount += item.amount;
+      return acc;
+    }, {})
+  );
 
   const recentActivity = (() => {
     const items: Array<{
@@ -121,7 +128,7 @@ export default function LumiDashboard() {
       items.push({
         id: `analysis-${analysis.sessionId}`,
         icon: <FileSearch className="size-4" />,
-        text: `פוליסה נותחה: ${analysis.analysisResult?.generalInfo?.policyName || "ניתוח פוליסה"}`,
+        text: `פוליסה נסרקה: ${analysis.analysisResult?.generalInfo?.policyName || "סריקת פוליסה"}`,
         time: format(new Date(analysis.createdAt), "dd.MM.yy HH:mm", { locale: he }),
         color: "bg-blue-100 text-blue-600",
       });
@@ -242,8 +249,8 @@ export default function LumiDashboard() {
                 <div className="size-10 rounded-xl bg-white/15 flex items-center justify-center mb-3">
                   <Plus className="size-5 text-white" />
                 </div>
-                <p className="text-base font-bold text-white">ניתוח פוליסה חדשה</p>
-                <p className="text-xs text-white/60 mt-1">העלה פוליסה וקבל ניתוח AI מפורט</p>
+                <p className="text-base font-bold text-white">סריקת פוליסה חדשה</p>
+                <p className="text-xs text-white/60 mt-1">העלה פוליסה וקבל סריקת AI מפורטת</p>
               </div>
               <ArrowLeft className="absolute left-4 bottom-5 size-5 text-white/30 group-hover:text-white/60 transition-colors" />
             </button>
@@ -309,7 +316,7 @@ export default function LumiDashboard() {
         </div>
       </div>
 
-      {chartData.length > 0 && (
+      {aggregatedChartData.length > 0 && (
         <Card className="animate-fade-in-up">
           <CardContent className="pt-5">
             <div className="flex items-center justify-between mb-4">
@@ -328,7 +335,7 @@ export default function LumiDashboard() {
               </Button>
             </div>
             <ResponsiveContainer width="100%" height={220}>
-              <BarChart data={chartData} margin={{ top: 4, right: 4, bottom: 4, left: 4 }}>
+              <BarChart data={aggregatedChartData} margin={{ top: 4, right: 4, bottom: 4, left: 4 }}>
                 <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
                 <XAxis dataKey="name" tick={{ fontSize: 11 }} />
                 <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => `₪${v}`} />

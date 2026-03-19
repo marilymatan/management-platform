@@ -8,6 +8,7 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import { AppShell } from "./components/AppShell";
 import LumiDashboard from "./pages/LumiDashboard";
 import Insurance from "./pages/Insurance";
+import InsuranceCategoryPage from "./pages/InsuranceCategoryPage";
 import Home from "./pages/Home";
 import Expenses from "./pages/SmartInvoices";
 import Reminders from "./pages/Reminders";
@@ -42,6 +43,7 @@ function Router() {
       <Switch>
         <Route path="/" component={LumiDashboard} />
         <Route path="/insurance" component={Insurance} />
+        <Route path="/insurance/category/:category" component={InsuranceCategoryPage} />
         <Route path="/insurance/new" component={Home} />
         <Route path="/insurance/:sessionId" component={Home} />
         <Route path="/expenses" component={Expenses} />

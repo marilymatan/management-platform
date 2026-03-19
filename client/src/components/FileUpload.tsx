@@ -43,7 +43,7 @@ function getStatusText(status: FileStatus): string {
     case "pending": return "ממתין";
     case "uploading": return "מעלה...";
     case "uploaded": return "הועלה";
-    case "analyzing": return "מנתח...";
+    case "analyzing": return "סורק...";
     case "done": return "הושלם";
     case "error": return "שגיאה";
   }
@@ -177,11 +177,11 @@ export function FileUpload({
           {isUploading ? (
             <><Loader2 className="size-5 animate-spin" /> מעלה קבצים...</>
           ) : isAnalyzing ? (
-            <><Loader2 className="size-5 animate-spin" /> מנתח פוליסות...</>
+            <><Loader2 className="size-5 animate-spin" /> סורק פוליסות...</>
           ) : hasResults ? (
-            <><CheckCircle2 className="size-5" /> הניתוח הושלם</>
+            <><CheckCircle2 className="size-5" /> הסריקה הושלמה</>
           ) : (
-            <><Upload className="size-5" /> העלה ונתח פוליסות</>
+            <><Upload className="size-5" /> העלה וסרוק פוליסות</>
           )}
         </Button>
       )}

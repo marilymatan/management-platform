@@ -36,7 +36,7 @@ import {
 } from "./gmail";
 import { getDb } from "./db";
 import { smartInvoices } from "../drizzle/schema";
-import { decryptField, decryptJson } from "./encryption";
+import { decryptField, decryptJson, encryptJson } from "./encryption";
 import { eq, desc } from "drizzle-orm";
 import { audit, getClientIp, getRecentAuditLogs, getSecurityEvents } from "./auditLog";
 
@@ -83,6 +83,7 @@ const ANALYSIS_SYSTEM_PROMPT = `אתה מומחה לניתוח פוליסות ב
     "insurerName": "שם חברת הביטוח",
     "policyNumber": "מספר פוליסה",
     "policyType": "סוג הפוליסה",
+    "insuranceCategory": "health | life | car | home",
     "monthlyPremium": "פרמיה חודשית",
     "annualPremium": "פרמיה שנתית",
     "startDate": "תאריך תחילה",
@@ -107,6 +108,11 @@ const ANALYSIS_SYSTEM_PROMPT = `אתה מומחה לניתוח פוליסות ב
 - חלץ את כל הכיסויים וההטבות שמופיעים בפוליסה
 - לכל כיסוי, הוסף את שם הקובץ (sourceFile) שממנו הוא חולץ
 - אם מידע מסוים לא נמצא, רשום "לא מצוין בפוליסה" (לא "לא צוין")
+- עבור insuranceCategory, סווג את הפוליסה לאחת מהקטגוריות הבאות בלבד:
+  * "health" - ביטוח בריאות (רפואה משלימה, אשפוז, שיניים, תרופות, ביטוח בריאות)
+  * "life" - ביטוח חיים (ביטוח חיים, ריסק, אובדן כושר עבודה, נכות, מוות, סיעודי, פנסיה)
+  * "car" - ביטוח רכב (ביטוח רכב, מקיף, צד ג, חובה, רכב)
+  * "home" - ביטוח דירה (ביטוח דירה, מבנה, תכולה, רעידת אדמה, צנרת)
 - הקפד על דיוק בנתונים הכספיים
 - שמור על שפה ברורה ומובנת בעברית
 - החזר JSON תקין בלבד
@@ -250,7 +256,39 @@ export const appRouter = router({
         hasSpecialHealthConditions: profile.hasSpecialHealthConditions ?? false,
         healthConditionsDetails: profile.healthConditionsDetails,
         hasPets: profile.hasPets ?? false,
+        profileImageKey: profile.profileImageKey ?? null,
       };
+    }),
+
+    uploadImage: protectedProcedure
+      .input(z.object({
+        name: z.string(),
+        base64: z.string(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
+        const allowedExtensions = [".jpg", ".jpeg", ".png", ".webp"];
+        const ext = input.name.substring(input.name.lastIndexOf(".")).toLowerCase();
+        if (!allowedExtensions.includes(ext)) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Only jpg, png, webp images are allowed" });
+        }
+        const safeName = sanitizeFilename(input.name);
+        const fileKey = `avatars/${ctx.user.id}/${nanoid(8)}-${safeName}`;
+        const buffer = Buffer.from(input.base64, "base64");
+        const maxSize = 5 * 1024 * 1024;
+        if (buffer.length > maxSize) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Image must be under 5MB" });
+        }
+        await storagePut(fileKey, buffer, `image/${ext.replace(".", "")}`);
+        await upsertUserProfile(ctx.user.id, { profileImageKey: fileKey } as any);
+        return { fileKey };
+      }),
+
+    getImageUrl: protectedProcedure.query(async ({ ctx }) => {
+      if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const profile = await getUserProfile(ctx.user.id);
+      if (!profile?.profileImageKey) return null;
+      return generateSignedFileUrl(profile.profileImageKey);
     }),
 
     update: protectedProcedure
@@ -432,6 +470,7 @@ export const appRouter = router({
                         insurerName: { type: "string" },
                         policyNumber: { type: "string" },
                         policyType: { type: "string" },
+                        insuranceCategory: { type: "string", enum: ["health", "life", "car", "home"] },
                         monthlyPremium: { type: "string" },
                         annualPremium: { type: "string" },
                         startDate: { type: "string" },
@@ -439,7 +478,7 @@ export const appRouter = router({
                         importantNotes: { type: "array", items: { type: "string" } },
                         fineprint: { type: "array", items: { type: "string" } },
                       },
-                      required: ["policyName", "insurerName", "policyNumber", "policyType", "monthlyPremium", "annualPremium", "startDate", "endDate", "importantNotes", "fineprint"],
+                      required: ["policyName", "insurerName", "policyNumber", "policyType", "insuranceCategory", "monthlyPremium", "annualPremium", "startDate", "endDate", "importantNotes", "fineprint"],
                       additionalProperties: false,
                     },
                     summary: { type: "string" },
@@ -551,8 +590,10 @@ export const appRouter = router({
             }
           }
 
+          const detectedCategory = analysisResult.generalInfo?.insuranceCategory;
           await updateAnalysisStatus(input.sessionId, "completed", {
             analysisResult,
+            insuranceCategory: detectedCategory,
           });
 
           // Audit log
@@ -596,6 +637,7 @@ export const appRouter = router({
           status: analysis.status,
           result: analysis.analysisResult as PolicyAnalysis | null,
           errorMessage: analysis.errorMessage,
+          insuranceCategory: analysis.insuranceCategory ?? null,
         };
       }),
 
@@ -865,7 +907,47 @@ export const appRouter = router({
         return result;
       }),
 
-    /** Get monthly summary of invoices */
+    addManualExpense: protectedProcedure
+      .input(z.object({
+        provider: z.string().min(1).max(128),
+        amount: z.number().positive(),
+        category: z.enum(["תקשורת", "חשמל", "מים", "ארנונה", "ביטוח", "בנק", "רכב", "אחר"]),
+        invoiceDate: z.string(),
+        status: z.enum(["pending", "paid", "overdue", "unknown"]).default("paid"),
+        description: z.string().optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
+        const db = await getDb();
+        if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+        const manualId = `manual-${nanoid()}`;
+        const extractedData: Record<string, unknown> = {};
+        if (input.description) extractedData.description = input.description;
+        const [inserted] = await db.insert(smartInvoices).values({
+          userId: ctx.user.id,
+          gmailConnectionId: null,
+          sourceEmail: null,
+          gmailMessageId: manualId,
+          provider: input.provider,
+          category: input.category,
+          amount: String(input.amount),
+          invoiceDate: new Date(input.invoiceDate),
+          status: input.status,
+          subject: null,
+          rawText: null,
+          extractedData: Object.keys(extractedData).length > 0 ? encryptJson(extractedData) : null,
+          parsed: true,
+        }).returning({ id: smartInvoices.id });
+        await audit({
+          userId: ctx.user.id,
+          action: "add_manual_expense",
+          resource: "invoice",
+          resourceId: String(inserted.id),
+          details: JSON.stringify({ provider: input.provider, amount: input.amount }),
+        });
+        return { id: inserted.id };
+      }),
+
     getMonthlySummary: protectedProcedure.query(async ({ ctx }) => {
       if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
       const db = await getDb();
@@ -885,20 +967,32 @@ export const appRouter = router({
           : inv.extractedData,
       }));
 
-      const summary: Record<string, { category: string; total: number; count: number }> = {};
+      const monthMap: Record<string, { month: string; total: number; categories: Record<string, { category: string; total: number; count: number }> }> = {};
       for (const inv of invoices) {
         const cat = inv.category ?? "אחר";
-        if (!summary[cat]) summary[cat] = { category: cat, total: 0, count: 0 };
+        const dateSource = inv.invoiceDate ?? inv.createdAt;
+        const d = new Date(dateSource);
+        const monthKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+        if (!monthMap[monthKey]) monthMap[monthKey] = { month: monthKey, total: 0, categories: {} };
+        if (!monthMap[monthKey].categories[cat]) monthMap[monthKey].categories[cat] = { category: cat, total: 0, count: 0 };
         let amount = parseFloat(inv.amount ?? "0");
         if ((!amount || isNaN(amount)) && inv.extractedData && typeof inv.extractedData === 'object') {
           const ed = inv.extractedData as Record<string, unknown>;
           if (typeof ed.amount === 'number') amount = ed.amount;
           else if (typeof ed.amount === 'string') amount = parseFloat(ed.amount) || 0;
         }
-        summary[cat].total += isNaN(amount) ? 0 : amount;
-        summary[cat].count++;
+        const validAmount = isNaN(amount) ? 0 : amount;
+        monthMap[monthKey].categories[cat].total += validAmount;
+        monthMap[monthKey].categories[cat].count++;
+        monthMap[monthKey].total += validAmount;
       }
-      return Object.values(summary).sort((a, b) => b.total - a.total);
+      return Object.values(monthMap)
+        .map(m => ({
+          month: m.month,
+          total: m.total,
+          categories: Object.values(m.categories).sort((a, b) => b.total - a.total),
+        }))
+        .sort((a, b) => b.month.localeCompare(a.month));
     }),
   }),
 

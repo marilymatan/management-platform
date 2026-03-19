@@ -4,7 +4,8 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import { useIsMobile } from "@/hooks/useMobile";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { trpc } from "@/lib/trpc";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   Sparkles,
@@ -67,6 +68,8 @@ export function AppShell({ children }: AppShellProps) {
   const filteredNavItems = NAV_ITEMS.filter(
     (item) => !item.adminOnly || user?.role === "admin"
   );
+
+  const { data: profileImageUrl } = trpc.profile.getImageUrl.useQuery(undefined, { enabled: !!user });
 
   const userInitials = user?.name
     ? user.name.split(" ").map((n) => n[0]).join("").slice(0, 2)
@@ -169,6 +172,7 @@ export function AppShell({ children }: AppShellProps) {
             )}
           >
             <Avatar className="size-8 shrink-0 border border-white/20">
+              {profileImageUrl && <AvatarImage src={profileImageUrl} alt={user.name || "Profile"} />}
               <AvatarFallback className="bg-white/10 text-white text-xs font-medium">
                 {userInitials}
               </AvatarFallback>

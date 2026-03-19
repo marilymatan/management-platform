@@ -50,7 +50,7 @@ export default function UsagePage() {
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
         {[
-          { icon: <FileText className="size-5" />, label: "ניתוחים", value: usage?.analyzeCount ?? 0, color: "bg-violet-100 text-violet-600" },
+          { icon: <FileText className="size-5" />, label: "סריקות", value: usage?.analyzeCount ?? 0, color: "bg-violet-100 text-violet-600" },
           { icon: <MessageSquare className="size-5" />, label: "שאלות צ׳אט", value: usage?.chatCount ?? 0, color: "bg-blue-100 text-blue-600" },
           { icon: <Zap className="size-5" />, label: "סה״כ טוקנים", value: formatTokens(usage?.totalTokens ?? 0), color: "bg-amber-100 text-amber-600" },
           { icon: <DollarSign className="size-5" />, label: "עלות מוערכת", value: formatCost(usage?.totalCost ?? 0), color: "bg-rose-100 text-rose-600" },
@@ -96,7 +96,7 @@ export default function UsagePage() {
                     </td>
                     <td className="px-4 py-3">
                       <Badge variant={row.action === "analyze" ? "default" : "secondary"} className="text-[11px]">
-                        {row.action === "analyze" ? "ניתוח" : "צ׳אט"}
+                        {row.action === "analyze" ? "סריקה" : "צ׳אט"}
                       </Badge>
                     </td>
                     <td className="px-4 py-3 text-left font-mono text-xs">{formatTokens(row.promptTokens)}</td>

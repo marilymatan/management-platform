@@ -146,7 +146,7 @@ export async function getAnalysisBySessionId(sessionId: string) {
 export async function updateAnalysisStatus(
   sessionId: string,
   status: "pending" | "processing" | "completed" | "error",
-  data?: { extractedText?: string; analysisResult?: PolicyAnalysis; errorMessage?: string }
+  data?: { extractedText?: string; analysisResult?: PolicyAnalysis; errorMessage?: string; insuranceCategory?: string }
 ) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -162,6 +162,9 @@ export async function updateAnalysisStatus(
   }
   if (data?.errorMessage !== undefined) {
     updateData.errorMessage = encryptField(data.errorMessage);
+  }
+  if (data?.insuranceCategory !== undefined) {
+    (updateData as any).insuranceCategory = data.insuranceCategory;
   }
   await db.update(analyses).set(updateData).where(eq(analyses.sessionId, sessionId));
 }
