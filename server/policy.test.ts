@@ -8,15 +8,19 @@ vi.mock("./storage", () => ({
     key: "policies/test/file.pdf",
     url: "https://storage.example.com/policies/test/file.pdf",
   }),
+  sanitizeFilename: vi.fn().mockImplementation((name: string) => name.replace(/[^a-zA-Z0-9._-]/g, "_")),
+  verifyFileSignature: vi.fn().mockReturnValue(false),
 }));
 
 // Mock db
 vi.mock("./db", () => ({
+  getDb: vi.fn().mockResolvedValue(null),
   createAnalysis: vi.fn().mockResolvedValue("test-session"),
   getAnalysisBySessionId: vi.fn().mockImplementation((sessionId: string) => {
     if (sessionId === "existing-session") {
       return {
         sessionId: "existing-session",
+        userId: 1,
         files: [{ name: "test.pdf", size: 1024, url: "https://storage.example.com/test.pdf" }],
         status: "completed",
         analysisResult: {
@@ -54,6 +58,7 @@ vi.mock("./db", () => ({
     if (sessionId === "no-analysis") {
       return {
         sessionId: "no-analysis",
+        userId: 1,
         files: [{ name: "test.pdf", size: 1024, url: "https://storage.example.com/test.pdf" }],
         status: "pending",
         analysisResult: null,

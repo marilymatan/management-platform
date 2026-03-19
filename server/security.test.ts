@@ -224,12 +224,12 @@ describe("Geo-blocking middleware", () => {
     expect(next).toHaveBeenCalled();
   });
 
-  it("should use x-original-host to detect Manus dev preview", () => {
+  it("should block non-IL IPs even with x-original-host header", () => {
     const req = createMockReq({
       headers: {
-        "x-forwarded-for": "1.2.3.4", // US IP
-        host: "bddsplhfze-yodbvlgx6a-uk.a.run.app", // internal Cloud Run host
-        "x-original-host": "3000-abc123.sg1.manus.computer", // real dev preview host
+        "x-forwarded-for": "1.2.3.4",
+        host: "bddsplhfze-yodbvlgx6a-uk.a.run.app",
+        "x-original-host": "3000-abc123.sg1.manus.computer",
       },
     });
     const res = createMockRes();
@@ -237,7 +237,8 @@ describe("Geo-blocking middleware", () => {
 
     geoBlockMiddleware(req, res, next);
 
-    expect(next).toHaveBeenCalled();
+    expect(next).not.toHaveBeenCalled();
+    expect(res._statusCode).toBe(403);
   });
 
   it("should NOT exempt manus.space from geo-blocking (production site must enforce geo-block)", () => {
@@ -266,7 +267,7 @@ describe("Security headers middleware", () => {
 
     securityHeadersMiddleware(req, res, next);
 
-    expect(res._headers["X-Frame-Options"]).toBe("SAMEORIGIN");
+    expect(res._headers["X-Frame-Options"]).toBe("DENY");
     expect(res._headers["X-Content-Type-Options"]).toBe("nosniff");
     expect(res._headers["X-XSS-Protection"]).toBe("1; mode=block");
     expect(res._headers["Referrer-Policy"]).toBe("strict-origin-when-cross-origin");
@@ -275,16 +276,14 @@ describe("Security headers middleware", () => {
     expect(next).toHaveBeenCalled();
   });
 
-  it("should include frame-ancestors with manus domains in CSP", () => {
+  it("should include frame-ancestors 'none' in CSP", () => {
     const req = createMockReq();
     const res = createMockRes();
     const next = vi.fn();
 
     securityHeadersMiddleware(req, res, next);
 
-    expect(res._headers["Content-Security-Policy"]).toContain("frame-ancestors");
-    expect(res._headers["Content-Security-Policy"]).toContain("https://*.manus.space");
-    expect(res._headers["Content-Security-Policy"]).toContain("https://*.manus.computer");
+    expect(res._headers["Content-Security-Policy"]).toContain("frame-ancestors 'none'");
   });
 });
 

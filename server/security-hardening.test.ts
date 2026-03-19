@@ -243,10 +243,10 @@ describe("Geo-blocking Manus dev preview exemption", () => {
     process.env.NODE_ENV = originalEnv;
   });
 
-  it("should allow Manus dev preview hostnames even from non-IL IPs", () => {
+  it("should block non-IL IPs regardless of hostname", () => {
     const req = createMockReq({
       headers: {
-        "x-forwarded-for": "1.2.3.4", // US IP
+        "x-forwarded-for": "1.2.3.4",
         host: "3000-abc123.sg1.manus.computer",
       },
     });
@@ -255,7 +255,8 @@ describe("Geo-blocking Manus dev preview exemption", () => {
 
     geoBlockMiddleware(req, res, next);
 
-    expect(next).toHaveBeenCalled();
+    expect(next).not.toHaveBeenCalled();
+    expect(res._statusCode).toBe(403);
   });
 
   it("should block non-IL IPs on production domain", () => {
