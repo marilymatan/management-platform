@@ -1,16 +1,32 @@
 import { eq, desc, sql, and } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
+import pg from "pg";
 import { InsertUser, users, analyses, chatMessages, apiUsageLogs, userProfiles, gmailConnections, smartInvoices, auditLogs, type InsertAnalysis, type InsertChatMessage, type InsertApiUsageLog, type InsertUserProfile } from "../drizzle/schema";
 import { ENV } from './_core/env';
 import type { PolicyAnalysis } from "@shared/insurance";
 import { encryptField, decryptField, encryptJson, decryptJson } from "./encryption";
 
+let _pool: pg.Pool | null = null;
 let _db: ReturnType<typeof drizzle> | null = null;
+
+function getPool(): pg.Pool {
+  if (!_pool && process.env.DATABASE_URL) {
+    _pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, max: 10 });
+    _pool.on("error", (err) => {
+      console.error("[Database] Pool error:", err.message);
+    });
+  }
+  return _pool!;
+}
+
+export function getSharedPool(): pg.Pool {
+  return getPool();
+}
 
 export async function getDb() {
   if (!_db && process.env.DATABASE_URL) {
     try {
-      _db = drizzle(process.env.DATABASE_URL);
+      _db = drizzle({ client: getPool() });
     } catch (error) {
       console.warn("[Database] Failed to connect:", error);
       _db = null;

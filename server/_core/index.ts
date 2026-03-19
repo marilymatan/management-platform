@@ -15,6 +15,7 @@ import { serveStatic, setupVite } from "./vite";
 import { registerSecurityMiddleware } from "../security";
 import { ENV } from "./env";
 import { verifyFileSignature } from "../storage";
+import { getSharedPool } from "../db";
 
 async function runMigrations() {
   if (!process.env.DATABASE_URL) {
@@ -22,7 +23,7 @@ async function runMigrations() {
     return;
   }
   try {
-    const db = drizzle(process.env.DATABASE_URL);
+    const db = drizzle({ client: getSharedPool() });
 
     await db.execute(sql`CREATE SCHEMA IF NOT EXISTS "drizzle"`);
     await db.execute(sql`
@@ -33,23 +34,24 @@ async function runMigrations() {
       )
     `);
 
-    const existing = await db.execute(
-      sql`SELECT count(*)::int as cnt FROM "drizzle"."__drizzle_migrations"`
-    );
-    const count = (existing.rows[0] as any)?.cnt ?? 0;
+    const colCheck = await db.execute(sql`
+      SELECT count(*)::int as cnt FROM information_schema.columns
+      WHERE table_name = 'analyses' AND column_name = 'insurance_category'
+    `);
+    const hasInsuranceCategory = ((colCheck.rows[0] as any)?.cnt ?? 0) > 0;
 
-    if (count === 0) {
+    if (!hasInsuranceCategory) {
+      await db.execute(sql`TRUNCATE "drizzle"."__drizzle_migrations"`);
       const alreadyApplied = [
         { hash: "d44a864d46ccc0cb528b32ccceb823a3ca15b497c2f01a168b211a7e09f6e3e4", when: 1773946209358 },
         { hash: "88b794cb33faeae8a30e62f7770479e05520693869d7ad5faf8b0d107ef12503", when: 1773947415674 },
-        { hash: "598c7bc6eb7a745152b6028f1bc6816f0ee304568a5933011d08e42c3413f5de", when: 1773952814543 },
       ];
       for (const m of alreadyApplied) {
         await db.execute(
           sql`INSERT INTO "drizzle"."__drizzle_migrations" ("hash", "created_at") VALUES (${m.hash}, ${m.when})`
         );
       }
-      console.log("[Migrate] Seeded migration tracking for 3 pre-existing migrations");
+      console.log("[Migrate] Seeded migration tracking for 2 pre-existing migrations");
     }
 
     const migrationsFolder = path.resolve(process.cwd(), "drizzle");
