@@ -93,28 +93,20 @@ export async function getUserByOpenId(openId: string) {
   return result.length > 0 ? result[0] : undefined;
 }
 
-function encryptAnalysisData(data: InsertAnalysis): InsertAnalysis {
-  const encrypted = { ...data };
-  if (encrypted.files) {
-    encrypted.files = encryptJson(encrypted.files) as any;
-  }
-  if (encrypted.extractedText) {
-    encrypted.extractedText = encryptField(encrypted.extractedText);
-  }
-  if (encrypted.analysisResult) {
-    encrypted.analysisResult = encryptJson(encrypted.analysisResult) as any;
-  }
-  if (encrypted.errorMessage) {
-    encrypted.errorMessage = encryptField(encrypted.errorMessage);
-  }
-  return encrypted;
+interface CreateAnalysisInput {
+  sessionId: string;
+  userId?: number | null;
+  files: Array<{ name: string; size: number; fileKey?: string; url?: string }>;
+  status?: "pending" | "processing" | "completed" | "error";
+  insuranceCategory?: "health" | "life" | "car" | "home" | null;
 }
 
 function decryptAnalysisData(row: any): any {
   if (!row) return row;
   const decrypted = { ...row };
   if (decrypted.files && typeof decrypted.files === "string") {
-    decrypted.files = decryptJson(decrypted.files) ?? [];
+    const parsed = decryptJson(decrypted.files);
+    decrypted.files = parsed ?? decrypted.files;
   }
   if (decrypted.extractedText && typeof decrypted.extractedText === "string") {
     decrypted.extractedText = decryptField(decrypted.extractedText);
@@ -128,11 +120,17 @@ function decryptAnalysisData(row: any): any {
   return decrypted;
 }
 
-export async function createAnalysis(data: InsertAnalysis) {
+export async function createAnalysis(data: CreateAnalysisInput) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const encrypted = encryptAnalysisData(data);
-  await db.insert(analyses).values(encrypted);
+  const row: InsertAnalysis = {
+    sessionId: data.sessionId,
+    files: encryptJson(data.files),
+    status: data.status ?? "pending",
+  };
+  if (data.userId != null) row.userId = data.userId;
+  if (data.insuranceCategory) row.insuranceCategory = data.insuranceCategory;
+  await db.insert(analyses).values(row);
   return data.sessionId;
 }
 
@@ -158,7 +156,7 @@ export async function updateAnalysisStatus(
     updateData.extractedText = encryptField(data.extractedText);
   }
   if (data?.analysisResult !== undefined) {
-    updateData.analysisResult = encryptJson(data.analysisResult) as any;
+    updateData.analysisResult = encryptJson(data.analysisResult);
   }
   if (data?.errorMessage !== undefined) {
     updateData.errorMessage = encryptField(data.errorMessage);
