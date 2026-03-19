@@ -4,6 +4,8 @@ import type { Request, Response, NextFunction } from "express";
 import { createServer } from "http";
 import path from "path";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
+import { drizzle } from "drizzle-orm/node-postgres";
+import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { registerOAuthRoutes } from "./oauth";
 import { registerGmailCallbackRoute } from "../gmailCallback";
 import { appRouter } from "../routers";
@@ -13,8 +15,24 @@ import { registerSecurityMiddleware } from "../security";
 import { ENV } from "./env";
 import { verifyFileSignature } from "../storage";
 
+async function runMigrations() {
+  if (!process.env.DATABASE_URL) {
+    console.warn("[Migrate] DATABASE_URL not set, skipping migrations");
+    return;
+  }
+  try {
+    const db = drizzle(process.env.DATABASE_URL);
+    const migrationsFolder = path.resolve(process.cwd(), "drizzle");
+    await migrate(db, { migrationsFolder });
+    console.log("[Migrate] Migrations applied successfully");
+  } catch (error) {
+    console.error("[Migrate] Migration failed:", error);
+  }
+}
+
 async function startServer() {
   console.log("[Boot] Starting server...");
+  await runMigrations();
   const app = express();
   const server = createServer(app);
   app.set("trust proxy", 1);
@@ -57,6 +75,9 @@ async function startServer() {
     createExpressMiddleware({
       router: appRouter,
       createContext,
+      onError: ({ error, path }) => {
+        console.error(`[tRPC] ${path}:`, error.code, error.message, error.cause || "");
+      },
     })
   );
 
