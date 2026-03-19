@@ -148,6 +148,7 @@ type Invoice = {
   id: number;
   provider?: string | null;
   category?: string | null;
+  customCategory?: string | null;
   amount?: string | null;
   status?: string | null;
   subject?: string | null;
@@ -156,6 +157,10 @@ type Invoice = {
   dueDate?: string | Date | null;
   extractedData?: unknown;
 };
+
+function getEffectiveCategory(inv: Invoice): string {
+  return inv.customCategory ?? inv.category ?? "אחר";
+}
 
 type ProviderGroup = {
   provider: string;
@@ -182,6 +187,9 @@ export default function SmartInvoices() {
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
   const [expandedMonths, setExpandedMonths] = useState<Set<string>>(new Set());
   const [manualDialogOpen, setManualDialogOpen] = useState(false);
+  const [editCategoryDialogOpen, setEditCategoryDialogOpen] = useState(false);
+  const [editCategoryInvoice, setEditCategoryInvoice] = useState<Invoice | null>(null);
+  const [editCategoryValue, setEditCategoryValue] = useState("");
   const [manualForm, setManualForm] = useState({
     provider: "",
     amount: "",
@@ -268,6 +276,20 @@ export default function SmartInvoices() {
     },
   });
 
+  const updateCategoryMutation = trpc.gmail.updateInvoiceCategory.useMutation({
+    onSuccess: () => {
+      toast.success("הקטגוריה עודכנה בהצלחה");
+      setEditCategoryDialogOpen(false);
+      setEditCategoryInvoice(null);
+      setEditCategoryValue("");
+      utils.gmail.getInvoices.invalidate();
+      utils.gmail.getMonthlySummary.invalidate();
+    },
+    onError: (err) => {
+      toast.error(`שגיאה בעדכון קטגוריה: ${err.message}`);
+    },
+  });
+
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const connected = params.get("gmail_connected");
@@ -310,6 +332,20 @@ export default function SmartInvoices() {
     });
   }
 
+  function handleEditCategory(inv: Invoice) {
+    setEditCategoryInvoice(inv);
+    setEditCategoryValue(getEffectiveCategory(inv));
+    setEditCategoryDialogOpen(true);
+  }
+
+  function handleSubmitCategory() {
+    if (!editCategoryInvoice || !editCategoryValue.trim()) return;
+    updateCategoryMutation.mutate({
+      invoiceId: editCategoryInvoice.id,
+      customCategory: editCategoryValue.trim(),
+    });
+  }
+
   function toggleMonth(monthKey: string) {
     setExpandedMonths((prev) => {
       const next = new Set(prev);
@@ -322,7 +358,8 @@ export default function SmartInvoices() {
   const filteredInvoices = useMemo(() => {
     if (!invoices) return [];
     return invoices.filter((inv) => {
-      if (categoryFilter && inv.category !== categoryFilter) return false;
+      const effectiveCat = getEffectiveCategory(inv as Invoice);
+      if (categoryFilter && effectiveCat !== categoryFilter && inv.category !== categoryFilter) return false;
       if (statusFilter && inv.status !== statusFilter) return false;
       if (searchQuery.trim()) {
         const q = searchQuery.trim().toLowerCase();
@@ -331,6 +368,7 @@ export default function SmartInvoices() {
           inv.provider,
           inv.subject,
           inv.category,
+          (inv as Invoice).customCategory,
           ed.description,
           ed.fromEmail,
           ed.invoiceNumber,
@@ -349,7 +387,7 @@ export default function SmartInvoices() {
     for (const inv of filteredInvoices) {
       const key = inv.provider ?? "ספק לא ידוע";
       if (!map.has(key)) map.set(key, []);
-      map.get(key)!.push(inv);
+      map.get(key)!.push(inv as Invoice);
     }
     return Array.from(map.entries())
       .map(([provider, invs]) => ({
@@ -360,7 +398,7 @@ export default function SmartInvoices() {
           return db - da;
         }),
         totalAmount: invs.reduce((sum, inv) => sum + getEffectiveAmount(inv), 0),
-        categories: [...new Set(invs.map((i) => i.category ?? "אחר"))],
+        categories: [...new Set(invs.map((i) => getEffectiveCategory(i)))],
         hasPdf: invs.some((i) => !!getExtractedData(i).pdfUrl),
       }))
       .sort((a, b) => b.totalAmount - a.totalAmount);
@@ -499,6 +537,60 @@ export default function SmartInvoices() {
             <Button onClick={handleSubmitManual} disabled={addManualMutation.isPending} className="gap-1.5">
               {addManualMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
               הוסף
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={editCategoryDialogOpen} onOpenChange={setEditCategoryDialogOpen}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>עריכת קטגוריה</DialogTitle>
+            <DialogDescription>
+              {editCategoryInvoice?.provider
+                ? `שנה את הקטגוריה עבור "${editCategoryInvoice.provider}". השינוי יחול על כל החשבוניות מספק זה.`
+                : "שנה את הקטגוריה של החשבונית"}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3 py-2">
+            <div className="grid gap-1.5">
+              <Label htmlFor="edit-cat">קטגוריה חדשה</Label>
+              <Input
+                id="edit-cat"
+                placeholder='למשל "קלינאית תקשורת"'
+                value={editCategoryValue}
+                onChange={(e) => setEditCategoryValue(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleSubmitCategory();
+                }}
+                autoFocus
+              />
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {ALL_CATEGORIES.map((cat) => (
+                <button
+                  key={cat}
+                  onClick={() => setEditCategoryValue(cat)}
+                  className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
+                    editCategoryValue === cat
+                      ? "bg-primary text-primary-foreground border-primary"
+                      : "bg-muted/40 hover:bg-muted border-transparent"
+                  }`}
+                >
+                  {cat}
+                </button>
+              ))}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditCategoryDialogOpen(false)}>ביטול</Button>
+            <Button
+              onClick={handleSubmitCategory}
+              disabled={updateCategoryMutation.isPending || !editCategoryValue.trim()}
+              className="gap-1.5"
+            >
+              {updateCategoryMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <PencilLine className="w-4 h-4" />}
+              שמור
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -810,10 +902,22 @@ export default function SmartInvoices() {
                             }}
                           >
                             <div className="flex items-center gap-3 min-w-0">
-                              <Badge variant="outline" className={`shrink-0 text-xs gap-1 ${catColor}`}>
-                                {CATEGORY_ICONS[primaryCat] ?? <TrendingUp className="w-3.5 h-3.5" />}
-                                {primaryCat}
-                              </Badge>
+                              <div className="flex items-center gap-1 shrink-0">
+                                <Badge variant="outline" className={`text-xs gap-1 ${catColor}`}>
+                                  {CATEGORY_ICONS[primaryCat] ?? <TrendingUp className="w-3.5 h-3.5" />}
+                                  {primaryCat}
+                                </Badge>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleEditCategory(isSingle ? singleInv! : group.invoices[0]);
+                                  }}
+                                  className="p-1 rounded-md hover:bg-muted/60 text-muted-foreground hover:text-foreground transition-colors"
+                                  title="ערוך קטגוריה"
+                                >
+                                  <PencilLine className="w-3 h-3" />
+                                </button>
+                              </div>
                               <div className="min-w-0">
                                 <div className="flex items-center gap-2">
                                   <p className="font-medium text-sm truncate">{group.provider}</p>

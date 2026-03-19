@@ -8,7 +8,7 @@
 import { google } from "googleapis";
 import crypto from "crypto";
 import { getDb } from "./db";
-import { gmailConnections, smartInvoices } from "../drizzle/schema";
+import { gmailConnections, smartInvoices, categoryMappings } from "../drizzle/schema";
 import { eq, and } from "drizzle-orm";
 import { invokeLLM } from "./_core/llm";
 import { convert as htmlToText } from "html-to-text";
@@ -610,26 +610,16 @@ async function extractInvoiceData(
   subject: string,
   from: string,
   body: string,
-  pdfText: string | null,
+  pdfBase64: string | null,
   detectedProvider: { name: string; category: string } | null
 ): Promise<ExtractedInvoice | null> {
   try {
-    // Combine email body and PDF text for comprehensive extraction
-    let contentForAnalysis = `גוף המייל:\n${body}`;
-    if (pdfText) {
-      contentForAnalysis += `\n\n--- תוכן קובץ PDF מצורף ---\n${pdfText.slice(0, 4000)}`;
-    }
-
-    const response = await invokeLLM({
-      messages: [
-        {
-          role: "system",
-          content: `אתה מומחה לחילוץ נתוני חשבוניות ממיילים ומסמכי PDF בישראל.
+    const systemPrompt = `אתה מומחה לחילוץ נתוני חשבוניות ממיילים ומסמכי PDF בישראל.
 חלץ את המידע הבא ותחזיר JSON בלבד (ללא הסברים):
 
 - provider: שם הספק/חברה (עברית אם אפשר, אחרת אנגלית)
 - category: קטגוריה (תקשורת/חשמל/מים/ארנונה/ביטוח/בנק/רכב/אחר)
-- amount: סכום כולל לתשלום (מספר בלבד, null אם לא נמצא). חפש מילים כמו "סה"כ", "total", "סכום לתשלום", "amount due"
+- amount: סכום כולל לתשלום (מספר בלבד, null אם לא נמצא). חפש מילים כמו "סה"כ", "total", "סכום לתשלום", "amount due", "סה״כ שולם"
 - currency: מטבע (ILS/USD/EUR). ברירת מחדל ILS אם לא צוין
 - invoiceDate: תאריך החשבונית/קבלה (YYYY-MM-DD, null אם לא נמצא)
 - dueDate: מועד תשלום אחרון (YYYY-MM-DD, null אם לא נמצא)
@@ -642,18 +632,35 @@ async function extractInvoiceData(
 - אם המייל הוא HTML שהומר לטקסט, התעלם מתגיות שנותרו
 - חפש סכומים ליד סימני ₪, ש"ח, NIS, $, €
 - אם יש גם גוף מייל וגם PDF, העדף את הנתונים מה-PDF כי הם מדויקים יותר
-- אם לא ניתן לזהות שום מידע רלוונטי, החזר provider="לא ידוע" עם description שמתאר מה יש במייל`,
-        },
-        {
-          role: "user",
-          content: `מייל לניתוח:
+- אם לא ניתן לזהות שום מידע רלוונטי, החזר provider="לא ידוע" עם description שמתאר מה יש במייל`;
+
+    const textContent = `מייל לניתוח:
 שולח: ${from}
 נושא: ${subject}
 ספק שזוהה אוטומטית: ${detectedProvider?.name ?? "לא זוהה"}
 קטגוריה שזוהתה: ${detectedProvider?.category ?? "לא ידוע"}
 
-${contentForAnalysis}`,
+גוף המייל:
+${body}`;
+
+    const userContent: Array<{ type: "file_url"; file_url: { url: string; mime_type: "application/pdf" } } | { type: "text"; text: string }> = [];
+
+    if (pdfBase64) {
+      userContent.push({
+        type: "file_url",
+        file_url: {
+          url: `data:application/pdf;base64,${pdfBase64}`,
+          mime_type: "application/pdf",
         },
+      });
+    }
+
+    userContent.push({ type: "text", text: textContent });
+
+    const response = await invokeLLM({
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userContent },
       ],
       response_format: {
         type: "json_schema",
@@ -779,7 +786,7 @@ export async function scanGmailForInvoices(
 
       found++;
 
-      let pdfText: string | null = null;
+      let pdfBase64: string | null = null;
       let pdfUrl: string | null = null;
 
       console.log(`[Gmail] Email "${email.subject}" from "${email.from}" — ${email.pdfAttachments.length} PDF attachment(s)`);
@@ -798,7 +805,11 @@ export async function scanGmailForInvoices(
 
         if (pdfUrl) {
           const fileKey = pdfUrl.replace(/^\/api\/files\//, "");
-          pdfText = await extractTextFromPdf(pdfUrl, fileKey);
+          const buffer = await storageRead(fileKey);
+          if (buffer) {
+            pdfBase64 = buffer.toString("base64");
+            console.log(`[Gmail] PDF loaded for LLM: ${fileKey} (${buffer.length} bytes)`);
+          }
         } else {
           console.log(`[Gmail] PDF download failed for: ${firstPdf.filename}`);
         }
@@ -808,7 +819,7 @@ export async function scanGmailForInvoices(
         email.subject,
         email.from,
         email.body,
-        pdfText,
+        pdfBase64,
         detectedProvider
       );
 
@@ -817,6 +828,23 @@ export async function scanGmailForInvoices(
       const category = extracted?.category ?? detectedProvider?.category ?? "אחר";
       const description = extracted?.description ?? email.subject;
 
+      let customCategory: string | null = null;
+      const normalizedProvider = provider.trim().toLowerCase();
+      const [mapping] = await db
+        .select({ customCategory: categoryMappings.customCategory })
+        .from(categoryMappings)
+        .where(
+          and(
+            eq(categoryMappings.userId, userId),
+            eq(categoryMappings.providerPattern, normalizedProvider)
+          )
+        )
+        .limit(1);
+      if (mapping) {
+        customCategory = mapping.customCategory;
+        console.log(`[Gmail] Applied category mapping for "${provider}": "${customCategory}"`);
+      }
+
       const extractedDataObj = {
         ...(extracted ?? {}),
         pdfUrl: pdfUrl ?? undefined,
@@ -824,7 +852,7 @@ export async function scanGmailForInvoices(
         fromEmail: email.from,
       };
 
-      console.log(`[Gmail] Saving invoice: provider=${provider}, category=${category}, amount=${extracted?.amount ?? "null"}, pdfUrl=${pdfUrl ? "YES" : "NO"}, pdfText=${pdfText ? pdfText.length + " chars" : "NONE"}`);
+      console.log(`[Gmail] Saving invoice: provider=${provider}, category=${category}, customCategory=${customCategory ?? "none"}, amount=${extracted?.amount ?? "null"}, pdfUrl=${pdfUrl ? "YES" : "NO"}, pdfBase64=${pdfBase64 ? "YES" : "NO"}`);
 
       await db.insert(smartInvoices).values({
         userId,
@@ -833,6 +861,7 @@ export async function scanGmailForInvoices(
         gmailMessageId: email.messageId,
         provider,
         category: category as "תקשורת" | "חשמל" | "מים" | "ארנונה" | "ביטוח" | "בנק" | "רכב" | "אחר",
+        customCategory,
         amount: extracted?.amount?.toString() ?? null,
         invoiceDate: extracted?.invoiceDate ? new Date(extracted.invoiceDate) : email.date,
         dueDate: extracted?.dueDate ? new Date(extracted.dueDate) : null,

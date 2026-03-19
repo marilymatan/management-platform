@@ -23,6 +23,12 @@ import {
   getPlatformStats,
   getUserProfile,
   upsertUserProfile,
+  getAdminDashboardStats,
+  getUserDetailedSummary,
+  getLLMUsageBreakdown,
+  getSystemHealth,
+  getNewUsersOverTime,
+  getCategoryDistribution,
 } from "./db";
 import { TRPCError } from "@trpc/server";
 import type { PolicyAnalysis } from "@shared/insurance";
@@ -35,9 +41,9 @@ import {
   scanGmailForInvoices,
 } from "./gmail";
 import { getDb } from "./db";
-import { smartInvoices } from "../drizzle/schema";
+import { smartInvoices, categoryMappings } from "../drizzle/schema";
 import { decryptField, decryptJson, encryptJson } from "./encryption";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, and } from "drizzle-orm";
 import { audit, getClientIp, getRecentAuditLogs, getSecurityEvents } from "./auditLog";
 
 function signOAuthState(payload: Record<string, unknown>): string {
@@ -314,8 +320,13 @@ export const appRouter = router({
         if (input.dateOfBirth !== undefined) {
           data.dateOfBirth = input.dateOfBirth ? new Date(input.dateOfBirth) : null;
         }
-        const profile = await upsertUserProfile(ctx.user.id, data);
-        return { success: true, profile };
+        try {
+          const profile = await upsertUserProfile(ctx.user.id, data);
+          return { success: true, profile };
+        } catch (error) {
+          console.error("[Profile] Update failed:", error);
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Failed to update profile" });
+        }
       }),
   }),
 
@@ -948,6 +959,66 @@ export const appRouter = router({
         return { id: inserted.id };
       }),
 
+    updateInvoiceCategory: protectedProcedure
+      .input(z.object({
+        invoiceId: z.number(),
+        customCategory: z.string().min(1).max(128),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
+        const db = await getDb();
+        if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+
+        const [invoice] = await db
+          .select({ id: smartInvoices.id, provider: smartInvoices.provider })
+          .from(smartInvoices)
+          .where(and(eq(smartInvoices.id, input.invoiceId), eq(smartInvoices.userId, ctx.user.id)))
+          .limit(1);
+
+        if (!invoice) throw new TRPCError({ code: "NOT_FOUND", message: "Invoice not found" });
+
+        await db
+          .update(smartInvoices)
+          .set({ customCategory: input.customCategory })
+          .where(eq(smartInvoices.id, input.invoiceId));
+
+        if (invoice.provider) {
+          const normalizedProvider = invoice.provider.trim().toLowerCase();
+
+          await db
+            .insert(categoryMappings)
+            .values({
+              userId: ctx.user.id,
+              providerPattern: normalizedProvider,
+              customCategory: input.customCategory,
+            })
+            .onConflictDoUpdate({
+              target: [categoryMappings.userId, categoryMappings.providerPattern],
+              set: { customCategory: input.customCategory, updatedAt: new Date() },
+            });
+
+          await db
+            .update(smartInvoices)
+            .set({ customCategory: input.customCategory })
+            .where(
+              and(
+                eq(smartInvoices.userId, ctx.user.id),
+                eq(smartInvoices.provider, invoice.provider)
+              )
+            );
+        }
+
+        await audit({
+          userId: ctx.user.id,
+          action: "update_invoice_category",
+          resource: "invoice",
+          resourceId: String(input.invoiceId),
+          details: JSON.stringify({ customCategory: input.customCategory, provider: invoice.provider }),
+        });
+
+        return { success: true };
+      }),
+
     getMonthlySummary: protectedProcedure.query(async ({ ctx }) => {
       if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
       const db = await getDb();
@@ -957,7 +1028,6 @@ export const appRouter = router({
         .from(smartInvoices)
         .where(eq(smartInvoices.userId, ctx.user.id))
         .orderBy(desc(smartInvoices.createdAt));
-      // Decrypt sensitive fields
       const invoices = rawInvoices.map(inv => ({
         ...inv,
         subject: inv.subject ? decryptField(inv.subject) : inv.subject,
@@ -969,7 +1039,7 @@ export const appRouter = router({
 
       const monthMap: Record<string, { month: string; total: number; categories: Record<string, { category: string; total: number; count: number }> }> = {};
       for (const inv of invoices) {
-        const cat = inv.category ?? "אחר";
+        const cat = inv.customCategory ?? inv.category ?? "אחר";
         const dateSource = inv.invoiceDate ?? inv.createdAt;
         const d = new Date(dateSource);
         const monthKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
@@ -1035,6 +1105,97 @@ export const appRouter = router({
         }
         return getUserUsageStats(input.userId);
       }),
+
+    dashboardStats: protectedProcedure.query(async ({ ctx }) => {
+      if (ctx.user?.role !== "admin") {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Admin access required" });
+      }
+      await audit({
+        userId: ctx.user.id,
+        action: "admin_view_stats",
+        resource: "admin",
+      });
+      return getAdminDashboardStats();
+    }),
+
+    recentActivity: protectedProcedure
+      .input(z.object({ limit: z.number().min(1).max(200).default(100) }).optional())
+      .query(async ({ ctx, input }) => {
+        if (ctx.user?.role !== "admin") {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Admin access required" });
+        }
+        const logs = await getRecentAuditLogs(input?.limit ?? 100);
+        const { getDb: getDbFn } = await import("./db");
+        const db = await getDbFn();
+        if (!db) return logs.map(l => ({ ...l, userName: null, userEmail: null }));
+        const { users: usersTable } = await import("../drizzle/schema");
+        const allUsers = await db.select({ id: usersTable.id, name: usersTable.name, email: usersTable.email }).from(usersTable);
+        const userMap = new Map(allUsers.map(u => [u.id, u]));
+        return logs.map(l => ({
+          ...l,
+          userName: l.userId ? userMap.get(l.userId)?.name ?? null : null,
+          userEmail: l.userId ? userMap.get(l.userId)?.email ?? null : null,
+        }));
+      }),
+
+    securityEvents: protectedProcedure
+      .input(z.object({ limit: z.number().min(1).max(200).default(100) }).optional())
+      .query(async ({ ctx, input }) => {
+        if (ctx.user?.role !== "admin") {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Admin access required" });
+        }
+        const events = await getSecurityEvents(input?.limit ?? 100);
+        const { getDb: getDbFn } = await import("./db");
+        const db = await getDbFn();
+        if (!db) return events.map(e => ({ ...e, userName: null, userEmail: null }));
+        const { users: usersTable } = await import("../drizzle/schema");
+        const allUsers = await db.select({ id: usersTable.id, name: usersTable.name, email: usersTable.email }).from(usersTable);
+        const userMap = new Map(allUsers.map(u => [u.id, u]));
+        return events.map(e => ({
+          ...e,
+          userName: e.userId ? userMap.get(e.userId)?.name ?? null : null,
+          userEmail: e.userId ? userMap.get(e.userId)?.email ?? null : null,
+        }));
+      }),
+
+    userSummary: protectedProcedure
+      .input(z.object({ userId: z.number() }))
+      .query(async ({ ctx, input }) => {
+        if (ctx.user?.role !== "admin") {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Admin access required" });
+        }
+        return getUserDetailedSummary(input.userId);
+      }),
+
+    llmBreakdown: protectedProcedure.query(async ({ ctx }) => {
+      if (ctx.user?.role !== "admin") {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Admin access required" });
+      }
+      return getLLMUsageBreakdown();
+    }),
+
+    systemHealth: protectedProcedure.query(async ({ ctx }) => {
+      if (ctx.user?.role !== "admin") {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Admin access required" });
+      }
+      return getSystemHealth();
+    }),
+
+    newUsersOverTime: protectedProcedure
+      .input(z.object({ days: z.number().min(1).max(365).default(30) }).optional())
+      .query(async ({ ctx, input }) => {
+        if (ctx.user?.role !== "admin") {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Admin access required" });
+        }
+        return getNewUsersOverTime(input?.days ?? 30);
+      }),
+
+    categoryDistribution: protectedProcedure.query(async ({ ctx }) => {
+      if (ctx.user?.role !== "admin") {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Admin access required" });
+      }
+      return getCategoryDistribution();
+    }),
   }),
 });
 

@@ -32,6 +32,8 @@ export type AuditAction =
   | "disconnect_gmail"
   | "scan_gmail"
   | "clear_invoices"
+  | "add_manual_expense"
+  | "update_invoice_category"
   // Admin operations
   | "admin_view_users"
   | "admin_view_stats"

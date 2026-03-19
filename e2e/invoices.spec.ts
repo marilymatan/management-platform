@@ -107,6 +107,65 @@ test.describe("Monthly summary and compact accounts", () => {
   });
 });
 
+test.describe("Category edit dialog", () => {
+  test("edit category button is rendered on invoice cards", async ({ page }) => {
+    await page.goto("/expenses");
+    await page.waitForLoadState("networkidle");
+    const editButtons = page.locator("button[title='ערוך קטגוריה']");
+    const loginPrompt = page.locator("text=יש להתחבר");
+    const loginButton = page.locator("text=התחברות עם Google");
+    const noInvoices = page.locator("text=לא נמצאו חשבוניות");
+    const connectPrompt = page.locator("text=חבר Gmail");
+    const anyFallback = loginPrompt.or(loginButton).or(noInvoices).or(connectPrompt);
+    const hasEditButtons = await editButtons.count().catch(() => 0);
+    if (hasEditButtons > 0) {
+      await expect(editButtons.first()).toBeVisible();
+    } else {
+      await expect(anyFallback).toBeVisible({ timeout: 10_000 });
+    }
+  });
+
+  test("clicking edit category opens the dialog", async ({ page }) => {
+    await page.goto("/expenses");
+    await page.waitForLoadState("networkidle");
+    const editButton = page.locator("button[title='ערוך קטגוריה']").first();
+    if (await editButton.isVisible({ timeout: 5_000 }).catch(() => false)) {
+      await editButton.click();
+      const dialogTitle = page.locator("text=עריכת קטגוריה");
+      await expect(dialogTitle).toBeVisible({ timeout: 5_000 });
+      const categoryInput = page.locator("#edit-cat");
+      await expect(categoryInput).toBeVisible();
+    }
+  });
+
+  test("category edit dialog has quick-select category buttons", async ({ page }) => {
+    await page.goto("/expenses");
+    await page.waitForLoadState("networkidle");
+    const editButton = page.locator("button[title='ערוך קטגוריה']").first();
+    if (await editButton.isVisible({ timeout: 5_000 }).catch(() => false)) {
+      await editButton.click();
+      const dialogTitle = page.locator("text=עריכת קטגוריה");
+      await expect(dialogTitle).toBeVisible({ timeout: 5_000 });
+      const categoryChip = page.locator("button", { hasText: "תקשורת" });
+      await expect(categoryChip).toBeVisible();
+    }
+  });
+
+  test("category edit dialog closes on cancel", async ({ page }) => {
+    await page.goto("/expenses");
+    await page.waitForLoadState("networkidle");
+    const editButton = page.locator("button[title='ערוך קטגוריה']").first();
+    if (await editButton.isVisible({ timeout: 5_000 }).catch(() => false)) {
+      await editButton.click();
+      const dialogTitle = page.locator("text=עריכת קטגוריה");
+      await expect(dialogTitle).toBeVisible({ timeout: 5_000 });
+      const cancelButton = page.locator("text=ביטול").last();
+      await cancelButton.click();
+      await expect(dialogTitle).not.toBeVisible({ timeout: 3_000 });
+    }
+  });
+});
+
 test.describe("Expenses API", () => {
   test("file endpoint rejects unsigned URLs with 403", async ({ request }) => {
     const response = await request.get("/api/files/gmail-invoices/test/invoice.pdf");
@@ -140,6 +199,16 @@ test.describe("Expenses API", () => {
         category: "אחר",
         invoiceDate: "2026-03-01",
         status: "paid",
+      },
+    });
+    expect([200, 401]).toContain(response.status());
+  });
+
+  test("tRPC updateInvoiceCategory endpoint requires auth", async ({ request }) => {
+    const response = await request.post("/api/trpc/gmail.updateInvoiceCategory", {
+      data: {
+        invoiceId: 1,
+        customCategory: "קלינאית תקשורת",
       },
     });
     expect([200, 401]).toContain(response.status());

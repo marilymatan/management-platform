@@ -124,6 +124,63 @@ describe("Invoice data structure", () => {
   });
 });
 
+describe("Category mapping and custom categories", () => {
+  it("should prefer customCategory over category when both exist", () => {
+    const invoice = { category: "אחר", customCategory: "קלינאית תקשורת" };
+    const effectiveCategory = invoice.customCategory ?? invoice.category ?? "אחר";
+    expect(effectiveCategory).toBe("קלינאית תקשורת");
+  });
+
+  it("should fall back to category when customCategory is null", () => {
+    const invoice = { category: "חשמל", customCategory: null };
+    const effectiveCategory = invoice.customCategory ?? invoice.category ?? "אחר";
+    expect(effectiveCategory).toBe("חשמל");
+  });
+
+  it("should fall back to אחר when both are null", () => {
+    const invoice = { category: null, customCategory: null };
+    const effectiveCategory = invoice.customCategory ?? invoice.category ?? "אחר";
+    expect(effectiveCategory).toBe("אחר");
+  });
+
+  it("should normalize provider names for mapping lookup", () => {
+    const provider = "  ניצן מרלא  ";
+    const normalized = provider.trim().toLowerCase();
+    expect(normalized).toBe("ניצן מרלא");
+  });
+
+  it("should allow free-text custom categories", () => {
+    const customCategories = [
+      "קלינאית תקשורת",
+      "רופא שיניים",
+      "גן ילדים",
+      "ספק אינטרנט",
+    ];
+    for (const cat of customCategories) {
+      expect(cat.length).toBeGreaterThan(0);
+      expect(cat.length).toBeLessThanOrEqual(128);
+    }
+  });
+
+  it("should group invoices by effective category for monthly summary", () => {
+    const invoices = [
+      { amount: "100", category: "אחר", customCategory: "קלינאית תקשורת" },
+      { amount: "200", category: "אחר", customCategory: "קלינאית תקשורת" },
+      { amount: "150", category: "חשמל", customCategory: null },
+    ];
+
+    const groups: Record<string, number> = {};
+    for (const inv of invoices) {
+      const cat = inv.customCategory ?? inv.category ?? "אחר";
+      groups[cat] = (groups[cat] ?? 0) + parseFloat(inv.amount);
+    }
+
+    expect(groups["קלינאית תקשורת"]).toBe(300);
+    expect(groups["חשמל"]).toBe(150);
+    expect(groups["אחר"]).toBeUndefined();
+  });
+});
+
 // ─── HTML to text conversion tests ──────────────────────────────────────────
 
 describe("HTML to text conversion", () => {

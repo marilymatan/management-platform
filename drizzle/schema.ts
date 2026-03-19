@@ -108,6 +108,7 @@ export const smartInvoices = pgTable("smart_invoices", {
   gmailMessageId: varchar("gmail_message_id", { length: 128 }).notNull(),
   provider: varchar("provider", { length: 128 }),
   category: invoiceCategoryEnum("category").default("אחר"),
+  customCategory: varchar("custom_category", { length: 128 }),
   amount: numeric("amount", { precision: 10, scale: 2 }),
   invoiceDate: timestamp("invoice_date"),
   dueDate: timestamp("due_date"),
@@ -126,6 +127,20 @@ export const smartInvoices = pgTable("smart_invoices", {
 
 export type SmartInvoice = typeof smartInvoices.$inferSelect;
 export type InsertSmartInvoice = typeof smartInvoices.$inferInsert;
+
+export const categoryMappings = pgTable("category_mappings", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull(),
+  providerPattern: varchar("provider_pattern", { length: 128 }).notNull(),
+  customCategory: varchar("custom_category", { length: 128 }).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull().$onUpdate(() => new Date()),
+}, (table) => ({
+  userProviderUniq: uniqueIndex("category_mapping_user_provider_uniq").on(table.userId, table.providerPattern),
+}));
+
+export type CategoryMapping = typeof categoryMappings.$inferSelect;
+export type InsertCategoryMapping = typeof categoryMappings.$inferInsert;
 
 export const auditLogs = pgTable("audit_logs", {
   id: serial("id").primaryKey(),
