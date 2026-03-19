@@ -147,13 +147,21 @@ class SDKServer {
     let user = await db.getUserByOpenId(sessionUserId);
 
     if (!user) {
-      throw ForbiddenError("User not found. Please sign in again.");
+      await db.upsertUser({
+        openId: sessionUserId,
+        name: session.name || null,
+        lastSignedIn: signedInAt,
+      });
+      user = await db.getUserByOpenId(sessionUserId);
+      if (!user) {
+        throw ForbiddenError("User not found. Please sign in again.");
+      }
+    } else {
+      await db.upsertUser({
+        openId: user.openId,
+        lastSignedIn: signedInAt,
+      });
     }
-
-    await db.upsertUser({
-      openId: user.openId,
-      lastSignedIn: signedInAt,
-    });
 
     return user;
   }

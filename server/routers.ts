@@ -316,16 +316,18 @@ export const appRouter = router({
       }))
       .mutation(async ({ ctx, input }) => {
         if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
+        console.log("[Profile] Update for user:", ctx.user.id, "input:", JSON.stringify(input));
         const data: any = { ...input };
         if (input.dateOfBirth !== undefined) {
           data.dateOfBirth = input.dateOfBirth ? new Date(input.dateOfBirth) : null;
         }
         try {
           const profile = await upsertUserProfile(ctx.user.id, data);
+          console.log("[Profile] Update success for user:", ctx.user.id);
           return { success: true, profile };
-        } catch (error) {
-          console.error("[Profile] Update failed:", error);
-          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Failed to update profile" });
+        } catch (err) {
+          console.error("[Profile] Update FAILED for user:", ctx.user.id, err);
+          throw err;
         }
       }),
   }),
