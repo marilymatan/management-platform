@@ -215,7 +215,7 @@ export default function Settings() {
     setSaving(true);
     try {
       await updateMutation.mutateAsync(data);
-      profileQuery.refetch();
+      await utils.profile.get.invalidate();
       toast.success("הפרופיל עודכן בהצלחה");
     } catch {
       toast.error("שגיאה בעדכון הפרופיל");

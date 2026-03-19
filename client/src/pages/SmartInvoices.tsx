@@ -438,7 +438,7 @@ export default function SmartInvoices() {
 
   return (
     <div className="page-container">
-      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-bl from-emerald-600 via-emerald-500 to-teal-600 text-white mb-6 animate-fade-in-up">
+      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-bl from-[#1a2744] via-[#1e3a5f] to-[#2563eb] text-white mb-6 animate-fade-in-up">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_-20%,rgba(255,255,255,0.15),transparent_60%)]" />
         <div className="absolute -bottom-12 -start-12 size-52 rounded-full bg-white/[0.06] blur-3xl" />
         <div className="absolute -top-8 -end-8 size-36 rounded-full bg-white/[0.06] blur-2xl" />
