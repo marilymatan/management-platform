@@ -8,7 +8,7 @@ import cors from "cors";
 const ALLOWED_COUNTRIES = new Set(["IL"]); // Israel only
 
 // Paths that should be exempt from geo-blocking (health checks, etc.)
-const GEO_EXEMPT_PATHS = ["/api/health"];
+const GEO_EXEMPT_PATHS = ["/api/health", "/api/oauth", "/api/config"];
 
 const GEO_EXEMPT_HOSTNAMES: string[] = [];
 
