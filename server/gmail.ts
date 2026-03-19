@@ -606,20 +606,12 @@ interface ExtractedInvoice {
   items: Array<{ name: string; amount: number | null }>;
 }
 
-async function extractInvoiceData(
-  subject: string,
-  from: string,
-  body: string,
-  pdfBase64: string | null,
-  detectedProvider: { name: string; category: string } | null
-): Promise<ExtractedInvoice | null> {
-  try {
-    const systemPrompt = `אתה מומחה לחילוץ נתוני חשבוניות ממיילים ומסמכי PDF בישראל.
+const INVOICE_SYSTEM_PROMPT = `אתה מומחה לחילוץ נתוני חשבוניות ממיילים ומסמכי PDF בישראל.
 חלץ את המידע הבא ותחזיר JSON בלבד (ללא הסברים):
 
 - provider: שם הספק/חברה (עברית אם אפשר, אחרת אנגלית)
 - category: קטגוריה (תקשורת/חשמל/מים/ארנונה/ביטוח/בנק/רכב/אחר)
-- amount: סכום כולל לתשלום (מספר בלבד, null אם לא נמצא). חפש מילים כמו "סה"כ", "total", "סכום לתשלום", "amount due", "סה״כ שולם"
+- amount: סכום כולל לתשלום (מספר בלבד, null אם לא נמצא). חפש מילים כמו "סה"כ", "total", "סכום לתשלום", "amount due", "סה״כ שולם", "יתרה לתשלום", "סך הכל", "לתשלום", "חיוב"
 - currency: מטבע (ILS/USD/EUR). ברירת מחדל ILS אם לא צוין
 - invoiceDate: תאריך החשבונית/קבלה (YYYY-MM-DD, null אם לא נמצא)
 - dueDate: מועד תשלום אחרון (YYYY-MM-DD, null אם לא נמצא)
@@ -632,9 +624,57 @@ async function extractInvoiceData(
 - אם המייל הוא HTML שהומר לטקסט, התעלם מתגיות שנותרו
 - חפש סכומים ליד סימני ₪, ש"ח, NIS, $, €
 - אם יש גם גוף מייל וגם PDF, העדף את הנתונים מה-PDF כי הם מדויקים יותר
-- אם לא ניתן לזהות שום מידע רלוונטי, החזר provider="לא ידוע" עם description שמתאר מה יש במייל`;
+- אם לא ניתן לזהות שום מידע רלוונטי, החזר provider="לא ידוע" עם description שמתאר מה יש במייל
+- חשוב מאוד: תמיד נסה למצוא סכום. גם אם הסכום לא מפורש, חפש מספרים ליד מילים שמרמזות על תשלום`;
 
-    const textContent = `מייל לניתוח:
+const INVOICE_JSON_SCHEMA = {
+  name: "invoice_extraction",
+  strict: true,
+  schema: {
+    type: "object",
+    properties: {
+      provider: { type: "string" },
+      category: {
+        type: "string",
+        enum: ["תקשורת", "חשמל", "מים", "ארנונה", "ביטוח", "בנק", "רכב", "אחר"],
+      },
+      amount: { type: ["number", "null"] },
+      currency: { type: "string" },
+      invoiceDate: { type: ["string", "null"] },
+      dueDate: { type: ["string", "null"] },
+      status: { type: "string", enum: ["pending", "paid", "overdue", "unknown"] },
+      description: { type: "string" },
+      invoiceNumber: { type: ["string", "null"] },
+      items: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            name: { type: "string" },
+            amount: { type: ["number", "null"] },
+          },
+          required: ["name", "amount"],
+          additionalProperties: false,
+        },
+      },
+    },
+    required: [
+      "provider", "category", "amount", "currency",
+      "invoiceDate", "dueDate", "status", "description",
+      "invoiceNumber", "items",
+    ],
+    additionalProperties: false,
+  },
+} as const;
+
+function buildInvoiceUserContent(
+  subject: string,
+  from: string,
+  body: string,
+  pdfBase64: string | null,
+  detectedProvider: { name: string; category: string } | null,
+) {
+  const textContent = `מייל לניתוח:
 שולח: ${from}
 נושא: ${subject}
 ספק שזוהה אוטומטית: ${detectedProvider?.name ?? "לא זוהה"}
@@ -643,90 +683,99 @@ async function extractInvoiceData(
 גוף המייל:
 ${body}`;
 
-    const userContent: Array<{ type: "file_url"; file_url: { url: string; mime_type: "application/pdf" } } | { type: "text"; text: string }> = [];
+  const userContent: Array<{ type: "file_url"; file_url: { url: string; mime_type: "application/pdf" } } | { type: "text"; text: string }> = [];
 
-    if (pdfBase64) {
-      userContent.push({
-        type: "file_url",
-        file_url: {
-          url: `data:application/pdf;base64,${pdfBase64}`,
-          mime_type: "application/pdf",
-        },
-      });
-    }
-
-    userContent.push({ type: "text", text: textContent });
-
-    const response = await invokeLLM({
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userContent },
-      ],
-      response_format: {
-        type: "json_schema",
-        json_schema: {
-          name: "invoice_extraction",
-          strict: true,
-          schema: {
-            type: "object",
-            properties: {
-              provider: { type: "string" },
-              category: {
-                type: "string",
-                enum: ["תקשורת", "חשמל", "מים", "ארנונה", "ביטוח", "בנק", "רכב", "אחר"],
-              },
-              amount: { type: ["number", "null"] },
-              currency: { type: "string" },
-              invoiceDate: { type: ["string", "null"] },
-              dueDate: { type: ["string", "null"] },
-              status: { type: "string", enum: ["pending", "paid", "overdue", "unknown"] },
-              description: { type: "string" },
-              invoiceNumber: { type: ["string", "null"] },
-              items: {
-                type: "array",
-                items: {
-                  type: "object",
-                  properties: {
-                    name: { type: "string" },
-                    amount: { type: ["number", "null"] },
-                  },
-                  required: ["name", "amount"],
-                  additionalProperties: false,
-                },
-              },
-            },
-            required: [
-              "provider", "category", "amount", "currency",
-              "invoiceDate", "dueDate", "status", "description",
-              "invoiceNumber", "items",
-            ],
-            additionalProperties: false,
-          },
-        },
+  if (pdfBase64) {
+    userContent.push({
+      type: "file_url",
+      file_url: {
+        url: `data:application/pdf;base64,${pdfBase64}`,
+        mime_type: "application/pdf",
       },
     });
-
-    const rawContent = response.choices?.[0]?.message?.content;
-    let jsonStr: string | null = null;
-    if (typeof rawContent === "string") {
-      jsonStr = rawContent;
-    } else if (Array.isArray(rawContent)) {
-      jsonStr = rawContent
-        .filter((p): p is { type: "text"; text: string } => p.type === "text")
-        .map((p) => p.text)
-        .join("");
-    }
-    if (!jsonStr) {
-      console.log("[Gmail] extractInvoiceData: no content from LLM");
-      return null;
-    }
-    const parsed = JSON.parse(jsonStr) as ExtractedInvoice;
-    console.log(`[Gmail] extractInvoiceData result: provider=${parsed.provider}, amount=${parsed.amount}, currency=${parsed.currency}`);
-    return parsed;
-  } catch (err) {
-    console.error("[Gmail] AI extraction failed:", err);
-    return null;
   }
+
+  userContent.push({ type: "text", text: textContent });
+  return userContent;
+}
+
+function parseLlmInvoiceResponse(response: any): ExtractedInvoice | null {
+  const rawContent = response.choices?.[0]?.message?.content;
+  let jsonStr: string | null = null;
+  if (typeof rawContent === "string") {
+    jsonStr = rawContent;
+  } else if (Array.isArray(rawContent)) {
+    jsonStr = rawContent
+      .filter((p: any) => p.type === "text")
+      .map((p: any) => p.text)
+      .join("");
+  }
+  if (!jsonStr) return null;
+
+  let cleaned = jsonStr.trim();
+  const fenceMatch = cleaned.match(/^```(?:json)?\s*\n?([\s\S]*?)\n?\s*```$/);
+  if (fenceMatch) cleaned = fenceMatch[1].trim();
+
+  return JSON.parse(cleaned) as ExtractedInvoice;
+}
+
+async function callLlmForInvoice(
+  userContent: Array<{ type: "file_url"; file_url: { url: string; mime_type: "application/pdf" } } | { type: "text"; text: string }>,
+): Promise<ExtractedInvoice | null> {
+  const response = await invokeLLM({
+    messages: [
+      { role: "system", content: INVOICE_SYSTEM_PROMPT },
+      { role: "user", content: userContent },
+    ],
+    response_format: { type: "json_schema", json_schema: INVOICE_JSON_SCHEMA },
+  });
+  return parseLlmInvoiceResponse(response);
+}
+
+async function extractInvoiceData(
+  subject: string,
+  from: string,
+  body: string,
+  pdfBase64: string | null,
+  detectedProvider: { name: string; category: string } | null
+): Promise<ExtractedInvoice | null> {
+  const pdfSizeKb = pdfBase64 ? Math.round((pdfBase64.length * 3) / 4 / 1024) : 0;
+  console.log(`[Gmail] extractInvoiceData: subject="${subject}", pdfSize=${pdfSizeKb}KB, hasPdf=${!!pdfBase64}`);
+
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const usePdf = attempt <= 2 ? pdfBase64 : null;
+      if (attempt > 1) {
+        console.log(`[Gmail] extractInvoiceData retry #${attempt}${attempt === 3 ? " (without PDF)" : ""} for "${subject}"`);
+        await new Promise(r => setTimeout(r, 1000 * attempt));
+      }
+
+      const userContent = buildInvoiceUserContent(subject, from, body, usePdf, detectedProvider);
+      const parsed = await callLlmForInvoice(userContent);
+
+      if (!parsed) {
+        console.log(`[Gmail] extractInvoiceData: empty LLM response (attempt ${attempt}) for "${subject}"`);
+        continue;
+      }
+
+      console.log(`[Gmail] extractInvoiceData result (attempt ${attempt}): provider=${parsed.provider}, amount=${parsed.amount}, currency=${parsed.currency}, status=${parsed.status}`);
+
+      if (parsed.amount == null && attempt < 3) {
+        console.log(`[Gmail] extractInvoiceData: amount is null, will retry for "${subject}"`);
+        continue;
+      }
+
+      return parsed;
+    } catch (err: any) {
+      console.error(`[Gmail] extractInvoiceData failed (attempt ${attempt}) for "${subject}":`, err?.message ?? err);
+      if (attempt === 3) {
+        console.error(`[Gmail] extractInvoiceData: all 3 attempts failed for "${subject}"`);
+        return null;
+      }
+    }
+  }
+
+  return null;
 }
 
 // ─── Main scan function ───────────────────────────────────────────────────────
