@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useMemo } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { useLocation } from "wouter";
 import { useForm } from "react-hook-form";
@@ -189,13 +189,9 @@ export default function Profile() {
       businessTaxId: null,
       businessEmailDomains: null,
     },
+    values: profileQuery.data ? toFormValues(profileQuery.data) : undefined,
+    resetOptions: { keepDirtyValues: true },
   });
-
-  useEffect(() => {
-    if (profileQuery.data) {
-      form.reset(toFormValues(profileQuery.data));
-    }
-  }, [profileQuery.data, form]);
 
   const watchedValues = form.watch();
   const completeness = useMemo(() => computeCompleteness(watchedValues), [watchedValues]);
@@ -211,9 +207,8 @@ export default function Profile() {
       const result = await updateMutation.mutateAsync(data);
       if (result.profile) {
         utils.profile.get.setData(undefined, result.profile);
-        form.reset(toFormValues(result.profile));
       }
-      await profileQuery.refetch();
+      await utils.profile.get.invalidate();
       toast.success("הפרופיל עודכן בהצלחה");
     } catch {
       toast.error("שגיאה בעדכון הפרופיל");
