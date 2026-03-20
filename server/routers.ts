@@ -23,6 +23,13 @@ import {
   getPlatformStats,
   getUserProfile,
   upsertUserProfile,
+  getFamilyMembers,
+  upsertFamilyMember,
+  deleteFamilyMember,
+  bootstrapFamilyMembersFromProfile,
+  getDocumentClassifications,
+  upsertDocumentClassification,
+  bulkUpsertDocumentClassifications,
   getAdminDashboardStats,
   getUserDetailedSummary,
   getLLMUsageBreakdown,
@@ -300,6 +307,329 @@ function serializeProfileForClient(profile: any) {
   };
 }
 
+function serializeFamilyMemberForClient(member: any) {
+  return {
+    id: member.id,
+    fullName: member.fullName,
+    relation: member.relation,
+    birthDate: member.birthDate ? new Date(member.birthDate).toISOString() : null,
+    ageLabel: member.ageLabel ?? null,
+    gender: member.gender ?? null,
+    allergies: member.allergies ?? null,
+    medicalNotes: member.medicalNotes ?? null,
+    activities: member.activities ?? null,
+    insuranceNotes: member.insuranceNotes ?? null,
+    notes: member.notes ?? null,
+    createdAt: member.createdAt ? new Date(member.createdAt).toISOString() : null,
+    updatedAt: member.updatedAt ? new Date(member.updatedAt).toISOString() : null,
+  };
+}
+
+function buildFamilyMembersContext(members: any[]) {
+  if (!members.length) {
+    return "לא הוזנו עדיין בני בית נפרדים במודל המשפחה.";
+  }
+  return members
+    .map((member) => {
+      const details = [
+        `שם: ${member.fullName}`,
+        `קשר: ${member.relation}`,
+        member.ageLabel ? `גיל/שלב: ${member.ageLabel}` : null,
+        member.birthDate ? `תאריך לידה: ${new Date(member.birthDate).toISOString().slice(0, 10)}` : null,
+        member.allergies ? `אלרגיות: ${member.allergies}` : null,
+        member.medicalNotes ? `בריאות: ${member.medicalNotes}` : null,
+        member.activities ? `שגרה/חוגים: ${member.activities}` : null,
+        member.insuranceNotes ? `דגשי ביטוח: ${member.insuranceNotes}` : null,
+        member.notes ? `הערות: ${member.notes}` : null,
+      ].filter(Boolean);
+      return `- ${details.join(" | ")}`;
+    })
+    .join("\n");
+}
+
+type AssistantTone = "neutral" | "info" | "success" | "warning";
+
+type AssistantChip = {
+  label: string;
+  tone: AssistantTone;
+};
+
+type AssistantHighlight = {
+  title: string;
+  description: string;
+  tone: AssistantTone;
+};
+
+function getAssistantSessionId(userId: number) {
+  return `assistant-home-${userId}`;
+}
+
+function formatIls(value: number) {
+  return `₪${Math.round(value).toLocaleString("he-IL")}`;
+}
+
+function formatMonthLabel(monthKey?: string) {
+  if (!monthKey) return "";
+  const [year, month] = monthKey.split("-");
+  const monthLabels: Record<string, string> = {
+    "01": "ינואר",
+    "02": "פברואר",
+    "03": "מרץ",
+    "04": "אפריל",
+    "05": "מאי",
+    "06": "יוני",
+    "07": "יולי",
+    "08": "אוגוסט",
+    "09": "ספטמבר",
+    "10": "אוקטובר",
+    "11": "נובמבר",
+    "12": "דצמבר",
+  };
+  return `${monthLabels[month] ?? month} ${year}`;
+}
+
+function parsePolicyDate(dateStr?: string | null) {
+  if (!dateStr || dateStr === "לא צוין בפוליסה" || dateStr === "לא צוין") return null;
+  const parts = dateStr.match(/(\d{1,2})[./\-](\d{1,2})[./\-](\d{2,4})/);
+  if (parts) {
+    const day = parseInt(parts[1], 10);
+    const month = parseInt(parts[2], 10) - 1;
+    let year = parseInt(parts[3], 10);
+    if (year < 100) year += 2000;
+    const parsed = new Date(year, month, day);
+    return isNaN(parsed.getTime()) ? null : parsed;
+  }
+  const parsed = new Date(dateStr);
+  return isNaN(parsed.getTime()) ? null : parsed;
+}
+
+async function getAssistantInvoices(userId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  const rows = await db
+    .select()
+    .from(smartInvoices)
+    .where(eq(smartInvoices.userId, userId))
+    .orderBy(desc(smartInvoices.createdAt))
+    .limit(100);
+
+  return rows.map((inv) => {
+    try {
+      const extractedData = inv.extractedData && typeof inv.extractedData === "string"
+        ? decryptJson(inv.extractedData)
+        : inv.extractedData;
+      return {
+        ...inv,
+        subject: inv.subject ? decryptField(inv.subject) : inv.subject,
+        rawText: inv.rawText ? decryptField(inv.rawText) : inv.rawText,
+        extractedData,
+      };
+    } catch {
+      return {
+        ...inv,
+        extractedData: null,
+      };
+    }
+  });
+}
+
+function buildAssistantHomeContext(params: {
+  userName?: string | null;
+  profile: any;
+  analyses: any[];
+  invoices: any[];
+  familyMembers: any[];
+  gmailConnections: Array<{ id: number }>;
+}) {
+  const completedAnalyses = params.analyses.filter((analysis) => analysis.status === "completed" && analysis.analysisResult);
+  const monthlySummary = summarizeMonthlyInvoices(params.invoices);
+  const currentMonth = monthlySummary[0] ?? null;
+  const pendingInvoices = params.invoices.filter((invoice) => invoice.status === "pending" || invoice.status === "overdue");
+  const docCount =
+    completedAnalyses.reduce((sum, analysis) => sum + ((analysis.files ?? []) as unknown[]).length, 0) +
+    params.invoices.filter((invoice) => {
+      const extracted = invoice.extractedData as Record<string, unknown> | null;
+      return Boolean(extracted?.pdfUrl);
+    }).length;
+  const upcomingRenewals = completedAnalyses
+    .map((analysis) => {
+      const endDate = parsePolicyDate(analysis.analysisResult?.generalInfo?.endDate);
+      if (!endDate) return null;
+      const daysLeft = Math.ceil((endDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+      return {
+        title: analysis.analysisResult?.generalInfo?.policyName || "פוליסה",
+        daysLeft,
+      };
+    })
+    .filter((item): item is { title: string; daysLeft: number } => Boolean(item))
+    .filter((item) => item.daysLeft >= 0 && item.daysLeft <= 45)
+    .sort((a, b) => a.daysLeft - b.daysLeft);
+
+  const chips: AssistantChip[] = [];
+  const highlights: AssistantHighlight[] = [];
+  const prompts: string[] = [];
+  const familyMembersCount = params.familyMembers.length;
+  const childrenCount =
+    params.familyMembers.filter((member) => member.relation === "child").length ||
+    (params.profile?.numberOfChildren ?? 0);
+
+  if (!params.gmailConnections.length) {
+    chips.push({ label: "Gmail עדיין לא מחובר", tone: "warning" });
+    prompts.push("איך מחברים את Gmail כדי שלומי יזהה הוצאות והכנסות?");
+    highlights.push({
+      title: "חיבור Gmail יפתח את לומי",
+      description: "ברגע שתחבר את Gmail, לומי יוכל לזהות תשלומים, הכנסות ומסמכים כספיים אוטומטית.",
+      tone: "warning",
+    });
+  }
+
+  if (pendingInvoices.length > 0) {
+    chips.push({
+      label: `${pendingInvoices.length} תשלומים פתוחים`,
+      tone: pendingInvoices.some((invoice) => invoice.status === "overdue") ? "warning" : "info",
+    });
+    prompts.push("איזה תשלומים פתוחים מחכים לי עכשיו?");
+  }
+
+  if (upcomingRenewals.length > 0) {
+    chips.push({
+      label: `חידוש פוליסה בעוד ${upcomingRenewals[0].daysLeft} ימים`,
+      tone: "info",
+    });
+    prompts.push("יש לי חידושי ביטוח קרובים או פערים בכיסוי?");
+    highlights.push({
+      title: "יש פוליסה שדורשת תשומת לב",
+      description: `${upcomingRenewals[0].title} מתקרבת לחידוש בעוד ${upcomingRenewals[0].daysLeft} ימים.`,
+      tone: "info",
+    });
+  }
+
+  if (familyMembersCount > 0) {
+    chips.push({
+      label: `${familyMembersCount + 1} בני בית מנוהלים`,
+      tone: "success",
+    });
+    highlights.push({
+      title: "מודל המשפחה כבר פעיל",
+      description: `יש כרגע ${familyMembersCount + 1} בני בית שמזינים הקשר לשאלות על משפחה, ביטוחים ומסמכים.`,
+      tone: "success",
+    });
+  }
+
+  if (childrenCount > 0) {
+    chips.push({
+      label: `${childrenCount} ילדים במשפחה`,
+      tone: "success",
+    });
+    prompts.push("יש משהו חשוב שמתקרב לילדים או למשפחה שלי?");
+  }
+
+  if (docCount > 0) {
+    chips.push({
+      label: `${docCount} מסמכים זמינים`,
+      tone: "neutral",
+    });
+    prompts.push("עשה לי סדר במסמכים החשובים שלי.");
+  }
+
+  if (currentMonth) {
+    const monthLabel = formatMonthLabel(currentMonth.month);
+    chips.push({
+      label: `נטו ${monthLabel}: ${currentMonth.netTotal >= 0 ? "+" : "-"}${formatIls(Math.abs(currentMonth.netTotal))}`,
+      tone: currentMonth.netTotal >= 0 ? "success" : "warning",
+    });
+    prompts.push("איך נראות ההוצאות וההכנסות שלי החודש?");
+    highlights.push({
+      title: `תמונת מצב ל-${monthLabel}`,
+      description: `הוצאות ${formatIls(currentMonth.expenseTotal)} מול הכנסות ${formatIls(currentMonth.incomeTotal)}. הנטו כרגע הוא ${currentMonth.netTotal >= 0 ? "חיובי" : "שלילי"}.`,
+      tone: currentMonth.netTotal >= 0 ? "success" : "warning",
+    });
+  }
+
+  if (!params.profile?.incomeRange || !params.profile?.employmentStatus) {
+    prompts.push("איזה מידע חסר ללומי כדי לעזור לי טוב יותר?");
+  }
+
+  if (!completedAnalyses.length) {
+    prompts.push("איך מתחילים להעלות ולנתח ביטוחים בלומי?");
+  }
+
+  if (!highlights.length) {
+    highlights.push({
+      title: "לומי מוכן להתחיל",
+      description: "אפשר לשאול על כסף, משפחה, מסמכים וביטוחים, ולקבל תשובות שמבוססות על הנתונים שלך.",
+      tone: "info",
+    });
+  }
+
+  const greetingName = params.userName?.split(" ")[0] || "";
+
+  return {
+    greeting: `${greetingName ? `שלום ${greetingName}, ` : ""}אני כאן כדי לעזור לך להבין מה קורה בבית, בכסף, במסמכים ובביטוחים. אפשר לשאול אותי כל דבר או לבחור אחת מהשאלות המומלצות.`,
+    chips: chips.slice(0, 5),
+    highlights: highlights.slice(0, 3),
+    suggestedPrompts: Array.from(new Set(prompts)).slice(0, 5),
+  };
+}
+
+function buildAssistantSystemPrompt(params: {
+  profile: any;
+  analyses: any[];
+  invoices: any[];
+  familyMembers: any[];
+  gmailConnections: Array<{ id: number }>;
+}) {
+  const completedAnalyses = params.analyses.filter((analysis) => analysis.status === "completed" && analysis.analysisResult);
+  const monthlySummary = summarizeMonthlyInvoices(params.invoices);
+  const currentMonth = monthlySummary[0] ?? null;
+  const docCount =
+    completedAnalyses.reduce((sum, analysis) => sum + ((analysis.files ?? []) as unknown[]).length, 0) +
+    params.invoices.filter((invoice) => {
+      const extracted = invoice.extractedData as Record<string, unknown> | null;
+      return Boolean(extracted?.pdfUrl);
+    }).length;
+  const recentPolicies = completedAnalyses.slice(0, 6).map((analysis) => {
+    const info = analysis.analysisResult?.generalInfo;
+    return `- ${info?.policyName || "פוליסה"} | ${info?.insurerName || "לא ידוע"} | קטגוריה: ${info?.insuranceCategory || "לא ידוע"} | פרמיה חודשית: ${info?.monthlyPremium || "לא ידוע"} | תוקף עד: ${info?.endDate || "לא ידוע"}`;
+  });
+  const recentInvoices = params.invoices.slice(0, 8).map((invoice) => {
+    const flowDirection = invoice.flowDirection === "income" ? "הכנסה" : invoice.flowDirection === "expense" ? "הוצאה" : "לא מסווג";
+    return `- ${invoice.provider || "ללא ספק"} | ${flowDirection} | סכום: ${invoice.amount || "לא ידוע"} | סטטוס: ${invoice.status || "לא ידוע"}`;
+  });
+
+  return `אתה לומי, עוזר אישי חכם לניהול החיים השוטפים של משק בית בישראל.
+
+ענה בעברית, בגובה העיניים, בצורה פרקטית וברורה.
+השתמש אך ורק במידע שסופק לך. אם מידע חסר, אמור זאת במפורש והצע מה כדאי להשלים.
+אם אפשר, סיים כל תשובה בהמלצה קצרה לפעולה הבאה.
+אל תמציא נתונים שלא קיימים.
+אל תתן ייעוץ משפטי, ביטוחי או פיננסי מחייב. תסביר, תסכם ותמליץ בזהירות.
+
+פרופיל הלקוח:
+${params.profile ? buildProfileContext(params.profile) || "לא הוזן פרופיל מפורט" : "לא הוזן פרופיל מפורט"}
+
+בני הבית:
+${buildFamilyMembersContext(params.familyMembers)}
+
+חיבורים:
+- Gmail מחובר: ${params.gmailConnections.length > 0 ? "כן" : "לא"}
+
+כסף:
+- מספר תנועות: ${params.invoices.length}
+- מסמכים כספיים כוללים: ${docCount}
+${currentMonth ? `- הוצאות ${formatMonthLabel(currentMonth.month)}: ${formatIls(currentMonth.expenseTotal)}
+- הכנסות ${formatMonthLabel(currentMonth.month)}: ${formatIls(currentMonth.incomeTotal)}
+- נטו ${formatMonthLabel(currentMonth.month)}: ${currentMonth.netTotal >= 0 ? "+" : "-"}${formatIls(Math.abs(currentMonth.netTotal))}` : "- אין עדיין סיכום חודשי"}
+
+פוליסות:
+- מספר פוליסות שנותחו: ${completedAnalyses.length}
+${recentPolicies.length > 0 ? recentPolicies.join("\n") : "- אין עדיין פוליסות מנותחות"}
+
+תנועות אחרונות:
+${recentInvoices.length > 0 ? recentInvoices.join("\n") : "- אין עדיין תנועות כספיות"}
+`;
+}
+
 export const appRouter = router({
   system: systemRouter,
   auth: router({
@@ -383,6 +713,245 @@ export const appRouter = router({
         }
         const profile = await upsertUserProfile(ctx.user.id, data);
         return { success: true, profile: serializeProfileForClient(profile) };
+      }),
+  }),
+
+  family: router({
+    list: protectedProcedure.query(async ({ ctx }) => {
+      if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const members = await getFamilyMembers(ctx.user.id);
+      return members.map(serializeFamilyMemberForClient);
+    }),
+
+    upsert: protectedProcedure
+      .input(z.object({
+        id: z.number().int().positive().optional(),
+        fullName: z.string().min(1).max(120),
+        relation: z.enum(["spouse", "child", "parent", "dependent", "other"]),
+        birthDate: z.string().nullable().optional(),
+        ageLabel: z.string().max(64).nullable().optional(),
+        gender: z.enum(["male", "female", "other"]).nullable().optional(),
+        allergies: z.string().max(400).nullable().optional(),
+        medicalNotes: z.string().max(800).nullable().optional(),
+        activities: z.string().max(400).nullable().optional(),
+        insuranceNotes: z.string().max(400).nullable().optional(),
+        notes: z.string().max(800).nullable().optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
+        const member = await upsertFamilyMember(ctx.user.id, {
+          id: input.id,
+          fullName: input.fullName,
+          relation: input.relation,
+          birthDate: input.birthDate ? new Date(input.birthDate) : null,
+          ageLabel: input.ageLabel ?? null,
+          gender: input.gender ?? null,
+          allergies: input.allergies ?? null,
+          medicalNotes: input.medicalNotes ?? null,
+          activities: input.activities ?? null,
+          insuranceNotes: input.insuranceNotes ?? null,
+          notes: input.notes ?? null,
+        });
+        await audit({
+          userId: ctx.user.id,
+          action: "manage_family_member",
+          resource: "family",
+          resourceId: member ? String(member.id) : null,
+          details: JSON.stringify({ relation: input.relation, mode: input.id ? "update" : "create" }),
+        });
+        return {
+          success: true,
+          member: member ? serializeFamilyMemberForClient(member) : null,
+        };
+      }),
+
+    delete: protectedProcedure
+      .input(z.object({ memberId: z.number().int().positive() }))
+      .mutation(async ({ ctx, input }) => {
+        if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
+        await deleteFamilyMember(ctx.user.id, input.memberId);
+        await audit({
+          userId: ctx.user.id,
+          action: "delete_family_member",
+          resource: "family",
+          resourceId: String(input.memberId),
+        });
+        return { success: true };
+      }),
+
+    bootstrapFromProfile: protectedProcedure.mutation(async ({ ctx }) => {
+      if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const existingMembers = await getFamilyMembers(ctx.user.id);
+      if (existingMembers.length > 0) {
+        return {
+          success: true,
+          createdCount: 0,
+          members: existingMembers.map(serializeFamilyMemberForClient),
+        };
+      }
+      const members = await bootstrapFamilyMembersFromProfile(ctx.user.id);
+      await audit({
+        userId: ctx.user.id,
+        action: "manage_family_member",
+        resource: "family",
+        details: JSON.stringify({ mode: "bootstrap", createdCount: members.length }),
+      });
+      return {
+        success: true,
+        createdCount: members.length,
+        members: members.map(serializeFamilyMemberForClient),
+      };
+    }),
+  }),
+
+  documents: router({
+    getClassifications: protectedProcedure.query(async ({ ctx }) => {
+      if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
+      return getDocumentClassifications(ctx.user.id);
+    }),
+
+    upsertClassification: protectedProcedure
+      .input(z.object({
+        documentKey: z.string().min(1).max(191),
+        sourceType: z.enum(["analysis_file", "invoice_pdf"]),
+        sourceId: z.string().max(128).nullable().optional(),
+        manualType: z.enum(["insurance", "money", "health", "education", "family", "other"]),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
+        const classification = await upsertDocumentClassification(ctx.user.id, input);
+        await audit({
+          userId: ctx.user.id,
+          action: "update_document_classification",
+          resource: "document",
+          resourceId: input.documentKey,
+          details: JSON.stringify({ sourceType: input.sourceType, manualType: input.manualType }),
+        });
+        return { success: true, classification };
+      }),
+
+    migrateLegacyClassifications: protectedProcedure
+      .input(z.object({
+        items: z.array(
+          z.object({
+            documentKey: z.string().min(1).max(191),
+            sourceType: z.enum(["analysis_file", "invoice_pdf"]),
+            sourceId: z.string().max(128).nullable().optional(),
+            manualType: z.enum(["insurance", "money", "health", "education", "family", "other"]),
+          })
+        ).min(1).max(200),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
+        const saved = await bulkUpsertDocumentClassifications(ctx.user.id, input.items);
+        await audit({
+          userId: ctx.user.id,
+          action: "update_document_classification",
+          resource: "document",
+          details: JSON.stringify({ mode: "legacy_migration", count: saved.length }),
+        });
+        return { success: true, count: saved.length };
+      }),
+  }),
+
+  assistant: router({
+    getHomeContext: protectedProcedure.query(async ({ ctx }) => {
+      if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const [profile, analyses, invoices, gmailConnections, familyMembers] = await Promise.all([
+        getUserProfile(ctx.user.id),
+        getUserAnalyses(ctx.user.id),
+        getAssistantInvoices(ctx.user.id),
+        getAllGmailConnections(ctx.user.id),
+        getFamilyMembers(ctx.user.id),
+      ]);
+
+      return buildAssistantHomeContext({
+        userName: ctx.user.name,
+        profile,
+        analyses,
+        invoices,
+        familyMembers,
+        gmailConnections,
+      });
+    }),
+
+    getChatHistory: protectedProcedure.query(async ({ ctx }) => {
+      if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const sessionId = getAssistantSessionId(ctx.user.id);
+      const history = await getChatHistory(sessionId);
+      return history.map((msg) => ({
+        role: msg.role as "user" | "assistant",
+        content: msg.content,
+      }));
+    }),
+
+    chat: protectedProcedure
+      .input(z.object({
+        message: z.string().min(1).max(4000),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
+        const sessionId = getAssistantSessionId(ctx.user.id);
+
+        await addChatMessage({
+          sessionId,
+          role: "user",
+          content: input.message,
+        });
+
+        const [history, profile, analyses, invoices, gmailConnections, familyMembers] = await Promise.all([
+          getChatHistory(sessionId),
+          getUserProfile(ctx.user.id),
+          getUserAnalyses(ctx.user.id),
+          getAssistantInvoices(ctx.user.id),
+          getAllGmailConnections(ctx.user.id),
+          getFamilyMembers(ctx.user.id),
+        ]);
+
+        const systemPrompt = buildAssistantSystemPrompt({
+          profile,
+          analyses,
+          invoices,
+          familyMembers,
+          gmailConnections,
+        });
+
+        const messages = [
+          { role: "system" as const, content: systemPrompt },
+          ...history.slice(-12).map((msg) => ({
+            role: msg.role as "user" | "assistant",
+            content: msg.content,
+          })),
+        ];
+
+        const response = await invokeLLM({ messages });
+        const assistantContent = extractLLMContent(response);
+
+        await addChatMessage({
+          sessionId,
+          role: "assistant",
+          content: assistantContent,
+        });
+
+        const usage = response.usage;
+        if (usage) {
+          await logApiUsage({
+            userId: ctx.user.id,
+            sessionId,
+            action: "chat",
+            promptTokens: usage.prompt_tokens ?? 0,
+            completionTokens: usage.completion_tokens ?? 0,
+          });
+        }
+
+        await audit({
+          userId: ctx.user.id,
+          action: "send_chat",
+          resource: "chat",
+          resourceId: sessionId,
+        });
+
+        return { response: assistantContent };
       }),
   }),
 

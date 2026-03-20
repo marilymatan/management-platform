@@ -9,10 +9,10 @@ import { trpc } from "@/lib/trpc";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   Sparkles,
-  LayoutDashboard,
+  MessageSquare,
+  Users,
   Shield,
   Wallet,
-  Bell,
   FolderOpen,
   Settings,
   LogOut,
@@ -27,13 +27,14 @@ interface NavItem {
   icon: React.ReactNode;
   path: string;
   adminOnly?: boolean;
+  matchPaths?: string[];
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { label: "דשבורד", icon: <LayoutDashboard className="size-5" />, path: "/" },
+  { label: "לומי", icon: <MessageSquare className="size-5" />, path: "/", matchPaths: ["/assistant"] },
+  { label: "המשפחה שלי", icon: <Users className="size-5" />, path: "/family" },
   { label: "ביטוחים", icon: <Shield className="size-5" />, path: "/insurance" },
-  { label: "הוצאות", icon: <Wallet className="size-5" />, path: "/expenses" },
-  { label: "תזכורות", icon: <Bell className="size-5" />, path: "/reminders" },
+  { label: "הוצאות/הכנסות", icon: <Wallet className="size-5" />, path: "/money", matchPaths: ["/expenses"] },
   { label: "מסמכים", icon: <FolderOpen className="size-5" />, path: "/documents" },
   { label: "לוח בקרה", icon: <BarChart3 className="size-5" />, path: "/admin", adminOnly: true },
 ];
@@ -62,9 +63,12 @@ export function AppShell({ children }: AppShellProps) {
     return () => { document.body.style.overflow = ""; };
   }, [sidebarOpen, isMobile]);
 
-  const isActive = (path: string) => {
-    if (path === "/") return location === "/";
-    return location.startsWith(path);
+  const isActive = (item: NavItem) => {
+    const matchPaths = [item.path, ...(item.matchPaths ?? [])];
+    if (matchPaths.includes("/")) {
+      return location === "/" || matchPaths.includes(location);
+    }
+    return matchPaths.some((path) => location.startsWith(path));
   };
 
   const filteredNavItems = NAV_ITEMS.filter(
@@ -88,14 +92,14 @@ export function AppShell({ children }: AppShellProps) {
         {!collapsed && (
           <div className="min-w-0 text-right">
             <h1 className="text-base font-bold text-white truncate tracking-wide">Lumi</h1>
-            <p className="text-[11px] text-white/50">מאיר לך את הדרך הפיננסית</p>
+            <p className="text-[11px] text-white/50">העוזר של משק הבית</p>
           </div>
         )}
       </button>
 
       <nav className="flex-1 px-3 space-y-1 mt-2">
         {filteredNavItems.map((item) => {
-          const active = isActive(item.path);
+          const active = isActive(item);
           const navButton = (
             <button
               key={item.path}
@@ -145,7 +149,7 @@ export function AppShell({ children }: AppShellProps) {
             className={cn(
               "w-full flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition-all duration-200",
               collapsed && "justify-center px-0",
-              isActive("/settings")
+              location.startsWith("/settings")
                 ? "bg-white/15 text-white"
                 : "text-white/60 hover:text-white hover:bg-white/8"
             )}

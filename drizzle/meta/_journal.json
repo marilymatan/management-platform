@@ -50,6 +50,13 @@
       "when": 1773991762869,
       "tag": "0006_charming_rockslide",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1773996899154,
+      "tag": "0007_lame_virginia_dare",
+      "breakpoints": true
     }
   ]
 }

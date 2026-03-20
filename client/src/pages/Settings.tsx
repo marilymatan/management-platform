@@ -502,8 +502,9 @@ export default function Settings() {
                               min={0}
                               max={20}
                               value={field.value ?? 0}
+                              disabled
                               onChange={(e) => field.onChange(parseInt(e.target.value) || 0)}
-                              className="mt-1.5"
+                              className="mt-1.5 bg-muted/40"
                             />
                           </FormControl>
                         </FormItem>
@@ -520,14 +521,28 @@ export default function Settings() {
                               <Input
                                 placeholder="לדוגמה: 3, 7, 12"
                                 value={field.value || ""}
+                                disabled
                                 onChange={(e) => field.onChange(e.target.value || null)}
-                                className="mt-1.5"
+                                className="mt-1.5 bg-muted/40"
                               />
                             </FormControl>
                           </FormItem>
                         )}
                       />
                     )}
+                    <div className="rounded-xl border border-border/60 bg-muted/20 p-3">
+                      <p className="text-xs text-muted-foreground leading-relaxed">
+                        את בני הבית והילדים מעדכנים עכשיו במסך `המשפחה שלי`, כדי לשמור מודל משפחתי אחד ועקבי בכל המערכת.
+                      </p>
+                      <Button
+                        type="button"
+                        variant="link"
+                        className="h-auto p-0 mt-2 text-sm"
+                        onClick={() => setLocation("/family")}
+                      >
+                        לעבור למסך המשפחה שלי
+                      </Button>
+                    </div>
                   </div>
                 </CardContent>
               </Card>

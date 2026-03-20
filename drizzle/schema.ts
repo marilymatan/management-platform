@@ -13,6 +13,9 @@ export const employmentStatusEnum = pgEnum("employment_status", ["salaried", "se
 export const incomeRangeEnum = pgEnum("income_range", ["below_5k", "5k_10k", "10k_15k", "15k_25k", "25k_40k", "above_40k"]);
 export const genderEnum = pgEnum("gender", ["male", "female", "other"]);
 export const insuranceCategoryEnum = pgEnum("insurance_category_type", ["health", "life", "car", "home"]);
+export const familyMemberRelationEnum = pgEnum("family_member_relation", ["spouse", "child", "parent", "dependent", "other"]);
+export const documentSourceTypeEnum = pgEnum("document_source_type", ["analysis_file", "invoice_pdf"]);
+export const documentManualTypeEnum = pgEnum("document_manual_type", ["insurance", "money", "health", "education", "family", "other"]);
 
 export const users = pgTable("users", {
   id: serial("id").primaryKey(),
@@ -193,3 +196,44 @@ export const userProfiles = pgTable("user_profiles", {
 
 export type UserProfileRow = typeof userProfiles.$inferSelect;
 export type InsertUserProfile = typeof userProfiles.$inferInsert;
+
+export const familyMembers = pgTable("family_members", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull(),
+  fullName: text("full_name").notNull(),
+  relation: familyMemberRelationEnum("relation").notNull(),
+  birthDate: timestamp("birth_date"),
+  ageLabel: text("age_label"),
+  gender: genderEnum("gender"),
+  allergies: text("allergies"),
+  medicalNotes: text("medical_notes"),
+  activities: text("activities"),
+  insuranceNotes: text("insurance_notes"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull().$onUpdate(() => new Date()),
+}, (table) => ({
+  userIdIdx: index("family_members_user_id_idx").on(table.userId),
+  relationIdx: index("family_members_relation_idx").on(table.relation),
+}));
+
+export type FamilyMember = typeof familyMembers.$inferSelect;
+export type InsertFamilyMember = typeof familyMembers.$inferInsert;
+
+export const documentClassifications = pgTable("document_classifications", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull(),
+  documentKey: varchar("document_key", { length: 191 }).notNull(),
+  sourceType: documentSourceTypeEnum("source_type").notNull(),
+  sourceId: varchar("source_id", { length: 128 }),
+  manualType: documentManualTypeEnum("manual_type").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull().$onUpdate(() => new Date()),
+}, (table) => ({
+  userIdIdx: index("document_classifications_user_id_idx").on(table.userId),
+  sourceIdx: index("document_classifications_source_idx").on(table.userId, table.sourceType, table.sourceId),
+  userDocumentUniq: uniqueIndex("document_classifications_user_document_uniq").on(table.userId, table.documentKey),
+}));
+
+export type DocumentClassification = typeof documentClassifications.$inferSelect;
+export type InsertDocumentClassification = typeof documentClassifications.$inferInsert;

@@ -31,6 +31,7 @@ vi.mock("./db", () => ({
     activeUsersThisMonth: 3,
     dailyUsage: [],
   }),
+  getDb: vi.fn().mockResolvedValue(null),
 }));
 
 type AuthenticatedUser = NonNullable<TrpcContext["user"]>;

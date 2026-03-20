@@ -1,7 +1,7 @@
-import { eq, desc, sql, and } from "drizzle-orm";
+import { eq, desc, sql, and, asc } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import pg from "pg";
-import { InsertUser, users, analyses, chatMessages, apiUsageLogs, userProfiles, gmailConnections, smartInvoices, auditLogs, type InsertAnalysis, type InsertChatMessage, type InsertApiUsageLog, type InsertUserProfile } from "../drizzle/schema";
+import { InsertUser, users, analyses, chatMessages, apiUsageLogs, userProfiles, gmailConnections, smartInvoices, auditLogs, familyMembers, documentClassifications, type InsertAnalysis, type InsertChatMessage, type InsertApiUsageLog, type InsertUserProfile, type InsertFamilyMember, type InsertDocumentClassification } from "../drizzle/schema";
 import { ENV } from './_core/env';
 import type { PolicyAnalysis } from "@shared/insurance";
 import { encryptField, decryptField, encryptJson, decryptJson } from "./encryption";
@@ -392,6 +392,303 @@ export async function upsertUserProfile(userId: number, data: Omit<InsertUserPro
     await db.insert(userProfiles).values({ ...preparedData, userId });
   }
   return getUserProfile(userId);
+}
+
+interface FamilyMemberInput {
+  id?: number;
+  fullName: string;
+  relation: "spouse" | "child" | "parent" | "dependent" | "other";
+  birthDate?: Date | null;
+  ageLabel?: string | null;
+  gender?: "male" | "female" | "other" | null;
+  allergies?: string | null;
+  medicalNotes?: string | null;
+  activities?: string | null;
+  insuranceNotes?: string | null;
+  notes?: string | null;
+}
+
+interface DocumentClassificationInput {
+  documentKey: string;
+  sourceType: "analysis_file" | "invoice_pdf";
+  sourceId?: string | null;
+  manualType: "insurance" | "money" | "health" | "education" | "family" | "other";
+}
+
+const familyRelationOrder: Record<FamilyMemberInput["relation"], number> = {
+  spouse: 0,
+  child: 1,
+  parent: 2,
+  dependent: 3,
+  other: 4,
+};
+
+function encryptOptionalText(value: string | null | undefined) {
+  if (value === undefined) return undefined;
+  const normalized = value?.trim();
+  return normalized ? encryptField(normalized) : null;
+}
+
+function decryptOptionalText(value: string | null | undefined) {
+  return value ? decryptField(value) : null;
+}
+
+function decryptFamilyMemberRow(row: any) {
+  return {
+    ...row,
+    fullName: decryptField(row.fullName),
+    ageLabel: decryptOptionalText(row.ageLabel),
+    allergies: decryptOptionalText(row.allergies),
+    medicalNotes: decryptOptionalText(row.medicalNotes),
+    activities: decryptOptionalText(row.activities),
+    insuranceNotes: decryptOptionalText(row.insuranceNotes),
+    notes: decryptOptionalText(row.notes),
+  };
+}
+
+function calculateAgeFromBirthDate(birthDate: Date | null | undefined) {
+  if (!birthDate) return null;
+  const today = new Date();
+  let age = today.getFullYear() - birthDate.getFullYear();
+  const hasHadBirthdayThisYear =
+    today.getMonth() > birthDate.getMonth() ||
+    (today.getMonth() === birthDate.getMonth() && today.getDate() >= birthDate.getDate());
+  if (!hasHadBirthdayThisYear) {
+    age -= 1;
+  }
+  if (!Number.isFinite(age) || age < 0 || age > 120) {
+    return null;
+  }
+  return age;
+}
+
+function parseLegacyAgeLabels(raw: string | null | undefined) {
+  return (raw ?? "")
+    .split(/[,/|\n]+/)
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
+function getChildAgeLabel(member: { birthDate?: Date | null; ageLabel?: string | null }) {
+  if (member.ageLabel) {
+    return member.ageLabel;
+  }
+  const age = calculateAgeFromBirthDate(member.birthDate ?? null);
+  return age === null ? null : String(age);
+}
+
+async function getFamilyMemberRow(userId: number, memberId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db
+    .select()
+    .from(familyMembers)
+    .where(and(eq(familyMembers.id, memberId), eq(familyMembers.userId, userId)))
+    .limit(1);
+  return result[0] ?? null;
+}
+
+async function syncFamilyProfile(userId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const members = await getFamilyMembers(userId);
+  const childMembers = members.filter((member) => member.relation === "child");
+  const childrenAges = childMembers
+    .map((member) => getChildAgeLabel(member))
+    .filter((value): value is string => Boolean(value));
+  const existing = await getUserProfile(userId);
+  const updateData = {
+    numberOfChildren: childMembers.length,
+    childrenAges: childrenAges.length > 0 ? childrenAges.join(", ") : null,
+    updatedAt: new Date(),
+  };
+  if (existing) {
+    await db.update(userProfiles).set(updateData).where(eq(userProfiles.userId, userId));
+    return;
+  }
+  await db.insert(userProfiles).values({
+    userId,
+    numberOfChildren: updateData.numberOfChildren,
+    childrenAges: updateData.childrenAges,
+  });
+}
+
+export async function getFamilyMembers(userId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db
+    .select()
+    .from(familyMembers)
+    .where(eq(familyMembers.userId, userId))
+    .orderBy(asc(familyMembers.createdAt));
+  return result
+    .map(decryptFamilyMemberRow)
+    .sort((a, b) => {
+      const relationOrder = familyRelationOrder[a.relation as FamilyMemberInput["relation"]] - familyRelationOrder[b.relation as FamilyMemberInput["relation"]];
+      if (relationOrder !== 0) {
+        return relationOrder;
+      }
+      return a.createdAt.getTime() - b.createdAt.getTime();
+    });
+}
+
+export async function upsertFamilyMember(userId: number, data: FamilyMemberInput) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const fullName = data.fullName.trim();
+  if (!fullName) {
+    throw new Error("Family member name is required");
+  }
+  const preparedData: Omit<InsertFamilyMember, "id" | "userId" | "createdAt" | "updatedAt"> = {
+    fullName: encryptField(fullName),
+    relation: data.relation,
+    birthDate: data.birthDate ?? null,
+    ageLabel: encryptOptionalText(data.ageLabel) ?? null,
+    gender: data.gender ?? null,
+    allergies: encryptOptionalText(data.allergies) ?? null,
+    medicalNotes: encryptOptionalText(data.medicalNotes) ?? null,
+    activities: encryptOptionalText(data.activities) ?? null,
+    insuranceNotes: encryptOptionalText(data.insuranceNotes) ?? null,
+    notes: encryptOptionalText(data.notes) ?? null,
+  };
+
+  if (data.id) {
+    const existing = await getFamilyMemberRow(userId, data.id);
+    if (!existing) {
+      throw new Error("Family member not found");
+    }
+    await db
+      .update(familyMembers)
+      .set({ ...preparedData, updatedAt: new Date() })
+      .where(eq(familyMembers.id, data.id));
+    await syncFamilyProfile(userId);
+    const updated = await getFamilyMemberRow(userId, data.id);
+    return updated ? decryptFamilyMemberRow(updated) : null;
+  }
+
+  const [created] = await db
+    .insert(familyMembers)
+    .values({ ...preparedData, userId })
+    .returning({ id: familyMembers.id });
+  await syncFamilyProfile(userId);
+  const inserted = await getFamilyMemberRow(userId, created.id);
+  return inserted ? decryptFamilyMemberRow(inserted) : null;
+}
+
+export async function deleteFamilyMember(userId: number, memberId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const existing = await getFamilyMemberRow(userId, memberId);
+  if (!existing) {
+    throw new Error("Family member not found");
+  }
+  await db.delete(familyMembers).where(eq(familyMembers.id, memberId));
+  await syncFamilyProfile(userId);
+}
+
+export async function bootstrapFamilyMembersFromProfile(userId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const existingMembers = await getFamilyMembers(userId);
+  if (existingMembers.length > 0) {
+    return existingMembers;
+  }
+  const profile = await getUserProfile(userId);
+  if (!profile) {
+    return [];
+  }
+  const legacyMembers: Array<Omit<InsertFamilyMember, "id" | "userId" | "createdAt" | "updatedAt">> = [];
+  const ageLabels = parseLegacyAgeLabels(profile.childrenAges);
+  if (profile.maritalStatus === "married") {
+    legacyMembers.push({
+      fullName: encryptField("בן/בת זוג"),
+      relation: "spouse",
+      birthDate: null,
+      ageLabel: null,
+      gender: null,
+      allergies: null,
+      medicalNotes: null,
+      activities: null,
+      insuranceNotes: null,
+      notes: null,
+    });
+  }
+  for (let index = 0; index < (profile.numberOfChildren ?? 0); index += 1) {
+    legacyMembers.push({
+      fullName: encryptField(`ילד ${index + 1}`),
+      relation: "child",
+      birthDate: null,
+      ageLabel: encryptOptionalText(ageLabels[index]) ?? null,
+      gender: null,
+      allergies: null,
+      medicalNotes: null,
+      activities: null,
+      insuranceNotes: null,
+      notes: null,
+    });
+  }
+  if (legacyMembers.length === 0) {
+    return [];
+  }
+  await db.insert(familyMembers).values(legacyMembers.map((member) => ({ ...member, userId })));
+  await syncFamilyProfile(userId);
+  return getFamilyMembers(userId);
+}
+
+export async function getDocumentClassifications(userId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  return db
+    .select()
+    .from(documentClassifications)
+    .where(eq(documentClassifications.userId, userId))
+    .orderBy(desc(documentClassifications.updatedAt));
+}
+
+export async function upsertDocumentClassification(userId: number, data: DocumentClassificationInput) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const values: InsertDocumentClassification = {
+    userId,
+    documentKey: data.documentKey,
+    sourceType: data.sourceType,
+    sourceId: data.sourceId ?? null,
+    manualType: data.manualType,
+  };
+  await db
+    .insert(documentClassifications)
+    .values(values)
+    .onConflictDoUpdate({
+      target: [documentClassifications.userId, documentClassifications.documentKey],
+      set: {
+        sourceType: data.sourceType,
+        sourceId: data.sourceId ?? null,
+        manualType: data.manualType,
+        updatedAt: new Date(),
+      },
+    });
+  const result = await db
+    .select()
+    .from(documentClassifications)
+    .where(
+      and(
+        eq(documentClassifications.userId, userId),
+        eq(documentClassifications.documentKey, data.documentKey)
+      )
+    )
+    .limit(1);
+  return result[0] ?? null;
+}
+
+export async function bulkUpsertDocumentClassifications(userId: number, items: DocumentClassificationInput[]) {
+  const results = [];
+  for (const item of items) {
+    const saved = await upsertDocumentClassification(userId, item);
+    if (saved) {
+      results.push(saved);
+    }
+  }
+  return results;
 }
 
 export async function getAdminDashboardStats() {

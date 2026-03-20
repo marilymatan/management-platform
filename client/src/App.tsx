@@ -6,7 +6,9 @@ import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { AppShell } from "./components/AppShell";
+import Assistant from "./pages/Assistant";
 import LumiDashboard from "./pages/LumiDashboard";
+import Family from "./pages/Family";
 import Insurance from "./pages/Insurance";
 import InsuranceCategoryPage from "./pages/InsuranceCategoryPage";
 import Home from "./pages/Home";
@@ -42,11 +44,15 @@ function Router() {
   return (
     <AppShell>
       <Switch>
-        <Route path="/" component={LumiDashboard} />
+        <Route path="/" component={Assistant} />
+        <Route path="/assistant" component={Assistant} />
+        <Route path="/family" component={Family} />
+        <Route path="/dashboard" component={LumiDashboard} />
         <Route path="/insurance" component={Insurance} />
         <Route path="/insurance/category/:category" component={InsuranceCategoryPage} />
         <Route path="/insurance/new" component={Home} />
         <Route path="/insurance/:sessionId" component={Home} />
+        <Route path="/money" component={Expenses} />
         <Route path="/expenses" component={Expenses} />
         <Route path="/reminders" component={Reminders} />
         <Route path="/documents" component={Documents} />

@@ -34,6 +34,9 @@ export type AuditAction =
   | "clear_invoices"
   | "add_manual_expense"
   | "update_invoice_category"
+  | "manage_family_member"
+  | "delete_family_member"
+  | "update_document_classification"
   // Admin operations
   | "admin_view_users"
   | "admin_view_stats"
@@ -49,6 +52,8 @@ export type AuditResource =
   | "file"
   | "gmail"
   | "invoice"
+  | "family"
+  | "document"
   | "admin"
   | "security";
 

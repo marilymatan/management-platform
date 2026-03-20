@@ -977,7 +977,7 @@ function DashboardSkeleton() {
 }
 
 export default function AdminDashboard() {
-  const { user, loading } = useAuth();
+  const { user, loading } = useAuth({ redirectOnUnauthenticated: true });
   const [, setLocation] = useLocation();
   const [activeTab, setActiveTab] = useState("overview");
 

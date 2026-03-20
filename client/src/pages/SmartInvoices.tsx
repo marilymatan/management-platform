@@ -46,6 +46,7 @@ import {
   Download,
   PencilLine,
   Banknote,
+  Sparkles,
 } from "lucide-react";
 
 const CATEGORY_ICONS: Record<string, React.ReactNode> = {
@@ -280,6 +281,9 @@ export default function SmartInvoices() {
   const { data: monthlySummary } = trpc.gmail.getMonthlySummary.useQuery(undefined, {
     enabled: !!user,
   });
+  const { data: profileData } = trpc.profile.get.useQuery(undefined, {
+    enabled: !!user,
+  });
 
   const { data: authUrlData } = trpc.gmail.getAuthUrl.useQuery(
     {},
@@ -505,7 +509,7 @@ export default function SmartInvoices() {
             </div>
             <h2 className="text-lg font-bold mb-2">הוצאות והכנסות</h2>
             <p className="text-sm text-muted-foreground mb-5">יש להתחבר כדי לגשת לפיצ'ר זה</p>
-            <Button onClick={() => navigate("/")}>חזרה לדשבורד</Button>
+            <Button onClick={() => navigate("/")}>חזרה ללומי</Button>
           </CardContent>
         </Card>
       </div>
@@ -522,8 +526,65 @@ export default function SmartInvoices() {
     return sum + m.categories.reduce((s, c) => s + c.count, 0);
   }, 0) ?? 0;
 
+  const moneyInsights = useMemo(() => {
+    const insights: Array<{ tone: "warning" | "info" | "success"; title: string; description: string }> = [];
+    const currentMonth = monthlySummary?.[0];
+    const topExpenseCategory = currentMonth?.categories?.[0];
+    const unknownFlowCount = invoices?.filter((invoice) => getFlowDirection(invoice as Invoice) === "unknown").length ?? 0;
+
+    if (currentMonth) {
+      if (currentMonth.netTotal < 0) {
+        insights.push({
+          tone: "warning",
+          title: "הנטו החודשי כרגע שלילי",
+          description: `נכון לעכשיו ההוצאות גבוהות מההכנסות ב-${Math.abs(currentMonth.netTotal).toLocaleString("he-IL")} ₪.`,
+        });
+      } else {
+        insights.push({
+          tone: "success",
+          title: "החודש נמצא כרגע באיזון חיובי",
+          description: `הנטו החודשי עומד כרגע על ${currentMonth.netTotal.toLocaleString("he-IL")} ₪.`,
+        });
+      }
+    }
+
+    if (topExpenseCategory) {
+      insights.push({
+        tone: "info",
+        title: "זו הקטגוריה הכי כבדה אצלך כרגע",
+        description: `${topExpenseCategory.category} מובילה את ההוצאות עם ${topExpenseCategory.total.toLocaleString("he-IL")} ₪ החודש.`,
+      });
+    }
+
+    if ((profileData?.numberOfChildren ?? 0) > 0 && currentMonth) {
+      insights.push({
+        tone: "info",
+        title: "המשפחה משנה את ההקשר הכספי",
+        description: `לומי יודע שיש ${profileData?.numberOfChildren} ילדים בבית, ולכן כדאי להסתכל על תזרים חודשי מול אירועים, חוגים והוצאות לא צפויות.`,
+      });
+    }
+
+    if (profileData?.businessName && currentMonth && currentMonth.incomeTotal === 0) {
+      insights.push({
+        tone: "warning",
+        title: "אין עדיין הכנסות מזוהות החודש",
+        description: `למרות שמוגדר עסק (${profileData.businessName}), עדיין לא זוהו הכנסות במסמכים החודשיים.`,
+      });
+    }
+
+    if (unknownFlowCount > 0) {
+      insights.push({
+        tone: "warning",
+        title: "יש תנועות שעדיין לא סווגו כתזרים",
+        description: `${unknownFlowCount} מסמכים עדיין לא ברורים כהוצאה או הכנסה, וכדאי להשלים להם סיווג.`,
+      });
+    }
+
+    return insights.slice(0, 3);
+  }, [invoices, monthlySummary, profileData]);
+
   return (
-    <div className="page-container">
+    <div className="page-container" data-testid="money-page">
       <div className="relative overflow-hidden rounded-2xl bg-gradient-to-bl from-[#1a2744] via-[#1e3a5f] to-[#2563eb] text-white mb-6 animate-fade-in-up">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_-20%,rgba(255,255,255,0.15),transparent_60%)]" />
         <div className="absolute -bottom-12 -start-12 size-52 rounded-full bg-white/[0.06] blur-3xl" />
@@ -839,6 +900,37 @@ export default function SmartInvoices() {
                 </div>
               </CardContent>
             </Card>
+
+            {moneyInsights.length > 0 && (
+              <div className="animate-fade-in-up stagger-2 space-y-3">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="size-4 text-amber-500" />
+                  <h2 className="text-sm font-semibold">תובנות לומי</h2>
+                </div>
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+                  {moneyInsights.map((insight) => (
+                    <Card key={insight.title} className="border-border/70">
+                      <CardContent className="p-4 space-y-2">
+                        <Badge
+                          variant="outline"
+                          className={
+                            insight.tone === "warning"
+                              ? "bg-amber-50 text-amber-700 border-amber-200"
+                              : insight.tone === "success"
+                                ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                                : "bg-blue-50 text-blue-700 border-blue-200"
+                          }
+                        >
+                          {insight.tone === "warning" ? "דורש תשומת לב" : insight.tone === "success" ? "מצב טוב" : "מבט חכם"}
+                        </Badge>
+                        <p className="text-sm font-semibold">{insight.title}</p>
+                        <p className="text-xs text-muted-foreground leading-relaxed">{insight.description}</p>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {monthlySummary && monthlySummary.length > 0 && (
               <div className="animate-fade-in-up stagger-2 space-y-2">

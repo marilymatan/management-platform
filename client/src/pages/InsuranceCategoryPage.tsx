@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { useLocation, useRoute } from "wouter";
 import { trpc } from "@/lib/trpc";
@@ -14,7 +15,6 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import {
-  Shield,
   Plus,
   FileText,
   Trash2,
@@ -28,13 +28,20 @@ import {
   Home,
   User,
   ScanLine,
+  Sparkles,
+  MessageSquare,
+  Wallet,
+  CircleAlert,
 } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { he } from "date-fns/locale";
-import { useMemo } from "react";
 import type { InsuranceCategory } from "@shared/insurance";
-import { inferInsuranceCategory } from "@shared/insurance";
+import {
+  buildInsuranceOverview,
+  formatInsuranceCurrency,
+  insuranceCategoryLabels,
+} from "@/lib/insuranceOverview";
 
 const CATEGORY_CONFIG: Record<
   InsuranceCategory,
@@ -47,28 +54,28 @@ const CATEGORY_CONFIG: Record<
   }
 > = {
   health: {
-    label: "ביטוחי בריאות",
+    label: insuranceCategoryLabels.health,
     icon: <Heart className="size-5" />,
     gradient: "from-rose-500/12 to-pink-500/6",
     iconBg: "bg-rose-100",
     textColor: "text-rose-600",
   },
   life: {
-    label: "ביטוחי חיים",
+    label: insuranceCategoryLabels.life,
     icon: <User className="size-5" />,
     gradient: "from-blue-500/12 to-indigo-500/6",
     iconBg: "bg-blue-100",
     textColor: "text-blue-600",
   },
   car: {
-    label: "ביטוחי רכב",
+    label: insuranceCategoryLabels.car,
     icon: <Car className="size-5" />,
     gradient: "from-amber-500/12 to-orange-500/6",
     iconBg: "bg-amber-100",
     textColor: "text-amber-600",
   },
   home: {
-    label: "ביטוחי דירה",
+    label: insuranceCategoryLabels.home,
     icon: <Home className="size-5" />,
     gradient: "from-emerald-500/12 to-teal-500/6",
     iconBg: "bg-emerald-100",
@@ -85,6 +92,9 @@ export default function InsuranceCategoryPage() {
   const { data: analyses, isLoading } = trpc.policy.getUserAnalyses.useQuery(undefined, {
     enabled: !!user,
   });
+  const profileQuery = trpc.profile.get.useQuery(undefined, {
+    enabled: !!user,
+  });
   const utils = trpc.useUtils();
   const deleteAnalysisMutation = trpc.policy.delete.useMutation({
     onSuccess: () => {
@@ -96,23 +106,43 @@ export default function InsuranceCategoryPage() {
     },
   });
 
-  const filteredAnalyses = useMemo(() => {
-    if (!analyses || !category) return [];
-    return analyses.filter((analysis) => {
-      const cat =
-        (analysis as any).insuranceCategory ??
-        analysis.analysisResult?.generalInfo?.insuranceCategory ??
-        inferInsuranceCategory(
-          analysis.analysisResult?.generalInfo?.policyType,
-          analysis.analysisResult?.coverages
-        );
-      return cat === category;
-    });
-  }, [analyses, category]);
+  const overview = useMemo(
+    () => buildInsuranceOverview(analyses as any[] | undefined, profileQuery.data),
+    [analyses, profileQuery.data]
+  );
+  const categoryPolicies = useMemo(
+    () => (category ? overview.completedPolicies.filter((policy) => policy.category === category) : []),
+    [overview.completedPolicies, category]
+  );
 
   if (!user || !category || !CATEGORY_CONFIG[category]) return null;
 
   const config = CATEGORY_CONFIG[category];
+  const summary = overview.categorySummaries[category];
+  const categoryInsights = [
+    ...(summary.nextRenewalDays !== null
+      ? [{
+          id: "renewal",
+          title: "יש חידוש שמתקרב",
+          description: `בקטגוריה הזו יש פוליסה שמגיעה לחידוש בעוד ${summary.nextRenewalDays} ימים.`,
+        }]
+      : []),
+    ...(categoryPolicies.some((policy) => policy.duplicateCount > 0)
+      ? [{
+          id: "duplicates",
+          title: "יש כפילויות שכדאי לפתוח",
+          description: "זוהו כפילויות בכיסוי לפחות באחת הפוליסות בקטגוריה הזאת.",
+        }]
+      : []),
+    ...categoryPolicies
+      .flatMap((policy) => policy.personalizedInsights.slice(0, 1))
+      .slice(0, 2)
+      .map((insight, index) => ({
+        id: `insight-${index}`,
+        title: insight.title,
+        description: insight.description,
+      })),
+  ].slice(0, 3);
 
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -150,39 +180,45 @@ export default function InsuranceCategoryPage() {
   };
 
   return (
-    <div className="page-container">
-      <div className="flex items-center justify-between mb-8 animate-fade-in-up">
-        <div className="flex items-center gap-3">
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => setLocation("/insurance")}
-            className="size-10 shrink-0"
-          >
-            <ArrowRight className="size-5" />
-          </Button>
-          <div className={`size-10 rounded-xl ${config.iconBg} flex items-center justify-center ${config.textColor}`}>
-            {config.icon}
-          </div>
-          <div>
-            <h2 className="text-xl font-bold">{config.label}</h2>
-            <p className="text-xs text-muted-foreground">
-              {filteredAnalyses.length} {filteredAnalyses.length === 1 ? "סריקה" : "סריקות"} ·{" "}
-              {filteredAnalyses.reduce((sum, a) => sum + (a.files?.length || 0), 0)} קבצי PDF
-            </p>
+    <div className="page-container space-y-6">
+      <div className="animate-fade-in-up relative overflow-hidden rounded-2xl border border-border/60 bg-card">
+        <div className={`absolute inset-0 bg-gradient-to-bl ${config.gradient}`} />
+        <div className="relative p-6">
+          <div className="flex items-start justify-between gap-4 flex-wrap">
+            <div className="flex items-center gap-3">
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setLocation("/insurance")}
+                className="size-10 shrink-0"
+              >
+                <ArrowRight className="size-5" />
+              </Button>
+              <div className={`size-11 rounded-xl ${config.iconBg} flex items-center justify-center ${config.textColor}`}>
+                {config.icon}
+              </div>
+              <div>
+                <h2 className="text-xl font-bold">{config.label}</h2>
+                <p className="text-sm text-muted-foreground mt-1">
+                  {summary.scans} פוליסות · {summary.pdfs} קבצי PDF · {summary.monthlyPremium > 0 ? formatInsuranceCurrency(summary.monthlyPremium) : "ללא פרמיה מזוהה"}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <Button variant="outline" onClick={() => setLocation("/assistant")} className="gap-2">
+                <MessageSquare className="size-4" />
+                שאל את לומי
+              </Button>
+              <Button onClick={() => setLocation("/insurance/new")} size="lg" className="gap-2 shadow-md">
+                <Plus className="size-5" />
+                סריקה חדשה
+              </Button>
+            </div>
           </div>
         </div>
-        <Button
-          onClick={() => setLocation("/insurance/new")}
-          size="lg"
-          className="gap-2 shadow-md"
-        >
-          <Plus className="size-5" />
-          סריקה חדשה
-        </Button>
       </div>
 
-      <div className="grid grid-cols-2 gap-4 mb-6 animate-fade-in-up stagger-1">
+      <div className="grid grid-cols-2 xl:grid-cols-4 gap-4 animate-fade-in-up stagger-1">
         <Card>
           <CardContent className="pt-5 pb-4">
             <div className="flex items-center gap-3">
@@ -190,8 +226,8 @@ export default function InsuranceCategoryPage() {
                 <ScanLine className="size-5" />
               </div>
               <div>
-                <p className="text-xs text-muted-foreground">סריקות</p>
-                <p className="text-2xl font-bold">{filteredAnalyses.length}</p>
+                <p className="text-xs text-muted-foreground">פוליסות</p>
+                <p className="text-2xl font-bold">{summary.scans}</p>
               </div>
             </div>
           </CardContent>
@@ -204,19 +240,59 @@ export default function InsuranceCategoryPage() {
               </div>
               <div>
                 <p className="text-xs text-muted-foreground">קבצי PDF</p>
-                <p className="text-2xl font-bold">
-                  {filteredAnalyses.reduce((sum, a) => sum + (a.files?.length || 0), 0)}
-                </p>
+                <p className="text-2xl font-bold">{summary.pdfs}</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-5 pb-4">
+            <div className="flex items-center gap-3">
+              <div className="size-10 rounded-xl bg-emerald-100 flex items-center justify-center text-emerald-600">
+                <Wallet className="size-5" />
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">פרמיה חודשית</p>
+                <p className="text-2xl font-bold">{summary.monthlyPremium > 0 ? formatInsuranceCurrency(summary.monthlyPremium) : "—"}</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-5 pb-4">
+            <div className="flex items-center gap-3">
+              <div className="size-10 rounded-xl bg-amber-100 flex items-center justify-center text-amber-600">
+                <Clock className="size-5" />
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">חידושים קרובים</p>
+                <p className="text-2xl font-bold">{summary.renewals}</p>
               </div>
             </div>
           </CardContent>
         </Card>
       </div>
 
+      {categoryInsights.length > 0 && (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 animate-fade-in-up stagger-2">
+          {categoryInsights.map((insight) => (
+            <Card key={insight.id} className="border-border/60 bg-muted/15">
+              <CardContent className="p-5 space-y-2">
+                <div className="flex items-center gap-2">
+                  <CircleAlert className="size-4 text-primary" />
+                  <p className="text-sm font-semibold">{insight.title}</p>
+                </div>
+                <p className="text-sm text-muted-foreground leading-relaxed">{insight.description}</p>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+
       {isLoading ? (
         <div className="space-y-3">
-          {[1, 2, 3].map((i) => (
-            <Card key={i} className="animate-pulse">
+          {[1, 2, 3].map((item) => (
+            <Card key={item} className="animate-pulse">
               <CardContent className="py-5">
                 <div className="flex items-center gap-4">
                   <div className="size-10 rounded-xl bg-muted" />
@@ -229,107 +305,155 @@ export default function InsuranceCategoryPage() {
             </Card>
           ))}
         </div>
-      ) : filteredAnalyses.length > 0 ? (
-        <div className="space-y-3 animate-fade-in-up stagger-2">
-          {filteredAnalyses.map((analysis) => (
-            <Card
-              key={analysis.sessionId}
-              className="group hover:shadow-md hover:border-primary/20 transition-all duration-200"
-            >
-              <CardContent className="py-4 px-5">
-                <div className="flex items-center gap-4">
-                  <div className={`size-10 rounded-xl ${config.iconBg} flex items-center justify-center shrink-0 ${config.textColor}`}>
-                    <FileText className="size-5" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1">
-                      <p className="text-sm font-semibold truncate">
-                        {analysis.analysisResult?.generalInfo?.policyName || "סריקת פוליסה"}
-                      </p>
-                      {getStatusBadge(analysis.status)}
-                    </div>
-                    <p className="text-xs text-muted-foreground truncate">
-                      {analysis.analysisResult?.summary || "אין סיכום זמין"}
-                    </p>
-                  </div>
-
-                  <div className="hidden sm:flex items-center gap-6 shrink-0 text-center">
-                    <div>
-                      <p className="text-xs text-muted-foreground">תאריך</p>
-                      <p className="text-xs font-medium">
-                        {format(new Date(analysis.createdAt), "dd.MM.yy", { locale: he })}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground">קבצים</p>
-                      <p className="text-xs font-medium">{analysis.files.length}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground">כיסויים</p>
-                      <p className="text-xs font-medium">{analysis.analysisResult?.coverages?.length || 0}</p>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    {analysis.status === "completed" && (
-                      <Button
-                        onClick={() => setLocation(`/insurance/${analysis.sessionId}`)}
-                        variant="default"
-                        size="sm"
-                        className="gap-1.5 h-8"
-                      >
-                        <Eye className="size-3.5" />
-                        <span className="hidden sm:inline">צפה</span>
-                      </Button>
-                    )}
-                    <AlertDialog>
-                      <AlertDialogTrigger asChild>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
-                        >
-                          <Trash2 className="size-3.5" />
-                        </Button>
-                      </AlertDialogTrigger>
-                      <AlertDialogContent dir="rtl">
-                        <AlertDialogTitle>מחק סריקה</AlertDialogTitle>
-                        <AlertDialogDescription>
-                          האם אתה בטוח שברצונך למחוק סריקה זו? לא ניתן לבטל פעולה זו.
-                        </AlertDialogDescription>
-                        <div className="flex gap-2 justify-end">
-                          <AlertDialogCancel>ביטול</AlertDialogCancel>
-                          <AlertDialogAction
-                            onClick={() => deleteAnalysisMutation.mutate({ sessionId: analysis.sessionId })}
-                            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                          >
-                            מחק
-                          </AlertDialogAction>
+      ) : categoryPolicies.length > 0 ? (
+        <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_320px] gap-6">
+          <div className="space-y-3 animate-fade-in-up stagger-3">
+            {categoryPolicies.map((policy) => {
+              const matchingAnalysis = analyses?.find((analysis) => analysis.sessionId === policy.sessionId);
+              if (!matchingAnalysis) {
+                return null;
+              }
+              return (
+                <Card
+                  key={policy.sessionId}
+                  className="group hover:shadow-md hover:border-primary/20 transition-all duration-200"
+                >
+                  <CardContent className="py-4 px-5">
+                    <div className="flex items-start gap-4">
+                      <div className={`size-10 rounded-xl ${config.iconBg} flex items-center justify-center shrink-0 ${config.textColor}`}>
+                        <FileText className="size-5" />
+                      </div>
+                      <div className="flex-1 min-w-0 space-y-3">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <p className="text-sm font-semibold truncate">{policy.policyName}</p>
+                          {getStatusBadge(matchingAnalysis.status)}
+                          <Badge variant="outline">{policy.premiumLabel}</Badge>
+                          {policy.daysUntilRenewal !== null && policy.daysUntilRenewal >= 0 && (
+                            <Badge variant={policy.daysUntilRenewal <= 45 ? "default" : "secondary"}>
+                              {policy.daysUntilRenewal <= 45
+                                ? `חידוש בעוד ${policy.daysUntilRenewal} ימים`
+                                : `תוקף בעוד ${policy.daysUntilRenewal} ימים`}
+                            </Badge>
+                          )}
                         </div>
-                      </AlertDialogContent>
-                    </AlertDialog>
-                  </div>
+                        <p className="text-xs text-muted-foreground">{policy.summary}</p>
+                        <div className="flex items-center gap-4 flex-wrap text-xs text-muted-foreground">
+                          <span>{policy.insurerName}</span>
+                          <span>{policy.coverageCount} כיסויים</span>
+                          <span>{policy.filesCount} קבצים</span>
+                          {policy.duplicateCount > 0 && <span>{policy.duplicateCount} כפילויות</span>}
+                          <span>{format(new Date(matchingAnalysis.createdAt), "dd.MM.yy", { locale: he })}</span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <Button
+                          onClick={() => setLocation(`/insurance/${policy.sessionId}`)}
+                          variant="default"
+                          size="sm"
+                          className="gap-1.5 h-8"
+                        >
+                          <Eye className="size-3.5" />
+                          <span className="hidden sm:inline">צפה</span>
+                        </Button>
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
+                            >
+                              <Trash2 className="size-3.5" />
+                            </Button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent dir="rtl">
+                            <AlertDialogTitle>מחק סריקה</AlertDialogTitle>
+                            <AlertDialogDescription>
+                              האם אתה בטוח שברצונך למחוק סריקה זו? לא ניתן לבטל פעולה זו.
+                            </AlertDialogDescription>
+                            <div className="flex gap-2 justify-end">
+                              <AlertDialogCancel>ביטול</AlertDialogCancel>
+                              <AlertDialogAction
+                                onClick={() => deleteAnalysisMutation.mutate({ sessionId: policy.sessionId })}
+                                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                              >
+                                מחק
+                              </AlertDialogAction>
+                            </div>
+                          </AlertDialogContent>
+                        </AlertDialog>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+
+          <div className="space-y-4 animate-fade-in-up stagger-4">
+            <Card>
+              <CardContent className="p-5 space-y-3">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="size-4 text-amber-500" />
+                  <h3 className="text-sm font-semibold">שאלות טובות ללומי</h3>
+                </div>
+                <div className="space-y-2">
+                  {[
+                    `יש משהו חריג ב${config.label}?`,
+                    `מה הכי חשוב לי לבדוק עכשיו ב${config.label}?`,
+                    `האם יש חפיפות או חוסרים ב${config.label}?`,
+                  ].map((prompt) => (
+                    <Button
+                      key={prompt}
+                      variant="outline"
+                      className="w-full justify-between rounded-xl h-auto py-3 text-sm"
+                      onClick={() => setLocation("/assistant")}
+                    >
+                      <span className="text-right whitespace-normal">{prompt}</span>
+                      <ArrowRight className="size-4 shrink-0 opacity-50" />
+                    </Button>
+                  ))}
                 </div>
               </CardContent>
             </Card>
-          ))}
+
+            <Card>
+              <CardContent className="p-5 space-y-3">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="size-4 text-primary" />
+                  <h3 className="text-sm font-semibold">פוקוס הקטגוריה</h3>
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  {summary.highlight}
+                </p>
+                <div className="flex items-center gap-2 flex-wrap">
+                  {summary.relevant && <Badge variant={summary.hasData ? "secondary" : "default"}>{summary.hasData ? "מכוסה כרגע" : "כדאי להשלים"}</Badge>}
+                  {summary.renewals > 0 && <Badge variant="outline">{summary.renewals} חידושים</Badge>}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
         </div>
       ) : (
-        <Card className="border-dashed animate-fade-in-up stagger-2">
+        <Card className="border-dashed animate-fade-in-up stagger-3">
           <CardContent className="py-16 text-center">
             <div className={`size-16 rounded-2xl ${config.iconBg} flex items-center justify-center mx-auto mb-4 ${config.textColor} opacity-40`}>
               {config.icon}
             </div>
-            <h3 className="text-base font-semibold text-foreground mb-1">
-              אין סריקות ב{config.label}
-            </h3>
+            <h3 className="text-base font-semibold text-foreground mb-1">אין סריקות ב{config.label}</h3>
             <p className="text-sm text-muted-foreground mb-5">
-              העלה פוליסת {config.label.replace("ביטוחי ", "")} וקבל סריקה מפורטת
+              העלה פוליסה מהקטגוריה הזו כדי לקבל תמונת מצב, חידושים ותובנות מותאמות.
             </p>
-            <Button onClick={() => setLocation("/insurance/new")} className="gap-2">
-              <Plus className="size-4" />
-              סריקה חדשה
-            </Button>
+            <div className="flex items-center justify-center gap-3 flex-wrap">
+              <Button onClick={() => setLocation("/insurance/new")} className="gap-2">
+                <Plus className="size-4" />
+                סריקה חדשה
+              </Button>
+              <Button variant="outline" onClick={() => setLocation("/assistant")} className="gap-2">
+                <MessageSquare className="size-4" />
+                שאל את לומי מה חסר כאן
+              </Button>
+            </div>
           </CardContent>
         </Card>
       )}

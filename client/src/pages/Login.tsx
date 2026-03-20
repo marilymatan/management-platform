@@ -1,31 +1,31 @@
 import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import { motion, type Variants } from "framer-motion";
-import { Sparkles, Shield, Wallet, Bell, FileSearch, ArrowLeft } from "lucide-react";
+import { Sparkles, MessageSquare, Users, Wallet, FolderOpen, ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { getLoginUrl } from "@/const";
 import { trpc } from "@/lib/trpc";
 
 const FEATURES = [
   {
-    icon: Shield,
-    title: "ניהול ביטוחים",
-    description: "סריקת פוליסות עם AI, השוואת כיסויים וזיהוי חיסכון",
+    icon: MessageSquare,
+    title: "Assistant חכם",
+    description: "שאל כל דבר על הבית, הכסף, המסמכים והביטוחים שלך",
+  },
+  {
+    icon: Users,
+    title: "המשפחה שלי",
+    description: "תמונת משפחה חכמה עם הקשר לביטוחים, מסמכים ואירועים",
   },
   {
     icon: Wallet,
-    title: "מעקב הוצאות",
-    description: "סריקה אוטומטית של חשבוניות ומעקב הוצאות חודשיות",
+    title: "הוצאות והכנסות",
+    description: "סריקה אוטומטית מהמייל, אגרגציות חודשיות והוספה ידנית",
   },
   {
-    icon: Bell,
-    title: "תזכורות חכמות",
-    description: "התראות על חידוש פוליסות, תשלומים ומועדים חשובים",
-  },
-  {
-    icon: FileSearch,
-    title: "תובנות AI",
-    description: "המלצות מותאמות אישית לחיסכון ושיפור הכיסוי שלך",
+    icon: FolderOpen,
+    title: "מסמכים וביטוחים",
+    description: "כל המסמכים שלך מסודרים במקום אחד עם הקשר מלא ללקוח",
   },
 ];
 
@@ -114,7 +114,7 @@ export default function Login() {
             </div>
             <div>
               <h1 className="text-2xl font-bold text-white tracking-wide">Lumi</h1>
-              <p className="text-sm text-white/50">מאיר לך את הדרך הפיננסית</p>
+              <p className="text-sm text-white/50">העוזר של משק הבית</p>
             </div>
           </motion.div>
 
@@ -122,10 +122,10 @@ export default function Login() {
             variants={itemVariants}
             className="text-3xl lg:text-4xl font-bold text-white leading-tight mb-4"
           >
-            העוזר הפיננסי
+            ה-AI שמבין
             <br />
             <span className="text-transparent bg-clip-text bg-gradient-to-l from-amber-300 to-orange-200">
-              האישי שלך
+              את כל הבית שלך
             </span>
           </motion.h2>
 
@@ -133,7 +133,7 @@ export default function Login() {
             variants={itemVariants}
             className="text-base text-white/60 mb-10 max-w-md leading-relaxed"
           >
-            פלטפורמה חכמה לניהול הביטוחים, ההוצאות והמסמכים הפיננסיים שלך — הכל במקום אחד, עם בינה מלאכותית שעובדת בשבילך.
+            שאלו את לומי כל דבר על הכסף, המשפחה, המסמכים והביטוחים שלכם, וקבלו תשובות שמבוססות על הנתונים שלכם.
           </motion.p>
 
           <motion.div variants={containerVariants} className="grid grid-cols-1 sm:grid-cols-2 gap-4">
