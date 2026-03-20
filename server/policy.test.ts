@@ -8,6 +8,10 @@ vi.mock("./storage", () => ({
     key: "policies/test/file.pdf",
     url: "https://storage.example.com/policies/test/file.pdf",
   }),
+  storageGet: vi.fn().mockImplementation(async (fileKey: string) => ({
+    key: fileKey,
+    url: `https://storage.example.com/${fileKey}?token=signed`,
+  })),
   sanitizeFilename: vi.fn().mockImplementation((name: string) => name.replace(/[^a-zA-Z0-9._-]/g, "_")),
   verifyFileSignature: vi.fn().mockReturnValue(false),
 }));
@@ -21,7 +25,7 @@ vi.mock("./db", () => ({
       return {
         sessionId: "existing-session",
         userId: 1,
-        files: [{ name: "test.pdf", size: 1024, url: "https://storage.example.com/test.pdf" }],
+        files: [{ name: "test.pdf", size: 1024, fileKey: "policies/existing-session/test.pdf" }],
         status: "completed",
         analysisResult: {
           coverages: [
@@ -59,7 +63,7 @@ vi.mock("./db", () => ({
       return {
         sessionId: "no-analysis",
         userId: 1,
-        files: [{ name: "test.pdf", size: 1024, url: "https://storage.example.com/test.pdf" }],
+        files: [{ name: "test.pdf", size: 1024, fileKey: "policies/no-analysis/test.pdf" }],
         status: "pending",
         analysisResult: null,
         errorMessage: null,
@@ -178,6 +182,20 @@ describe("policy.getAnalysis", () => {
 
     const result = await caller.policy.getAnalysis({ sessionId: "non-existing" });
     expect(result).toBeNull();
+  });
+});
+
+describe("policy.getSecureFileUrl", () => {
+  it("returns a signed file URL for a file in the user's analysis", async () => {
+    const ctx = createAuthenticatedContext();
+    const caller = appRouter.createCaller(ctx);
+
+    const result = await caller.policy.getSecureFileUrl({
+      sessionId: "existing-session",
+      fileKey: "policies/existing-session/test.pdf",
+    });
+
+    expect(result.url).toBe("https://storage.example.com/policies/existing-session/test.pdf?token=signed");
   });
 });
 

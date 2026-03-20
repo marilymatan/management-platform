@@ -83,6 +83,23 @@ const CATEGORY_CONFIG: Record<
   },
 };
 
+type AnalysisDocumentFile = string | { name?: string };
+
+function getAnalysisFileName(file: AnalysisDocumentFile) {
+  return typeof file === "string" ? file : file.name;
+}
+
+function buildAnalysisViewUrl(sessionId: string, policyName: string, files: AnalysisDocumentFile[] | undefined) {
+  const fileNames = (files ?? [])
+    .map(getAnalysisFileName)
+    .filter((name): name is string => Boolean(name?.trim()));
+  const preferredFileName = fileNames.find((name) => name === policyName) ?? (fileNames.length === 1 ? fileNames[0] : null);
+  if (!preferredFileName) {
+    return `/insurance/${sessionId}`;
+  }
+  return `/insurance/${sessionId}?file=${encodeURIComponent(preferredFileName)}`;
+}
+
 export default function InsuranceCategoryPage() {
   const { user } = useAuth({ redirectOnUnauthenticated: true });
   const [, setLocation] = useLocation();
@@ -313,6 +330,11 @@ export default function InsuranceCategoryPage() {
               if (!matchingAnalysis) {
                 return null;
               }
+              const viewUrl = buildAnalysisViewUrl(
+                policy.sessionId,
+                policy.policyName,
+                matchingAnalysis.files as AnalysisDocumentFile[] | undefined
+              );
               return (
                 <Card
                   key={policy.sessionId}
@@ -348,7 +370,7 @@ export default function InsuranceCategoryPage() {
 
                       <div className="flex items-center gap-1.5 shrink-0">
                         <Button
-                          onClick={() => setLocation(`/insurance/${policy.sessionId}`)}
+                          onClick={() => setLocation(viewUrl)}
                           variant="default"
                           size="sm"
                           className="gap-1.5 h-8"

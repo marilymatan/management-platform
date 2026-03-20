@@ -39,9 +39,10 @@ interface DocumentItem {
   manuallyAssigned: boolean;
   routeLink?: string;
   fileLink?: string;
+  fileKey?: string;
 }
 
-type PolicyDocumentFile = string | { name?: string };
+type PolicyDocumentFile = string | { name?: string; fileKey?: string; url?: string };
 
 const TYPE_CONFIG: Record<Exclude<DocType, "all">, { label: string; icon: React.ReactNode; color: string }> = {
   insurance: {
@@ -85,6 +86,19 @@ function getDefaultDocumentType(type: DocumentItem["type"]): ManualDocumentType 
 function normalizeLegacyDocumentType(value: string | null | undefined) {
   if (!value) return null;
   return legacyManualTypeMap[value] ?? null;
+}
+
+function getPolicyDocumentFileKey(file: PolicyDocumentFile) {
+  if (typeof file === "string") {
+    return undefined;
+  }
+  if (file.fileKey) {
+    return file.fileKey;
+  }
+  if (typeof file.url === "string") {
+    return file.url.replace(/^\/api\/files\//, "");
+  }
+  return undefined;
 }
 
 export default function Documents() {
@@ -175,6 +189,7 @@ export default function Documents() {
           date: new Date(analysis.createdAt),
           description: analysis.analysisResult?.generalInfo?.policyName || "סריקת פוליסה",
           defaultType: getDefaultDocumentType("insurance"),
+          fileKey: getPolicyDocumentFileKey(file),
           routeLink: `/insurance/${analysis.sessionId}`,
         });
       });
@@ -432,17 +447,36 @@ export default function Documents() {
                           ))}
                         </select>
                       </div>
-                      {(doc.routeLink || doc.fileLink) && (
+                      {(doc.fileKey || doc.routeLink || doc.fileLink) && (
                         <Button
                           variant="ghost"
                           size="sm"
-                          onClick={() => {
-                            if (doc.routeLink) {
-                              setLocation(doc.routeLink);
-                              return;
+                          onClick={async () => {
+                            if (doc.sourceType === "analysis_file" && doc.fileKey) {
+                              const previewWindow = window.open("", "_blank", "noopener,noreferrer");
+                              try {
+                                const { url } = await utils.policy.getSecureFileUrl.fetch({
+                                  sessionId: doc.sourceId,
+                                  fileKey: doc.fileKey,
+                                });
+                                if (previewWindow) {
+                                  previewWindow.location.href = url;
+                                } else {
+                                  window.location.assign(url);
+                                }
+                                return;
+                              } catch {
+                                previewWindow?.close();
+                                toast.error("לא הצלחנו לפתוח את קובץ ה-PDF");
+                                return;
+                              }
                             }
                             if (doc.fileLink) {
                               window.open(doc.fileLink, "_blank", "noopener,noreferrer");
+                              return;
+                            }
+                            if (doc.routeLink) {
+                              setLocation(doc.routeLink);
                             }
                           }}
                           className="gap-1"

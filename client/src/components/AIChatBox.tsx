@@ -4,7 +4,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import { Loader2, Send, User, Sparkles } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
-import { Streamdown } from "streamdown";
+import ReactMarkdown from "react-markdown";
 
 /**
  * Message type matching server-side LLM Message interface
@@ -272,7 +272,7 @@ export function AIChatBox({
                               text-align: right;
                             }
                           `}</style>
-                          <Streamdown>{message.content}</Streamdown>
+                          <ReactMarkdown>{message.content}</ReactMarkdown>
                         </div>
                       ) : (
                         <p className="whitespace-pre-wrap text-sm">

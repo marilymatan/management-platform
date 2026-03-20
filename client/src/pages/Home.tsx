@@ -33,10 +33,32 @@ const STEPS = [
   { icon: <LayoutDashboard className="size-5" />, title: "תוצאות", desc: "צפה בכיסויים והמלצות" },
 ];
 
+function getRequestedAnalysisFileFilter() {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  const value = new URLSearchParams(window.location.search).get("file");
+  return value?.trim() ? value : null;
+}
+
+function resolveSelectedFileFilter(result: PolicyAnalysis | null, requestedFileFilter: string | null) {
+  if (!result || !requestedFileFilter) {
+    return null;
+  }
+  const availableSourceFiles = Array.from(
+    new Set(
+      result.coverages
+        .map((coverage) => coverage.sourceFile)
+        .filter((name): name is string => Boolean(name?.trim()))
+    )
+  );
+  return availableSourceFiles.includes(requestedFileFilter) ? requestedFileFilter : null;
+}
+
 export default function Home() {
   const { user } = useAuth({ redirectOnUnauthenticated: true });
   const [, setLocation] = useLocation();
-  const [match, params] = useRoute("/insurance/:sessionId");
+  const [, params] = useRoute("/insurance/:sessionId");
 
   const [files, setFiles] = useState<UploadedFile[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -45,24 +67,52 @@ export default function Home() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [activeTab, setActiveTab] = useState("coverages");
   const [selectedFileFilter, setSelectedFileFilter] = useState<string | null>(null);
+  const requestedSessionId = params?.sessionId && params.sessionId !== "new" ? params.sessionId : null;
+  const requestedFileFilter = getRequestedAnalysisFileFilter();
+  const isViewingSavedAnalysis = Boolean(requestedSessionId);
 
   const uploadMutation = trpc.policy.upload.useMutation();
   const analyzeMutation = trpc.policy.analyze.useMutation();
-  const getAnalysisMutation = trpc.policy.getAnalysis.useQuery(
-    { sessionId: params?.sessionId || "" },
-    { enabled: !!params?.sessionId }
+  const getAnalysisQuery = trpc.policy.getAnalysis.useQuery(
+    { sessionId: requestedSessionId ?? "" },
+    { enabled: !!requestedSessionId, retry: false }
   );
   const linkToUserMutation = trpc.policy.linkToUser.useMutation();
 
   useEffect(() => {
-    if (getAnalysisMutation.data && params?.sessionId) {
-      setSessionId(params.sessionId);
-      setAnalysisResult(getAnalysisMutation.data.result);
-      if (user && !getAnalysisMutation.data.result?.generalInfo?.policyName?.includes("לא צוין")) {
-        linkToUserMutation.mutate({ sessionId: params.sessionId });
-      }
+    if (!requestedSessionId) {
+      setFiles([]);
+      setIsUploading(false);
+      setIsAnalyzing(false);
+      setActiveTab("coverages");
+      setSessionId(null);
+      setAnalysisResult(null);
+      setSelectedFileFilter(null);
+      return;
     }
-  }, [getAnalysisMutation.data, params?.sessionId, user]);
+    setSessionId(requestedSessionId);
+    setAnalysisResult(null);
+    setSelectedFileFilter(null);
+    setActiveTab("coverages");
+    setFiles([]);
+    setIsUploading(false);
+    setIsAnalyzing(false);
+  }, [requestedSessionId]);
+
+  useEffect(() => {
+    if (!requestedSessionId || !getAnalysisQuery.data?.result) {
+      return;
+    }
+    setSessionId(requestedSessionId);
+    setAnalysisResult(getAnalysisQuery.data.result);
+    if (user && !getAnalysisQuery.data.result.generalInfo?.policyName?.includes("לא צוין")) {
+      linkToUserMutation.mutate({ sessionId: requestedSessionId });
+    }
+  }, [getAnalysisQuery.data?.result, requestedSessionId, user]);
+
+  useEffect(() => {
+    setSelectedFileFilter(resolveSelectedFileFilter(analysisResult, requestedFileFilter));
+  }, [analysisResult, requestedFileFilter]);
 
   const handleFilesSelected = useCallback((newFiles: File[]) => {
     const uploadedFiles: UploadedFile[] = newFiles.map(f => ({
@@ -140,11 +190,38 @@ export default function Home() {
     setLocation("/insurance/new");
   }, [setLocation]);
 
+  const handleSelectedFileFilterChange = useCallback((nextFilter: string | null) => {
+    setSelectedFileFilter(nextFilter);
+    setActiveTab("coverages");
+    if (!requestedSessionId) {
+      return;
+    }
+    const searchParams = new URLSearchParams(window.location.search);
+    if (nextFilter) {
+      searchParams.set("file", nextFilter);
+    } else {
+      searchParams.delete("file");
+    }
+    const nextPath = searchParams.toString()
+      ? `/insurance/${requestedSessionId}?${searchParams.toString()}`
+      : `/insurance/${requestedSessionId}`;
+    window.history.replaceState(window.history.state, "", nextPath);
+  }, [requestedSessionId]);
+
   const currentStep = isAnalyzing ? 1 : analysisResult ? 2 : 0;
+  const isSavedAnalysisLoading =
+    isViewingSavedAnalysis &&
+    !analysisResult &&
+    (getAnalysisQuery.isLoading || getAnalysisQuery.isFetching || (!getAnalysisQuery.data && !getAnalysisQuery.error));
+  const hasSavedAnalysisError =
+    isViewingSavedAnalysis &&
+    !analysisResult &&
+    !isSavedAnalysisLoading &&
+    Boolean(getAnalysisQuery.error || !getAnalysisQuery.data?.result);
 
   return (
     <div className="min-h-full">
-      {!analysisResult && (
+      {!analysisResult && !isViewingSavedAnalysis && (
         <div className="page-container">
           <div className="max-w-2xl mx-auto">
             <div className="relative overflow-hidden rounded-2xl bg-gradient-to-bl from-[#1a2744] via-[#1e3a5f] to-[#2563eb] p-8 md:p-10 mb-8 animate-fade-in-up">
@@ -227,6 +304,54 @@ export default function Home() {
         </div>
       )}
 
+      {isSavedAnalysisLoading && (
+        <div className="page-container">
+          <div className="max-w-2xl mx-auto">
+            <Card className="border-primary/20 bg-primary/5 animate-fade-in-up">
+              <CardContent className="py-12 text-center">
+                <div className="relative size-14 mx-auto mb-4">
+                  <div className="absolute inset-0 rounded-full border-2 border-primary/20" />
+                  <div className="absolute inset-0 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+                  <Loader2 className="absolute inset-0 m-auto size-6 text-primary" />
+                </div>
+                <p className="text-base font-semibold text-foreground">טוען את הסריקה שבחרת</p>
+                <p className="text-sm text-muted-foreground mt-2">
+                  לומי מכין עכשיו את תוצאת הסריקה והסינון שביקשת
+                </p>
+              </CardContent>
+            </Card>
+          </div>
+        </div>
+      )}
+
+      {hasSavedAnalysisError && (
+        <div className="page-container">
+          <div className="max-w-2xl mx-auto">
+            <Card className="animate-fade-in-up">
+              <CardContent className="py-12 text-center">
+                <div className="size-14 rounded-2xl bg-muted/60 flex items-center justify-center mx-auto mb-4">
+                  <FileText className="size-7 text-muted-foreground/50" />
+                </div>
+                <p className="text-base font-semibold text-foreground">
+                  {getAnalysisQuery.error ? "לא הצלחנו לטעון את הסריקה" : "לא מצאנו את הסריקה שבחרת"}
+                </p>
+                <p className="text-sm text-muted-foreground mt-2">
+                  אפשר לחזור לעמוד הביטוחים או לנסות שוב.
+                </p>
+                <div className="flex items-center justify-center gap-3 mt-6">
+                  <Button variant="outline" onClick={() => setLocation("/insurance")}>
+                    חזרה לביטוחים
+                  </Button>
+                  <Button onClick={() => getAnalysisQuery.refetch()}>
+                    נסה שוב
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </div>
+      )}
+
       {analysisResult && (
         <div className="page-container space-y-6">
           <div className="relative overflow-hidden rounded-2xl bg-gradient-to-bl from-[#1a2744] via-[#1e3a5f] to-[#2563eb] p-6 md:p-8 animate-fade-in-up">
@@ -241,8 +366,7 @@ export default function Home() {
                         <button
                           key={name}
                           onClick={() => {
-                            setSelectedFileFilter(selectedFileFilter === name ? null : name);
-                            setActiveTab("coverages");
+                            handleSelectedFileFilterChange(selectedFileFilter === name ? null : name);
                           }}
                           className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
                             selectedFileFilter === name
@@ -256,7 +380,7 @@ export default function Home() {
                       ))}
                       {selectedFileFilter && (
                         <button
-                          onClick={() => setSelectedFileFilter(null)}
+                          onClick={() => handleSelectedFileFilterChange(null)}
                           className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs text-white/60 border border-white/20 hover:bg-white/10 transition-all"
                         >
                           הצג הכל

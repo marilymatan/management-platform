@@ -52,7 +52,7 @@ interface PersonalizedInsightsProps {
 }
 
 export function PersonalizedInsights({ insights }: PersonalizedInsightsProps) {
-  const [expanded, setExpanded] = useState(true);
+  const [expanded, setExpanded] = useState(false);
 
   if (!insights || insights.length === 0) return null;
 

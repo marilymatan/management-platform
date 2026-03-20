@@ -1,66 +1,109 @@
+import { lazy, Suspense } from "react";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import NotFound from "@/pages/NotFound";
 import { Route, Switch, useLocation } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { AppShell } from "./components/AppShell";
-import Assistant from "./pages/Assistant";
-import LumiDashboard from "./pages/LumiDashboard";
-import Family from "./pages/Family";
-import Insurance from "./pages/Insurance";
-import InsuranceCategoryPage from "./pages/InsuranceCategoryPage";
-import Home from "./pages/Home";
-import Expenses from "./pages/SmartInvoices";
-import Reminders from "./pages/Reminders";
-import Documents from "./pages/Documents";
-import Settings from "./pages/Settings";
-import AdminDashboard from "./pages/AdminDashboard";
-import Login from "./pages/Login";
+import NotFound from "./pages/NotFound";
+
+const Assistant = lazy(() => import("./pages/Assistant"));
+const LumiDashboard = lazy(() => import("./pages/LumiDashboard"));
+const Family = lazy(() => import("./pages/Family"));
+const Insurance = lazy(() => import("./pages/Insurance"));
+const InsuranceCategoryPage = lazy(() => import("./pages/InsuranceCategoryPage"));
+const Home = lazy(() => import("./pages/Home"));
+const Expenses = lazy(() => import("./pages/SmartInvoices"));
+const Reminders = lazy(() => import("./pages/Reminders"));
+const Documents = lazy(() => import("./pages/Documents"));
+const Settings = lazy(() => import("./pages/Settings"));
+const AdminDashboard = lazy(() => import("./pages/AdminDashboard"));
+const Login = lazy(() => import("./pages/Login"));
+
+const KNOWN_ROUTE_PATTERNS = [
+  /^\/$/,
+  /^\/assistant$/,
+  /^\/family$/,
+  /^\/dashboard$/,
+  /^\/insurance$/,
+  /^\/insurance\/category\/[^/]+$/,
+  /^\/insurance\/new$/,
+  /^\/insurance\/[^/]+$/,
+  /^\/money$/,
+  /^\/expenses$/,
+  /^\/reminders$/,
+  /^\/documents$/,
+  /^\/settings$/,
+  /^\/admin$/,
+  /^\/404$/,
+];
+
+function isKnownRoute(location: string) {
+  return KNOWN_ROUTE_PATTERNS.some((pattern) => pattern.test(location));
+}
+
+function RouteLoading() {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-background" dir="rtl">
+      <div className="text-center space-y-4">
+        <div className="relative size-12 mx-auto">
+          <div className="absolute inset-0 rounded-full border-2 border-primary/20" />
+          <div className="absolute inset-0 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+        </div>
+        <p className="text-sm text-muted-foreground">טוען...</p>
+      </div>
+    </div>
+  );
+}
 
 function Router() {
   const [location] = useLocation();
   const { user, loading } = useAuth();
+  const isNotFoundRoute = location === "/404" || !isKnownRoute(location);
 
   if (location === "/login") {
-    return <Login />;
+    return (
+      <Suspense fallback={<RouteLoading />}>
+        <Login />
+      </Suspense>
+    );
+  }
+
+  if (isNotFoundRoute) {
+    return (
+      <AppShell>
+        <NotFound />
+      </AppShell>
+    );
   }
 
   if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-background" dir="rtl">
-        <div className="text-center space-y-4">
-          <div className="relative size-12 mx-auto">
-            <div className="absolute inset-0 rounded-full border-2 border-primary/20" />
-            <div className="absolute inset-0 rounded-full border-2 border-primary border-t-transparent animate-spin" />
-          </div>
-          <p className="text-sm text-muted-foreground">טוען...</p>
-        </div>
-      </div>
-    );
+    return <RouteLoading />;
   }
 
   return (
     <AppShell>
-      <Switch>
-        <Route path="/" component={Assistant} />
-        <Route path="/assistant" component={Assistant} />
-        <Route path="/family" component={Family} />
-        <Route path="/dashboard" component={LumiDashboard} />
-        <Route path="/insurance" component={Insurance} />
-        <Route path="/insurance/category/:category" component={InsuranceCategoryPage} />
-        <Route path="/insurance/new" component={Home} />
-        <Route path="/insurance/:sessionId" component={Home} />
-        <Route path="/money" component={Expenses} />
-        <Route path="/expenses" component={Expenses} />
-        <Route path="/reminders" component={Reminders} />
-        <Route path="/documents" component={Documents} />
-        <Route path="/settings" component={Settings} />
-        <Route path="/admin" component={AdminDashboard} />
-        <Route path="/404" component={NotFound} />
-        <Route component={NotFound} />
-      </Switch>
+      <Suspense fallback={<RouteLoading />}>
+        <Switch>
+          <Route path="/" component={Assistant} />
+          <Route path="/assistant" component={Assistant} />
+          <Route path="/family" component={Family} />
+          <Route path="/dashboard" component={LumiDashboard} />
+          <Route path="/insurance" component={Insurance} />
+          <Route path="/insurance/category/:category" component={InsuranceCategoryPage} />
+          <Route path="/insurance/new" component={Home} />
+          <Route path="/insurance/:sessionId" component={Home} />
+          <Route path="/money" component={Expenses} />
+          <Route path="/expenses" component={Expenses} />
+          <Route path="/reminders" component={Reminders} />
+          <Route path="/documents" component={Documents} />
+          <Route path="/settings" component={Settings} />
+          <Route path="/admin" component={AdminDashboard} />
+          <Route path="/404" component={NotFound} />
+          <Route component={NotFound} />
+        </Switch>
+      </Suspense>
     </AppShell>
   );
 }
