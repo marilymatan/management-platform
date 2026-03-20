@@ -20,8 +20,8 @@ test.describe("Expenses page", () => {
   test("expense summary section renders when data is present", async ({ page }) => {
     await page.goto("/expenses");
     await page.waitForLoadState("networkidle");
-    const summarySection = page.locator("text=סיכום הוצאות");
-    const noInvoices = page.locator("text=לא נמצאו חשבוניות");
+    const summarySection = page.locator("text=סה\"כ הוצאות");
+    const noInvoices = page.locator("text=לא נמצאו מסמכים כספיים");
     const connectPrompt = page.locator("text=חבר Gmail");
     const loginPrompt = page.locator("text=יש להתחבר");
     const loginButton = page.locator("text=התחברות עם Google");
@@ -47,7 +47,7 @@ test.describe("Manual expense dialog", () => {
   test("add expense button is visible on the page", async ({ page }) => {
     await page.goto("/expenses");
     await page.waitForLoadState("networkidle");
-    const addButton = page.locator("text=הוסף הוצאה");
+    const addButton = page.getByTestId("manual-entry-button");
     const loginPrompt = page.locator("text=יש להתחבר");
     const loginButton = page.locator("text=התחברות עם Google");
     await expect(addButton.or(loginPrompt).or(loginButton)).toBeVisible({ timeout: 10_000 });
@@ -56,25 +56,26 @@ test.describe("Manual expense dialog", () => {
   test("opens manual expense dialog when button clicked", async ({ page }) => {
     await page.goto("/expenses");
     await page.waitForLoadState("networkidle");
-    const addButton = page.locator("text=הוסף הוצאה");
+    const addButton = page.getByTestId("manual-entry-button");
     if (await addButton.isVisible({ timeout: 5_000 }).catch(() => false)) {
       await addButton.click();
-      const dialogTitle = page.locator("text=הוספת הוצאה ידנית");
+      const dialogTitle = page.locator("text=הוספת תנועה ידנית");
       await expect(dialogTitle).toBeVisible({ timeout: 5_000 });
       const providerInput = page.locator("#m-provider");
       await expect(providerInput).toBeVisible();
       const amountInput = page.locator("#m-amount");
       await expect(amountInput).toBeVisible();
+      await expect(page.getByTestId("manual-flow-direction")).toBeVisible();
     }
   });
 
   test("dialog closes on cancel", async ({ page }) => {
     await page.goto("/expenses");
     await page.waitForLoadState("networkidle");
-    const addButton = page.locator("text=הוסף הוצאה");
+    const addButton = page.getByTestId("manual-entry-button");
     if (await addButton.isVisible({ timeout: 5_000 }).catch(() => false)) {
       await addButton.click();
-      const dialogTitle = page.locator("text=הוספת הוצאה ידנית");
+      const dialogTitle = page.locator("text=הוספת תנועה ידנית");
       await expect(dialogTitle).toBeVisible({ timeout: 5_000 });
       const cancelButton = page.locator("text=ביטול");
       await cancelButton.click();
@@ -87,8 +88,8 @@ test.describe("Monthly summary and compact accounts", () => {
   test("summary section shows monthly breakdown when data present", async ({ page }) => {
     await page.goto("/expenses");
     await page.waitForLoadState("networkidle");
-    const summarySection = page.locator("text=סיכום הוצאות");
-    const noInvoices = page.locator("text=לא נמצאו חשבוניות");
+    const summarySection = page.locator("text=סה\"כ הוצאות");
+    const noInvoices = page.locator("text=לא נמצאו מסמכים כספיים");
     const connectPrompt = page.locator("text=חבר Gmail");
     const loginPrompt = page.locator("text=יש להתחבר");
     const loginButton = page.locator("text=התחברות עם Google");
@@ -114,7 +115,7 @@ test.describe("Category edit dialog", () => {
     const editButtons = page.locator("button[title='ערוך קטגוריה']");
     const loginPrompt = page.locator("text=יש להתחבר");
     const loginButton = page.locator("text=התחברות עם Google");
-    const noInvoices = page.locator("text=לא נמצאו חשבוניות");
+    const noInvoices = page.locator("text=לא נמצאו מסמכים כספיים");
     const connectPrompt = page.locator("text=חבר Gmail");
     const anyFallback = loginPrompt.or(loginButton).or(noInvoices).or(connectPrompt);
     const hasEditButtons = await editButtons.count().catch(() => 0);
@@ -199,6 +200,7 @@ test.describe("Expenses API", () => {
         category: "אחר",
         invoiceDate: "2026-03-01",
         status: "paid",
+        flowDirection: "expense",
       },
     });
     expect([200, 401]).toContain(response.status());
@@ -212,5 +214,16 @@ test.describe("Expenses API", () => {
       },
     });
     expect([200, 401]).toContain(response.status());
+  });
+
+  test("flow filter is rendered when the list area is available", async ({ page }) => {
+    await page.goto("/expenses");
+    await page.waitForLoadState("networkidle");
+    const flowFilter = page.getByTestId("flow-filter");
+    const noInvoices = page.locator("text=לא נמצאו מסמכים כספיים");
+    const connectPrompt = page.locator("text=חבר Gmail");
+    const loginPrompt = page.locator("text=יש להתחבר");
+    const loginButton = page.locator("text=התחברות עם Google");
+    await expect(flowFilter.or(noInvoices).or(connectPrompt).or(loginPrompt).or(loginButton)).toBeVisible({ timeout: 10_000 });
   });
 });

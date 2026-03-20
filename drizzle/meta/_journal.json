@@ -43,6 +43,13 @@
       "when": 1773955965766,
       "tag": "0005_watery_justin_hammer",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1773991762869,
+      "tag": "0006_charming_rockslide",
+      "breakpoints": true
     }
   ]
 }

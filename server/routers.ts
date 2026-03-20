@@ -45,6 +45,7 @@ import { smartInvoices, categoryMappings } from "../drizzle/schema";
 import { decryptField, decryptJson, encryptJson } from "./encryption";
 import { eq, desc, and } from "drizzle-orm";
 import { audit, getClientIp, getRecentAuditLogs, getSecurityEvents } from "./auditLog";
+import { summarizeMonthlyInvoices } from "./invoiceSummary";
 
 function signOAuthState(payload: Record<string, unknown>): string {
   const json = JSON.stringify(payload);
@@ -259,6 +260,9 @@ function buildProfileContext(profile: any): string {
   }
   if (profile.employmentStatus) parts.push(`תעסוקה: ${labels[profile.employmentStatus] || profile.employmentStatus}`);
   if (profile.incomeRange) parts.push(`הכנסה חודשית: ${labels[profile.incomeRange] || profile.incomeRange}`);
+  if (profile.businessName) parts.push(`שם העסק: ${profile.businessName}`);
+  if (profile.businessTaxId) parts.push(`מספר מזהה עסקי: ${profile.businessTaxId}`);
+  if (profile.businessEmailDomains) parts.push(`דומיינים או מיילים עסקיים: ${profile.businessEmailDomains}`);
   if (profile.ownsApartment) parts.push(`בעלות על דירה: כן`);
   if (profile.hasActiveMortgage) parts.push(`משכנתא פעילה: כן`);
   if (profile.numberOfVehicles > 0) parts.push(`מספר רכבים: ${profile.numberOfVehicles}`);
@@ -303,6 +307,9 @@ export const appRouter = router({
         hasSpecialHealthConditions: profile.hasSpecialHealthConditions ?? false,
         healthConditionsDetails: profile.healthConditionsDetails,
         hasPets: profile.hasPets ?? false,
+        businessName: profile.businessName ?? null,
+        businessTaxId: profile.businessTaxId ?? null,
+        businessEmailDomains: profile.businessEmailDomains ?? null,
         profileImageKey: profile.profileImageKey ?? null,
       };
     }),
@@ -354,12 +361,21 @@ export const appRouter = router({
         hasSpecialHealthConditions: z.boolean().optional(),
         healthConditionsDetails: z.string().nullable().optional(),
         hasPets: z.boolean().optional(),
+        businessName: z.string().max(160).nullable().optional(),
+        businessTaxId: z.string().max(64).nullable().optional(),
+        businessEmailDomains: z.string().max(1000).nullable().optional(),
       }))
       .mutation(async ({ ctx, input }) => {
         if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
         const data: any = { ...input };
         if (input.dateOfBirth !== undefined) {
           data.dateOfBirth = input.dateOfBirth ? new Date(input.dateOfBirth) : null;
+        }
+        for (const field of ["businessName", "businessTaxId", "businessEmailDomains"] as const) {
+          if (typeof data[field] === "string") {
+            const normalized = data[field].trim();
+            data[field] = normalized ? normalized : null;
+          }
         }
         const profile = await upsertUserProfile(ctx.user.id, data);
         return { success: true, profile };
@@ -978,6 +994,7 @@ export const appRouter = router({
         category: z.enum(["תקשורת", "חשמל", "מים", "ארנונה", "ביטוח", "בנק", "רכב", "אחר"]),
         invoiceDate: z.string(),
         status: z.enum(["pending", "paid", "overdue", "unknown"]).default("paid"),
+        flowDirection: z.enum(["expense", "income", "unknown"]).default("expense"),
         description: z.string().optional(),
       }))
       .mutation(async ({ ctx, input }) => {
@@ -987,6 +1004,7 @@ export const appRouter = router({
         const manualId = `manual-${nanoid()}`;
         const extractedData: Record<string, unknown> = {};
         if (input.description) extractedData.description = input.description;
+        extractedData.flowDirection = input.flowDirection;
         const [inserted] = await db.insert(smartInvoices).values({
           userId: ctx.user.id,
           gmailConnectionId: null,
@@ -997,6 +1015,7 @@ export const appRouter = router({
           amount: String(input.amount),
           invoiceDate: new Date(input.invoiceDate),
           status: input.status,
+          flowDirection: input.flowDirection,
           subject: null,
           rawText: null,
           extractedData: Object.keys(extractedData).length > 0 ? encryptJson(extractedData) : null,
@@ -1007,7 +1026,7 @@ export const appRouter = router({
           action: "add_manual_expense",
           resource: "invoice",
           resourceId: String(inserted.id),
-          details: JSON.stringify({ provider: input.provider, amount: input.amount }),
+          details: JSON.stringify({ provider: input.provider, amount: input.amount, flowDirection: input.flowDirection }),
         });
         return { id: inserted.id };
       }),
@@ -1096,32 +1115,7 @@ export const appRouter = router({
         }
       });
 
-      const monthMap: Record<string, { month: string; total: number; categories: Record<string, { category: string; total: number; count: number }> }> = {};
-      for (const inv of invoices) {
-        const cat = inv.customCategory ?? inv.category ?? "אחר";
-        const dateSource = inv.invoiceDate ?? inv.createdAt;
-        const d = new Date(dateSource);
-        const monthKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-        if (!monthMap[monthKey]) monthMap[monthKey] = { month: monthKey, total: 0, categories: {} };
-        if (!monthMap[monthKey].categories[cat]) monthMap[monthKey].categories[cat] = { category: cat, total: 0, count: 0 };
-        let amount = parseFloat(inv.amount ?? "0");
-        if ((!amount || isNaN(amount)) && inv.extractedData && typeof inv.extractedData === 'object') {
-          const ed = inv.extractedData as Record<string, unknown>;
-          if (typeof ed.amount === 'number') amount = ed.amount;
-          else if (typeof ed.amount === 'string') amount = parseFloat(ed.amount) || 0;
-        }
-        const validAmount = isNaN(amount) ? 0 : amount;
-        monthMap[monthKey].categories[cat].total += validAmount;
-        monthMap[monthKey].categories[cat].count++;
-        monthMap[monthKey].total += validAmount;
-      }
-      return Object.values(monthMap)
-        .map(m => ({
-          month: m.month,
-          total: m.total,
-          categories: Object.values(m.categories).sort((a, b) => b.total - a.total),
-        }))
-        .sort((a, b) => b.month.localeCompare(a.month));
+      return summarizeMonthlyInvoices(invoices);
     }),
   }),
 

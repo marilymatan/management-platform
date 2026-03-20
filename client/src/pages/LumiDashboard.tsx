@@ -57,6 +57,19 @@ function HealthScoreRing({ score }: { score: number }) {
   );
 }
 
+function getInvoiceFlowDirection(inv: { flowDirection?: string | null; extractedData?: unknown }): "expense" | "income" | "unknown" {
+  if (inv.flowDirection === "expense" || inv.flowDirection === "income" || inv.flowDirection === "unknown") {
+    return inv.flowDirection;
+  }
+  if (inv.extractedData && typeof inv.extractedData === "object") {
+    const flowDirection = (inv.extractedData as Record<string, unknown>).flowDirection;
+    if (flowDirection === "expense" || flowDirection === "income" || flowDirection === "unknown") {
+      return flowDirection;
+    }
+  }
+  return "expense";
+}
+
 export default function LumiDashboard() {
   const { user } = useAuth({ redirectOnUnauthenticated: true });
   const [, setLocation] = useLocation();
@@ -75,9 +88,9 @@ export default function LumiDashboard() {
   });
 
   const activePolicies = analyses?.filter(a => a.status === "completed") || [];
-  const totalMonthlyExpenses = monthlySummary?.reduce((sum, cat) => sum + cat.total, 0) ?? 0;
-  const overdueInvoices = invoices?.filter(inv => inv.status === "overdue") || [];
-  const pendingInvoices = invoices?.filter(inv => inv.status === "pending") || [];
+  const totalMonthlyExpenses = monthlySummary?.reduce((sum, cat) => sum + (cat.expenseTotal ?? cat.total), 0) ?? 0;
+  const overdueInvoices = invoices?.filter(inv => inv.status === "overdue" && getInvoiceFlowDirection(inv) === "expense") || [];
+  const pendingInvoices = invoices?.filter(inv => inv.status === "pending" && getInvoiceFlowDirection(inv) === "expense") || [];
 
   const remindersCount = (() => {
     let count = 0;
@@ -135,12 +148,14 @@ export default function LumiDashboard() {
     });
 
     invoices?.slice(0, 3).forEach(inv => {
+      const amount = Number(inv.amount ?? 0);
+      const flowDirection = getInvoiceFlowDirection(inv);
       items.push({
         id: `invoice-${inv.id}`,
         icon: <Wallet className="size-4" />,
-        text: `חשבונית ${inv.provider}: ₪${Number(inv.amount).toLocaleString("he-IL")}`,
+        text: `${flowDirection === "income" ? "הכנסה" : flowDirection === "expense" ? "הוצאה" : "מסמך"} ${inv.provider}: ₪${amount.toLocaleString("he-IL")}`,
         time: inv.invoiceDate ? format(new Date(inv.invoiceDate), "dd.MM.yy", { locale: he }) : "",
-        color: "bg-violet-100 text-violet-600",
+        color: flowDirection === "income" ? "bg-emerald-100 text-emerald-600" : flowDirection === "expense" ? "bg-violet-100 text-violet-600" : "bg-slate-100 text-slate-600",
       });
     });
 

@@ -64,6 +64,9 @@ export interface UserProfile {
   hasSpecialHealthConditions: boolean;
   healthConditionsDetails: string | null;
   hasPets: boolean;
+  businessName: string | null;
+  businessTaxId: string | null;
+  businessEmailDomains: string | null;
 }
 
 /** Full analysis result returned by the AI */

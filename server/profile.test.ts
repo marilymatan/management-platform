@@ -43,6 +43,9 @@ vi.mock("./db", () => ({
       hasSpecialHealthConditions: data.hasSpecialHealthConditions ?? mockProfile?.hasSpecialHealthConditions ?? false,
       healthConditionsDetails: data.healthConditionsDetails ?? mockProfile?.healthConditionsDetails ?? null,
       hasPets: data.hasPets ?? mockProfile?.hasPets ?? false,
+      businessName: data.businessName ?? mockProfile?.businessName ?? null,
+      businessTaxId: data.businessTaxId ?? mockProfile?.businessTaxId ?? null,
+      businessEmailDomains: data.businessEmailDomains ?? mockProfile?.businessEmailDomains ?? null,
       profileImageKey: data.profileImageKey ?? mockProfile?.profileImageKey ?? null,
       createdAt: mockProfile?.createdAt ?? new Date(),
       updatedAt: new Date(),
@@ -109,6 +112,9 @@ describe("profile.get", () => {
       hasSpecialHealthConditions: false,
       healthConditionsDetails: null,
       hasPets: true,
+      businessName: "לומי ביטוח",
+      businessTaxId: "514123456",
+      businessEmailDomains: "lumi.co.il\nbilling@lumi.co.il",
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -128,6 +134,9 @@ describe("profile.get", () => {
     expect(result!.numberOfVehicles).toBe(1);
     expect(result!.hasExtremeSports).toBe(false);
     expect(result!.hasPets).toBe(true);
+    expect(result!.businessName).toBe("לומי ביטוח");
+    expect(result!.businessTaxId).toBe("514123456");
+    expect(result!.businessEmailDomains).toContain("lumi.co.il");
     expect(result!.dateOfBirth).toContain("1990-05-15");
   });
 
@@ -178,6 +187,9 @@ describe("profile.update", () => {
       hasSpecialHealthConditions: false,
       healthConditionsDetails: null,
       hasPets: false,
+      businessName: null,
+      businessTaxId: null,
+      businessEmailDomains: null,
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -268,6 +280,20 @@ describe("profile.update", () => {
       hasPets: true,
     });
     expect(result.success).toBe(true);
+  });
+
+  it("stores business identity fields", async () => {
+    const caller = appRouter.createCaller(makeAuthCtx());
+    const result = await caller.profile.update({
+      employmentStatus: "business_owner",
+      businessName: "לומי ביטוח",
+      businessTaxId: "514123456",
+      businessEmailDomains: "lumi.co.il\nbilling@lumi.co.il",
+    });
+    expect(result.success).toBe(true);
+    expect(result.profile.businessName).toBe("לומי ביטוח");
+    expect(result.profile.businessTaxId).toBe("514123456");
+    expect(result.profile.businessEmailDomains).toContain("billing@lumi.co.il");
   });
 
   it("rejects unauthenticated requests", async () => {
@@ -376,6 +402,9 @@ describe("profile.get with profileImageKey", () => {
       hasSpecialHealthConditions: false,
       healthConditionsDetails: null,
       hasPets: false,
+      businessName: null,
+      businessTaxId: null,
+      businessEmailDomains: null,
       profileImageKey: "avatars/1/photo.jpg",
       createdAt: new Date(),
       updatedAt: new Date(),
@@ -403,6 +432,9 @@ describe("profile.get with profileImageKey", () => {
       hasSpecialHealthConditions: false,
       healthConditionsDetails: null,
       hasPets: false,
+      businessName: null,
+      businessTaxId: null,
+      businessEmailDomains: null,
       profileImageKey: null,
       createdAt: new Date(),
       updatedAt: new Date(),

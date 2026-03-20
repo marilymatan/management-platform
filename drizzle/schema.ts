@@ -6,6 +6,7 @@ export const chatRoleEnum = pgEnum("chat_role", ["user", "assistant"]);
 export const usageActionEnum = pgEnum("usage_action", ["analyze", "chat"]);
 export const invoiceCategoryEnum = pgEnum("invoice_category", ["תקשורת", "חשמל", "מים", "ארנונה", "ביטוח", "בנק", "רכב", "אחר"]);
 export const invoiceStatusEnum = pgEnum("invoice_status", ["pending", "paid", "overdue", "unknown"]);
+export const invoiceFlowDirectionEnum = pgEnum("invoice_flow_direction", ["expense", "income", "unknown"]);
 export const auditStatusEnum = pgEnum("audit_status", ["allowed", "blocked", "error"]);
 export const maritalStatusEnum = pgEnum("marital_status", ["single", "married", "divorced", "widowed"]);
 export const employmentStatusEnum = pgEnum("employment_status", ["salaried", "self_employed", "business_owner", "student", "retired", "unemployed"]);
@@ -113,6 +114,7 @@ export const smartInvoices = pgTable("smart_invoices", {
   invoiceDate: timestamp("invoice_date"),
   dueDate: timestamp("due_date"),
   status: invoiceStatusEnum("status").default("unknown"),
+  flowDirection: invoiceFlowDirectionEnum("flow_direction").default("expense").notNull(),
   subject: text("subject"),
   rawText: text("raw_text"),
   extractedData: jsonb("extracted_data"),
@@ -179,6 +181,9 @@ export const userProfiles = pgTable("user_profiles", {
   hasSpecialHealthConditions: boolean("has_special_health_conditions").default(false),
   healthConditionsDetails: text("health_conditions_details"),
   hasPets: boolean("has_pets").default(false),
+  businessName: text("business_name"),
+  businessTaxId: text("business_tax_id"),
+  businessEmailDomains: text("business_email_domains"),
   profileImageKey: text("profile_image_key"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull().$onUpdate(() => new Date()),

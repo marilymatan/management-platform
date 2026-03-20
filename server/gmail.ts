@@ -7,7 +7,7 @@
 
 import { google } from "googleapis";
 import crypto from "crypto";
-import { getDb } from "./db";
+import { getDb, getUserProfile } from "./db";
 import { gmailConnections, smartInvoices, categoryMappings } from "../drizzle/schema";
 import { eq, and } from "drizzle-orm";
 import { invokeLLM } from "./_core/llm";
@@ -258,9 +258,105 @@ const INVOICE_KEYWORDS = [
   "חשבונית", "חשבון", "קבלה", "אישור תשלום", "דוח", "חיוב", "invoice",
   "receipt", "payment", "bill", "statement", "לתשלום", "סכום לתשלום",
   "תאריך חיוב", "מועד תשלום", "חשבונית מס", "חשבון חודשי",
-  "your receipt", "payment confirmation", "order confirmation",
-  "הקבלה שלך", "אישור הזמנה", "פירוט חיוב",
+  "your receipt", "payment confirmation", "order confirmation", "credit note",
+  "tax invoice", "invoice receipt", "הקבלה שלך", "אישור הזמנה", "פירוט חיוב", "זיכוי",
 ];
+
+export type InvoiceFlowDirection = "expense" | "income" | "unknown";
+type InvoiceDocumentType = "invoice" | "receipt" | "credit_note" | "order_confirmation" | "unknown";
+type InvoiceCounterpartyRole = "supplier" | "customer" | "unknown";
+
+interface BusinessIdentityContext {
+  businessName: string | null;
+  businessTaxId: string | null;
+  businessEmailDomains: string[];
+}
+
+function normalizeBusinessValue(value: string | null | undefined): string | null {
+  const normalized = value?.trim();
+  return normalized ? normalized : null;
+}
+
+export function parseBusinessEmailDomains(value: string | null | undefined): string[] {
+  const normalized = (value ?? "")
+    .split(/[\n,;]+/)
+    .map((entry) => entry.trim().toLowerCase())
+    .filter(Boolean)
+    .map((entry) => {
+      if (entry.includes("@")) {
+        const domain = entry.split("@").pop();
+        return domain ? domain.replace(/^@/, "") : "";
+      }
+      return entry.replace(/^@/, "");
+    })
+    .filter(Boolean);
+  return Array.from(new Set(normalized));
+}
+
+function getBusinessIdentityContext(profile: {
+  businessName?: string | null;
+  businessTaxId?: string | null;
+  businessEmailDomains?: string | null;
+} | null | undefined): BusinessIdentityContext {
+  return {
+    businessName: normalizeBusinessValue(profile?.businessName),
+    businessTaxId: normalizeBusinessValue(profile?.businessTaxId),
+    businessEmailDomains: parseBusinessEmailDomains(profile?.businessEmailDomains),
+  };
+}
+
+function extractEmailDomain(value: string): string | null {
+  const match = value.toLowerCase().match(/@([a-z0-9.-]+\.[a-z]{2,})/i);
+  return match?.[1]?.replace(/>$/, "") ?? null;
+}
+
+function domainMatchesBusiness(domain: string | null, businessDomains: string[]): boolean {
+  if (!domain) return false;
+  return businessDomains.some((businessDomain) => domain === businessDomain || domain.endsWith(`.${businessDomain}`));
+}
+
+function buildBusinessContextSnippet(context: BusinessIdentityContext): string {
+  return [
+    `שם העסק של המשתמש: ${context.businessName ?? "לא סופק"}`,
+    `מספר מזהה עסקי: ${context.businessTaxId ?? "לא סופק"}`,
+    `דומיינים או מיילים עסקיים: ${context.businessEmailDomains.length > 0 ? context.businessEmailDomains.join(", ") : "לא סופקו"}`,
+  ].join("\n");
+}
+
+function normalizeFlowDirection(value: unknown): InvoiceFlowDirection {
+  return value === "expense" || value === "income" || value === "unknown" ? value : "unknown";
+}
+
+function normalizeDocumentType(value: unknown): InvoiceDocumentType {
+  return value === "invoice" || value === "receipt" || value === "credit_note" || value === "order_confirmation" || value === "unknown"
+    ? value
+    : "unknown";
+}
+
+function normalizeCounterpartyRole(value: unknown): InvoiceCounterpartyRole {
+  return value === "supplier" || value === "customer" || value === "unknown" ? value : "unknown";
+}
+
+function normalizeConfidence(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(1, value));
+}
+
+function matchesBusinessIdentity(value: string | null | undefined, context: BusinessIdentityContext): boolean {
+  const normalized = value?.trim().toLowerCase();
+  if (!normalized) return false;
+  if (context.businessName && normalized.includes(context.businessName.toLowerCase())) return true;
+  if (context.businessTaxId && normalized.includes(context.businessTaxId.toLowerCase())) return true;
+  return false;
+}
+
+function inferFlowDirectionFallback(from: string, context: BusinessIdentityContext): InvoiceFlowDirection {
+  const senderDomain = extractEmailDomain(from);
+  if (domainMatchesBusiness(senderDomain, context.businessEmailDomains)) {
+    return "income";
+  }
+  return "unknown";
+}
 
 function detectProvider(subject: string, from: string, body: string): {
   name: string;
@@ -370,7 +466,7 @@ async function fetchRecentEmails(
 
   // Build query: last N days, only relevant emails
   const after = Math.floor((Date.now() - daysBack * 24 * 60 * 60 * 1000) / 1000);
-  const query = `after:${after} (חשבונית OR חשבון OR קבלה OR invoice OR bill OR payment OR חיוב OR לתשלום OR receipt OR הקבלה OR has:attachment filename:pdf)`;
+  const query = `after:${after} (חשבונית OR חשבון OR קבלה OR invoice OR bill OR payment OR חיוב OR לתשלום OR receipt OR זיכוי OR "credit note" OR הקבלה OR has:attachment filename:pdf)`;
 
   const listRes = await gmail.users.messages.list({
     userId: "me",
@@ -552,7 +648,7 @@ async function extractTextFromPdf(pdfUrl: string, fileKey?: string): Promise<str
       messages: [
         {
           role: "system",
-          content: "אתה מומחה לקריאת מסמכי PDF בעברית ובאנגלית. חלץ את כל הטקסט הרלוונטי מהמסמך. התמקד בפרטים כמו: שם ספק, סכום לתשלום, תאריכים, מספר חשבונית, פירוט שירותים/מוצרים. החזר טקסט נקי בלבד.",
+          content: "אתה מומחה לקריאת מסמכים פיננסיים בעברית ובאנגלית. חלץ את כל הטקסט הרלוונטי מהמסמך. התמקד בפרטים כמו שמות הצדדים, סכום מרכזי, תאריכים, מספר מסמך, פירוט שירותים או מוצרים. החזר טקסט נקי בלבד.",
         },
         {
           role: "user",
@@ -565,7 +661,7 @@ async function extractTextFromPdf(pdfUrl: string, fileKey?: string): Promise<str
             },
             {
               type: "text",
-              text: "חלץ את כל הטקסט הרלוונטי מהחשבונית/קבלה הזו. כלול: שם ספק, סכום, תאריך, מספר חשבונית, פירוט פריטים.",
+              text: "חלץ את כל הטקסט הרלוונטי מהמסמך הכספי הזה. כלול שמות צדדים, סכום, תאריך, מספר מסמך ופירוט פריטים.",
             },
           ],
         },
@@ -595,12 +691,19 @@ async function extractTextFromPdf(pdfUrl: string, fileKey?: string): Promise<str
 
 interface ExtractedInvoice {
   provider: string;
+  issuerName: string | null;
+  recipientName: string | null;
   category: "תקשורת" | "חשמל" | "מים" | "ארנונה" | "ביטוח" | "בנק" | "רכב" | "אחר";
   amount: number | null;
   currency: string;
   invoiceDate: string | null;
   dueDate: string | null;
   status: "pending" | "paid" | "overdue" | "unknown";
+  flowDirection: InvoiceFlowDirection;
+  documentType: InvoiceDocumentType;
+  counterpartyRole: InvoiceCounterpartyRole;
+  classificationReason: string;
+  confidence: number;
   description: string;
   invoiceNumber: string | null;
   items: Array<{ name: string; amount: number | null }>;
@@ -611,7 +714,8 @@ async function extractInvoiceData(
   from: string,
   body: string,
   pdfText: string | null,
-  detectedProvider: { name: string; category: string } | null
+  detectedProvider: { name: string; category: string } | null,
+  businessContext: BusinessIdentityContext
 ): Promise<ExtractedInvoice | null> {
   try {
     let contentForAnalysis = `גוף המייל:\n${body}`;
@@ -623,16 +727,28 @@ async function extractInvoiceData(
       messages: [
         {
           role: "system",
-          content: `אתה מומחה לחילוץ נתוני חשבוניות ממיילים ומסמכי PDF בישראל.
+          content: `אתה מומחה לחילוץ נתונים ממסמכים פיננסיים ממיילים ומסמכי PDF בישראל.
+מסמך שקשור לעסק של המשתמש לא בהכרח מייצג הוצאה. הוא יכול להיות גם הכנסה.
+
+הקשר עסקי של המשתמש:
+${buildBusinessContextSnippet(businessContext)}
+
 חלץ את המידע הבא ותחזיר JSON בלבד (ללא הסברים):
 
-- provider: שם הספק/חברה (עברית אם אפשר, אחרת אנגלית)
+- provider: שם הצד השני לעסק של המשתמש. אם flowDirection הוא expense זה בדרך כלל הספק. אם flowDirection הוא income זה בדרך כלל הלקוח/המשלם. אם לא ברור, החזר את הגוף החיצוני המרכזי ביותר במסמך
+- issuerName: מי הנפיק את המסמך
+- recipientName: למי המסמך מופנה
 - category: קטגוריה (תקשורת/חשמל/מים/ארנונה/ביטוח/בנק/רכב/אחר)
-- amount: סכום כולל לתשלום (מספר בלבד, null אם לא נמצא). חפש מילים כמו "סה"כ", "total", "סכום לתשלום", "amount due", "סה״כ שולם", "יתרה לתשלום", "סך הכל", "לתשלום", "חיוב"
+- amount: הסכום המרכזי במסמך (מספר בלבד, null אם לא נמצא). זה יכול להיות סכום שהעסק צריך לשלם או סכום שהעסק אמור לקבל. חפש מילים כמו "סה\"כ", "total", "סכום לתשלום", "amount due", "סה״כ שולם", "יתרה לתשלום", "סך הכל", "לתשלום", "חיוב", "payment received", "שולם"
 - currency: מטבע (ILS/USD/EUR). ברירת מחדל ILS אם לא צוין
 - invoiceDate: תאריך החשבונית/קבלה (YYYY-MM-DD, null אם לא נמצא)
 - dueDate: מועד תשלום אחרון (YYYY-MM-DD, null אם לא נמצא)
 - status: סטטוס - "paid" אם כתוב "שולם"/"paid"/"receipt"/"קבלה"/"אישור תשלום", "pending" אם כתוב "לתשלום"/"due", "unknown" אם לא ברור
+- flowDirection: "income" אם העסק של המשתמש הוא המנפיק או הצד שאמור לקבל את הכסף, "expense" אם העסק של המשתמש הוא הלקוח/הנמען או הצד שאמור לשלם, "unknown" אם לא ניתן לקבוע בביטחון
+- documentType: "invoice", "receipt", "credit_note", "order_confirmation" או "unknown"
+- counterpartyRole: "supplier" אם הצד השני מספק שירות/מוצר לעסק, "customer" אם הצד השני הוא לקוח/משלם לעסק, "unknown" אם לא ברור
+- classificationReason: הסבר קצר בעברית למה נבחר flowDirection
+- confidence: מספר בין 0 ל-1 שמייצג עד כמה הסיווג בטוח
 - description: תיאור קצר ומובן של החשבונית (עברית, עד 120 תווים). כלול מה השירות/מוצר
 - invoiceNumber: מספר חשבונית/קבלה (null אם לא נמצא)
 - items: רשימת פריטים/שירותים בחשבונית. כל פריט: { name: שם, amount: סכום או null }. רשימה ריקה אם אין פירוט
@@ -641,6 +757,10 @@ async function extractInvoiceData(
 - אם המייל הוא HTML שהומר לטקסט, התעלם מתגיות שנותרו
 - חפש סכומים ליד סימני ₪, ש"ח, NIS, $, €
 - אם יש גם גוף מייל וגם PDF, העדף את הנתונים מה-PDF כי הם מדויקים יותר
+- אם דומיין השולח שייך לעסק של המשתמש, זו אינדיקציה חזקה ל-income
+- אם שם העסק או מספר הזהות העסקי של המשתמש מופיעים כנמען, לקוח או Bill To, זו אינדיקציה חזקה ל-expense
+- אל תסווג כ-expense רק כי מופיעות המילים "חשבונית", "receipt" או "payment"
+- אם אין ודאות מספקת, החזר flowDirection="unknown"
 - אם לא ניתן לזהות שום מידע רלוונטי, החזר provider="לא ידוע" עם description שמתאר מה יש במייל`,
         },
         {
@@ -663,6 +783,8 @@ ${contentForAnalysis}`,
             type: "object",
             properties: {
               provider: { type: "string" },
+              issuerName: { type: ["string", "null"] },
+              recipientName: { type: ["string", "null"] },
               category: {
                 type: "string",
                 enum: ["תקשורת", "חשמל", "מים", "ארנונה", "ביטוח", "בנק", "רכב", "אחר"],
@@ -672,6 +794,11 @@ ${contentForAnalysis}`,
               invoiceDate: { type: ["string", "null"] },
               dueDate: { type: ["string", "null"] },
               status: { type: "string", enum: ["pending", "paid", "overdue", "unknown"] },
+              flowDirection: { type: "string", enum: ["expense", "income", "unknown"] },
+              documentType: { type: "string", enum: ["invoice", "receipt", "credit_note", "order_confirmation", "unknown"] },
+              counterpartyRole: { type: "string", enum: ["supplier", "customer", "unknown"] },
+              classificationReason: { type: "string" },
+              confidence: { type: "number" },
               description: { type: "string" },
               invoiceNumber: { type: ["string", "null"] },
               items: {
@@ -688,9 +815,9 @@ ${contentForAnalysis}`,
               },
             },
             required: [
-              "provider", "category", "amount", "currency",
-              "invoiceDate", "dueDate", "status", "description",
-              "invoiceNumber", "items",
+              "provider", "issuerName", "recipientName", "category", "amount", "currency",
+              "invoiceDate", "dueDate", "status", "flowDirection", "documentType", "counterpartyRole",
+              "classificationReason", "confidence", "description", "invoiceNumber", "items",
             ],
             additionalProperties: false,
           },
@@ -712,9 +839,45 @@ ${contentForAnalysis}`,
       console.log("[Gmail] extractInvoiceData: no content from LLM");
       return null;
     }
-    const parsed = JSON.parse(jsonStr) as ExtractedInvoice;
-    console.log(`[Gmail] extractInvoiceData result: provider=${parsed.provider}, amount=${parsed.amount}, currency=${parsed.currency}, status=${parsed.status}`);
-    return parsed;
+    const parsed = JSON.parse(jsonStr) as Partial<ExtractedInvoice>;
+    const flowDirection = normalizeFlowDirection(parsed.flowDirection);
+    const normalized: ExtractedInvoice = {
+      provider: typeof parsed.provider === "string" && parsed.provider.trim() ? parsed.provider.trim() : "לא ידוע",
+      issuerName: typeof parsed.issuerName === "string" && parsed.issuerName.trim() ? parsed.issuerName.trim() : null,
+      recipientName: typeof parsed.recipientName === "string" && parsed.recipientName.trim() ? parsed.recipientName.trim() : null,
+      category: parsed.category === "תקשורת" || parsed.category === "חשמל" || parsed.category === "מים" || parsed.category === "ארנונה" || parsed.category === "ביטוח" || parsed.category === "בנק" || parsed.category === "רכב" || parsed.category === "אחר"
+        ? parsed.category
+        : "אחר",
+      amount: typeof parsed.amount === "number" && Number.isFinite(parsed.amount) ? parsed.amount : null,
+      currency: typeof parsed.currency === "string" && parsed.currency.trim() ? parsed.currency.trim() : "ILS",
+      invoiceDate: typeof parsed.invoiceDate === "string" && parsed.invoiceDate.trim() ? parsed.invoiceDate : null,
+      dueDate: typeof parsed.dueDate === "string" && parsed.dueDate.trim() ? parsed.dueDate : null,
+      status: parsed.status === "pending" || parsed.status === "paid" || parsed.status === "overdue" || parsed.status === "unknown" ? parsed.status : "unknown",
+      flowDirection,
+      documentType: normalizeDocumentType(parsed.documentType),
+      counterpartyRole: normalizeCounterpartyRole(parsed.counterpartyRole),
+      classificationReason: typeof parsed.classificationReason === "string" ? parsed.classificationReason.trim() : "",
+      confidence: normalizeConfidence(parsed.confidence),
+      description: typeof parsed.description === "string" ? parsed.description.trim() : "",
+      invoiceNumber: typeof parsed.invoiceNumber === "string" && parsed.invoiceNumber.trim() ? parsed.invoiceNumber.trim() : null,
+      items: Array.isArray(parsed.items)
+        ? parsed.items.map((item) => ({
+            name: typeof item?.name === "string" ? item.name : "",
+            amount: typeof item?.amount === "number" && Number.isFinite(item.amount) ? item.amount : null,
+          })).filter((item) => item.name)
+        : [],
+    };
+    if (normalized.flowDirection === "unknown") {
+      normalized.flowDirection = inferFlowDirectionFallback(from, businessContext);
+    }
+    if (normalized.flowDirection === "income" && matchesBusinessIdentity(normalized.provider, businessContext) && normalized.recipientName && !matchesBusinessIdentity(normalized.recipientName, businessContext)) {
+      normalized.provider = normalized.recipientName;
+    }
+    if (normalized.flowDirection === "expense" && matchesBusinessIdentity(normalized.provider, businessContext) && normalized.issuerName && !matchesBusinessIdentity(normalized.issuerName, businessContext)) {
+      normalized.provider = normalized.issuerName;
+    }
+    console.log(`[Gmail] extractInvoiceData result: provider=${normalized.provider}, amount=${normalized.amount}, currency=${normalized.currency}, status=${normalized.status}, flow=${normalized.flowDirection}`);
+    return normalized;
   } catch (err) {
     console.error("[Gmail] AI extraction failed:", err);
     return null;
@@ -731,6 +894,7 @@ export interface ScanResult {
     provider: string;
     amount: number | null;
     category: string;
+    flowDirection: InvoiceFlowDirection;
     date: string | null;
     subject: string;
     description: string;
@@ -743,6 +907,8 @@ export async function scanGmailForInvoices(
 ): Promise<ScanResult> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
+  const profile = await getUserProfile(userId);
+  const businessContext = getBusinessIdentityContext(profile);
 
   const connections = await getAllGmailConnections(userId);
   if (connections.length === 0) throw new Error("No Gmail accounts connected");
@@ -809,11 +975,17 @@ export async function scanGmailForInvoices(
         email.from,
         email.body,
         pdfText,
-        detectedProvider
+        detectedProvider,
+        businessContext
       );
 
+      const flowDirection = extracted?.flowDirection ?? inferFlowDirectionFallback(email.from, businessContext);
       const llmProvider = extracted?.provider && extracted.provider !== "לא ידוע" ? extracted.provider : null;
-      const provider = llmProvider ?? detectedProvider?.name ?? extractSenderName(email.from) ?? "ספק לא ידוע";
+      const provider = llmProvider
+        ?? (flowDirection === "income" && extracted?.recipientName && !matchesBusinessIdentity(extracted.recipientName, businessContext) ? extracted.recipientName : null)
+        ?? detectedProvider?.name
+        ?? extractSenderName(email.from)
+        ?? "צד לא ידוע";
       const category = extracted?.category ?? detectedProvider?.category ?? "אחר";
       const description = extracted?.description ?? email.subject;
 
@@ -839,9 +1011,10 @@ export async function scanGmailForInvoices(
         pdfUrl: pdfUrl ?? undefined,
         pdfFilename: email.pdfAttachments[0]?.filename ?? undefined,
         fromEmail: email.from,
+        flowDirection,
       };
 
-      console.log(`[Gmail] Saving invoice: provider=${provider}, category=${category}, customCategory=${customCategory ?? "none"}, amount=${extracted?.amount ?? "null"}, pdfUrl=${pdfUrl ? "YES" : "NO"}, pdfText=${pdfText ? `${pdfText.length} chars` : "NO"}`);
+      console.log(`[Gmail] Saving invoice: provider=${provider}, category=${category}, flow=${flowDirection}, customCategory=${customCategory ?? "none"}, amount=${extracted?.amount ?? "null"}, pdfUrl=${pdfUrl ? "YES" : "NO"}, pdfText=${pdfText ? `${pdfText.length} chars` : "NO"}`);
 
       await db.insert(smartInvoices).values({
         userId,
@@ -855,6 +1028,7 @@ export async function scanGmailForInvoices(
         invoiceDate: extracted?.invoiceDate ? new Date(extracted.invoiceDate) : email.date,
         dueDate: extracted?.dueDate ? new Date(extracted.dueDate) : null,
         status: (extracted?.status ?? "unknown") as "pending" | "paid" | "overdue" | "unknown",
+        flowDirection,
         subject: encryptField(email.subject),
         rawText: encryptField(email.body.slice(0, 2000)),
         extractedData: encryptJson(extractedDataObj) as any,
@@ -867,6 +1041,7 @@ export async function scanGmailForInvoices(
         provider,
         amount: extracted?.amount ?? null,
         category,
+        flowDirection,
         date: extracted?.invoiceDate ?? null,
         subject: email.subject,
         description,

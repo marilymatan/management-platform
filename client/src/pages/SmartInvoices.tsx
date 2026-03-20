@@ -24,6 +24,7 @@ import {
   AlertCircle,
   Clock,
   TrendingUp,
+  TrendingDown,
   Zap,
   ShieldCheck,
   Car,
@@ -38,6 +39,7 @@ import {
   Calendar,
   Hash,
   Trash2,
+  Users,
   Search,
   Filter,
   X,
@@ -99,6 +101,42 @@ const STATUS_LABELS: Record<string, { label: string; color: string; icon: React.
 
 const ALL_CATEGORIES = ["תקשורת", "חשמל", "מים", "ארנונה", "ביטוח", "בנק", "רכב", "אחר"] as const;
 const ALL_STATUSES = ["pending", "paid", "overdue", "unknown"] as const;
+const ALL_FLOW_DIRECTIONS = ["expense", "income", "unknown"] as const;
+
+const FLOW_DIRECTION_LABELS: Record<(typeof ALL_FLOW_DIRECTIONS)[number], { label: string; badgeClass: string; amountClass: string; icon: React.ReactNode }> = {
+  expense: {
+    label: "הוצאה",
+    badgeClass: "bg-rose-50 text-rose-700 border-rose-200",
+    amountClass: "text-rose-600",
+    icon: <TrendingDown className="w-3.5 h-3.5" />,
+  },
+  income: {
+    label: "הכנסה",
+    badgeClass: "bg-emerald-50 text-emerald-700 border-emerald-200",
+    amountClass: "text-emerald-600",
+    icon: <TrendingUp className="w-3.5 h-3.5" />,
+  },
+  unknown: {
+    label: "לא ברור",
+    badgeClass: "bg-gray-50 text-gray-700 border-gray-200",
+    amountClass: "text-muted-foreground",
+    icon: <Clock className="w-3.5 h-3.5" />,
+  },
+};
+
+const DOCUMENT_TYPE_LABELS: Record<string, string> = {
+  invoice: "חשבונית",
+  receipt: "קבלה",
+  credit_note: "זיכוי",
+  order_confirmation: "אישור הזמנה",
+  unknown: "לא ידוע",
+};
+
+const COUNTERPARTY_ROLE_LABELS: Record<string, string> = {
+  supplier: "ספק",
+  customer: "לקוח",
+  unknown: "לא ידוע",
+};
 
 const HEBREW_MONTHS: Record<string, string> = {
   "01": "ינואר", "02": "פברואר", "03": "מרץ", "04": "אפריל",
@@ -115,6 +153,13 @@ type ExtractedData = {
   fromEmail?: string;
   currency?: string;
   amount?: number | null;
+  issuerName?: string | null;
+  recipientName?: string | null;
+  flowDirection?: (typeof ALL_FLOW_DIRECTIONS)[number];
+  documentType?: string;
+  counterpartyRole?: string;
+  classificationReason?: string;
+  confidence?: number;
 };
 
 function getExtractedData(inv: { extractedData?: unknown }): ExtractedData {
@@ -143,6 +188,24 @@ function getCurrency(inv: { extractedData?: unknown }): string {
   return "₪";
 }
 
+function getFlowDirection(inv: { flowDirection?: string | null; extractedData?: unknown }): (typeof ALL_FLOW_DIRECTIONS)[number] {
+  if (inv.flowDirection === "expense" || inv.flowDirection === "income" || inv.flowDirection === "unknown") {
+    return inv.flowDirection;
+  }
+  const ed = getExtractedData(inv);
+  if (ed.flowDirection === "expense" || ed.flowDirection === "income" || ed.flowDirection === "unknown") {
+    return ed.flowDirection;
+  }
+  return "expense";
+}
+
+function formatAmountDisplay(inv: { flowDirection?: string | null; extractedData?: unknown }, amount: number): string {
+  const currency = getCurrency(inv);
+  const flowDirection = getFlowDirection(inv);
+  const sign = flowDirection === "income" ? "+" : flowDirection === "expense" ? "-" : "";
+  return `${sign}${currency}${amount.toLocaleString("he-IL")}`;
+}
+
 type Invoice = {
   id: number;
   provider?: string | null;
@@ -150,6 +213,7 @@ type Invoice = {
   customCategory?: string | null;
   amount?: string | null;
   status?: string | null;
+  flowDirection?: string | null;
   subject?: string | null;
   sourceEmail?: string | null;
   invoiceDate?: string | Date | null;
@@ -165,6 +229,11 @@ type ProviderGroup = {
   provider: string;
   invoices: Invoice[];
   totalAmount: number;
+  expenseTotal: number;
+  incomeTotal: number;
+  expenseCount: number;
+  incomeCount: number;
+  unknownCount: number;
   categories: string[];
   hasPdf: boolean;
 };
@@ -184,6 +253,7 @@ export default function SmartInvoices() {
   const [searchQuery, setSearchQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
+  const [flowFilter, setFlowFilter] = useState<string | null>(null);
   const [expandedMonths, setExpandedMonths] = useState<Set<string>>(new Set());
   const [manualDialogOpen, setManualDialogOpen] = useState(false);
   const [editCategoryDialogOpen, setEditCategoryDialogOpen] = useState(false);
@@ -195,6 +265,7 @@ export default function SmartInvoices() {
     category: "אחר" as (typeof ALL_CATEGORIES)[number],
     invoiceDate: new Date().toISOString().slice(0, 10),
     status: "paid" as (typeof ALL_STATUSES)[number],
+    flowDirection: "expense" as (typeof ALL_FLOW_DIRECTIONS)[number],
     description: "",
   });
 
@@ -257,7 +328,7 @@ export default function SmartInvoices() {
 
   const addManualMutation = trpc.gmail.addManualExpense.useMutation({
     onSuccess: () => {
-      toast.success("הוצאה נוספה בהצלחה");
+      toast.success("התנועה נוספה בהצלחה");
       setManualDialogOpen(false);
       setManualForm({
         provider: "",
@@ -265,13 +336,14 @@ export default function SmartInvoices() {
         category: "אחר",
         invoiceDate: new Date().toISOString().slice(0, 10),
         status: "paid",
+        flowDirection: "expense",
         description: "",
       });
       utils.gmail.getInvoices.invalidate();
       utils.gmail.getMonthlySummary.invalidate();
     },
     onError: (err) => {
-      toast.error(`שגיאה בהוספת הוצאה: ${err.message}`);
+      toast.error(`שגיאה בהוספת תנועה: ${err.message}`);
     },
   });
 
@@ -318,7 +390,7 @@ export default function SmartInvoices() {
   function handleSubmitManual() {
     const amt = parseFloat(manualForm.amount);
     if (!manualForm.provider.trim() || isNaN(amt) || amt <= 0) {
-      toast.error("יש למלא שם ספק וסכום תקין");
+      toast.error("יש למלא שם צד שני וסכום תקין");
       return;
     }
     addManualMutation.mutate({
@@ -327,6 +399,7 @@ export default function SmartInvoices() {
       category: manualForm.category,
       invoiceDate: manualForm.invoiceDate,
       status: manualForm.status,
+      flowDirection: manualForm.flowDirection,
       description: manualForm.description.trim() || undefined,
     });
   }
@@ -360,6 +433,7 @@ export default function SmartInvoices() {
       const effectiveCat = getEffectiveCategory(inv as Invoice);
       if (categoryFilter && effectiveCat !== categoryFilter && inv.category !== categoryFilter) return false;
       if (statusFilter && inv.status !== statusFilter) return false;
+      if (flowFilter && getFlowDirection(inv as Invoice) !== flowFilter) return false;
       if (searchQuery.trim()) {
         const q = searchQuery.trim().toLowerCase();
         const ed = getExtractedData(inv);
@@ -397,13 +471,18 @@ export default function SmartInvoices() {
           return db - da;
         }),
         totalAmount: invs.reduce((sum, inv) => sum + getEffectiveAmount(inv), 0),
-        categories: [...new Set(invs.map((i) => getEffectiveCategory(i)))],
+        expenseTotal: invs.reduce((sum, inv) => sum + (getFlowDirection(inv) === "expense" ? getEffectiveAmount(inv) : 0), 0),
+        incomeTotal: invs.reduce((sum, inv) => sum + (getFlowDirection(inv) === "income" ? getEffectiveAmount(inv) : 0), 0),
+        expenseCount: invs.filter((inv) => getFlowDirection(inv) === "expense").length,
+        incomeCount: invs.filter((inv) => getFlowDirection(inv) === "income").length,
+        unknownCount: invs.filter((inv) => getFlowDirection(inv) === "unknown").length,
+        categories: Array.from(new Set(invs.map((i) => getEffectiveCategory(i)))),
         hasPdf: invs.some((i) => !!getExtractedData(i).pdfUrl),
       }))
       .sort((a, b) => b.totalAmount - a.totalAmount);
   }, [filteredInvoices]);
 
-  const hasActiveFilters = !!categoryFilter || !!statusFilter || !!searchQuery.trim();
+  const hasActiveFilters = !!categoryFilter || !!statusFilter || !!flowFilter || !!searchQuery.trim();
 
   if (authLoading) {
     return (
@@ -424,7 +503,7 @@ export default function SmartInvoices() {
             <div className="size-14 rounded-2xl bg-primary/8 flex items-center justify-center mx-auto mb-4">
               <Mail className="size-7 text-primary" />
             </div>
-            <h2 className="text-lg font-bold mb-2">הוצאות</h2>
+            <h2 className="text-lg font-bold mb-2">הוצאות והכנסות</h2>
             <p className="text-sm text-muted-foreground mb-5">יש להתחבר כדי לגשת לפיצ'ר זה</p>
             <Button onClick={() => navigate("/")}>חזרה לדשבורד</Button>
           </CardContent>
@@ -433,8 +512,15 @@ export default function SmartInvoices() {
     );
   }
 
-  const grandTotal = monthlySummary?.reduce((sum, m) => sum + m.total, 0) ?? 0;
-  const grandCount = monthlySummary?.reduce((sum, m) => sum + m.categories.reduce((s, c) => s + c.count, 0), 0) ?? 0;
+  const grandExpenseTotal = monthlySummary?.reduce((sum, m) => sum + (m.expenseTotal ?? m.total), 0) ?? 0;
+  const grandIncomeTotal = monthlySummary?.reduce((sum, m) => sum + (m.incomeTotal ?? 0), 0) ?? 0;
+  const grandNetTotal = monthlySummary?.reduce((sum, m) => sum + (m.netTotal ?? ((m.incomeTotal ?? 0) - (m.expenseTotal ?? m.total ?? 0))), 0) ?? 0;
+  const grandCount = monthlySummary?.reduce((sum, m) => {
+    if (m.flowCounts) {
+      return sum + (m.flowCounts.expense ?? 0) + (m.flowCounts.income ?? 0) + (m.flowCounts.unknown ?? 0);
+    }
+    return sum + m.categories.reduce((s, c) => s + c.count, 0);
+  }, 0) ?? 0;
 
   return (
     <div className="page-container">
@@ -449,41 +535,49 @@ export default function SmartInvoices() {
                 <Banknote className="size-6" />
               </div>
               <div>
-                <h1 className="text-2xl font-bold tracking-tight">הוצאות</h1>
-                <p className="text-sm text-white/70 mt-0.5">חשבוניות חכמות, מעקב הוצאות וסריקת מיילים</p>
+                <h1 className="text-2xl font-bold tracking-tight">הוצאות והכנסות</h1>
+                <p className="text-sm text-white/70 mt-0.5">מסמכים כספיים חכמים, סיווג תזרים וסריקת מיילים</p>
               </div>
             </div>
             <Button
               onClick={() => setManualDialogOpen(true)}
               size="sm"
+              data-testid="manual-entry-button"
               className="bg-white/15 hover:bg-white/25 text-white border border-white/20 backdrop-blur-sm gap-1.5 shadow-lg shadow-black/10"
             >
               <PencilLine className="w-4 h-4" />
-              הוסף הוצאה
+              הוסף תנועה
             </Button>
           </div>
           {connectionStatus?.connected && (
-            <div className="grid grid-cols-3 gap-3 mt-6">
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mt-6">
+              <div className="rounded-xl bg-white/[0.08] backdrop-blur-sm p-4 ring-1 ring-white/10">
+                <div className="flex items-center gap-2 mb-1.5">
+                  <TrendingDown className="size-3.5 text-white/50" />
+                  <p className="text-[11px] text-white/50 font-medium">סה"כ הוצאות</p>
+                </div>
+                <p className="text-2xl font-bold tabular-nums leading-none">₪{grandExpenseTotal.toLocaleString("he-IL")}</p>
+              </div>
+              <div className="rounded-xl bg-white/[0.08] backdrop-blur-sm p-4 ring-1 ring-white/10">
+                <div className="flex items-center gap-2 mb-1.5">
+                  <TrendingUp className="size-3.5 text-white/50" />
+                  <p className="text-[11px] text-white/50 font-medium">סה"כ הכנסות</p>
+                </div>
+                <p className="text-2xl font-bold tabular-nums leading-none">₪{grandIncomeTotal.toLocaleString("he-IL")}</p>
+              </div>
               <div className="rounded-xl bg-white/[0.08] backdrop-blur-sm p-4 ring-1 ring-white/10">
                 <div className="flex items-center gap-2 mb-1.5">
                   <Banknote className="size-3.5 text-white/50" />
-                  <p className="text-[11px] text-white/50 font-medium">סה"כ הוצאות</p>
+                  <p className="text-[11px] text-white/50 font-medium">נטו</p>
                 </div>
-                <p className="text-2xl font-bold tabular-nums leading-none">₪{grandTotal.toLocaleString("he-IL")}</p>
+                <p className="text-2xl font-bold tabular-nums leading-none">{grandNetTotal >= 0 ? "+" : "-"}₪{Math.abs(grandNetTotal).toLocaleString("he-IL")}</p>
               </div>
               <div className="rounded-xl bg-white/[0.08] backdrop-blur-sm p-4 ring-1 ring-white/10">
                 <div className="flex items-center gap-2 mb-1.5">
                   <FileText className="size-3.5 text-white/50" />
-                  <p className="text-[11px] text-white/50 font-medium">חשבוניות</p>
+                  <p className="text-[11px] text-white/50 font-medium">מסמכים</p>
                 </div>
                 <p className="text-2xl font-bold tabular-nums leading-none">{grandCount}</p>
-              </div>
-              <div className="rounded-xl bg-white/[0.08] backdrop-blur-sm p-4 ring-1 ring-white/10">
-                <div className="flex items-center gap-2 mb-1.5">
-                  <Mail className="size-3.5 text-white/50" />
-                  <p className="text-[11px] text-white/50 font-medium">חשבונות מחוברים</p>
-                </div>
-                <p className="text-2xl font-bold tabular-nums leading-none">{connectionStatus.connections.length}</p>
               </div>
             </div>
           )}
@@ -493,15 +587,15 @@ export default function SmartInvoices() {
       <Dialog open={manualDialogOpen} onOpenChange={setManualDialogOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>הוספת הוצאה ידנית</DialogTitle>
-            <DialogDescription>הזן את פרטי ההוצאה</DialogDescription>
+            <DialogTitle>הוספת תנועה ידנית</DialogTitle>
+            <DialogDescription>הזן את פרטי ההוצאה או ההכנסה</DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-2">
             <div className="grid gap-1.5">
-              <Label htmlFor="m-provider">שם ספק / הוצאה</Label>
+              <Label htmlFor="m-provider">שם צד שני / ספק / לקוח</Label>
               <Input
                 id="m-provider"
-                placeholder='למשל "חברת חשמל"'
+                placeholder='למשל "חברת חשמל" או "לקוח פרטי"'
                 value={manualForm.provider}
                 onChange={(e) => setManualForm((p) => ({ ...p, provider: e.target.value }))}
               />
@@ -520,6 +614,22 @@ export default function SmartInvoices() {
                 />
               </div>
               <div className="grid gap-1.5">
+                <Label htmlFor="m-flow">סוג תנועה</Label>
+                <select
+                  id="m-flow"
+                  data-testid="manual-flow-direction"
+                  value={manualForm.flowDirection}
+                  onChange={(e) => setManualForm((p) => ({ ...p, flowDirection: e.target.value as typeof manualForm.flowDirection }))}
+                  className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                >
+                  {ALL_FLOW_DIRECTIONS.map((flow) => (
+                    <option key={flow} value={flow}>{FLOW_DIRECTION_LABELS[flow].label}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="grid gap-1.5">
                 <Label htmlFor="m-category">קטגוריה</Label>
                 <select
                   id="m-category"
@@ -532,8 +642,6 @@ export default function SmartInvoices() {
                   ))}
                 </select>
               </div>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
               <div className="grid gap-1.5">
                 <Label htmlFor="m-date">תאריך</Label>
                 <Input
@@ -736,7 +844,9 @@ export default function SmartInvoices() {
               <div className="animate-fade-in-up stagger-2 space-y-2">
                 {monthlySummary.map((monthData) => {
                   const isExpanded = expandedMonths.has(monthData.month);
-                  const monthInvoiceCount = monthData.categories.reduce((s, c) => s + c.count, 0);
+                  const monthInvoiceCount = monthData.flowCounts
+                    ? (monthData.flowCounts.expense ?? 0) + (monthData.flowCounts.income ?? 0) + (monthData.flowCounts.unknown ?? 0)
+                    : monthData.categories.reduce((s, c) => s + c.count, 0);
                   return (
                     <Card key={monthData.month} className="overflow-hidden transition-all hover:shadow-sm">
                       <button
@@ -749,18 +859,42 @@ export default function SmartInvoices() {
                           </div>
                           <div className="text-start">
                             <span className="text-sm font-semibold block">{formatMonthLabel(monthData.month)}</span>
-                            <span className="text-[11px] text-muted-foreground">{monthInvoiceCount} {monthInvoiceCount === 1 ? "חשבונית" : "חשבוניות"}</span>
+                            <span className="text-[11px] text-muted-foreground">{monthInvoiceCount} {monthInvoiceCount === 1 ? "מסמך" : "מסמכים"}</span>
                           </div>
                         </div>
                         <div className="flex items-center gap-3">
-                          <span className="text-base font-bold text-emerald-600 tabular-nums">₪{monthData.total.toLocaleString("he-IL")}</span>
+                          <div className="text-end">
+                            <p className="text-sm font-semibold text-rose-600 tabular-nums">-₪{(monthData.expenseTotal ?? monthData.total).toLocaleString("he-IL")}</p>
+                            <p className="text-[10px] text-emerald-600 tabular-nums">+₪{(monthData.incomeTotal ?? 0).toLocaleString("he-IL")}</p>
+                          </div>
                           {isExpanded ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
                         </div>
                       </button>
                       {isExpanded && (
                         <div className="px-4 pb-3 space-y-2.5 border-t">
+                          <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 pt-3">
+                            <div className="rounded-lg bg-rose-50 border border-rose-100 px-3 py-2">
+                              <p className="text-[10px] text-rose-600">הוצאות</p>
+                              <p className="text-sm font-semibold text-rose-700">₪{(monthData.expenseTotal ?? monthData.total).toLocaleString("he-IL")}</p>
+                            </div>
+                            <div className="rounded-lg bg-emerald-50 border border-emerald-100 px-3 py-2">
+                              <p className="text-[10px] text-emerald-600">הכנסות</p>
+                              <p className="text-sm font-semibold text-emerald-700">₪{(monthData.incomeTotal ?? 0).toLocaleString("he-IL")}</p>
+                            </div>
+                            <div className="rounded-lg bg-blue-50 border border-blue-100 px-3 py-2">
+                              <p className="text-[10px] text-blue-600">נטו</p>
+                              <p className="text-sm font-semibold text-blue-700">
+                                {(monthData.netTotal ?? ((monthData.incomeTotal ?? 0) - (monthData.expenseTotal ?? monthData.total))) >= 0 ? "+" : "-"}
+                                ₪{Math.abs(monthData.netTotal ?? ((monthData.incomeTotal ?? 0) - (monthData.expenseTotal ?? monthData.total))).toLocaleString("he-IL")}
+                              </p>
+                            </div>
+                            <div className="rounded-lg bg-muted/40 border border-border px-3 py-2">
+                              <p className="text-[10px] text-muted-foreground">לא מסווג</p>
+                              <p className="text-sm font-semibold">₪{(monthData.unknownTotal ?? 0).toLocaleString("he-IL")}</p>
+                            </div>
+                          </div>
                           {monthData.categories.map((cat) => {
-                            const pct = monthData.total > 0 ? (cat.total / monthData.total) * 100 : 0;
+                            const pct = (monthData.expenseTotal ?? monthData.total) > 0 ? (cat.total / (monthData.expenseTotal ?? monthData.total)) * 100 : 0;
                             return (
                               <div key={cat.category} className="pt-2.5">
                                 <div className="flex items-center justify-between mb-1">
@@ -770,7 +904,7 @@ export default function SmartInvoices() {
                                     </div>
                                     <span className="text-xs font-medium">{cat.category}</span>
                                     <span className="text-[10px] text-muted-foreground">
-                                      {cat.count} {cat.count === 1 ? "חשבונית" : "חשבוניות"}
+                                      {cat.count} {cat.count === 1 ? "מסמך" : "מסמכים"}
                                     </span>
                                   </div>
                                   <div className="flex items-center gap-2">
@@ -787,6 +921,24 @@ export default function SmartInvoices() {
                               </div>
                             );
                           })}
+                          {monthData.incomeCategories && monthData.incomeCategories.length > 0 && (
+                            <div className="pt-3">
+                              <p className="text-[11px] font-medium text-muted-foreground mb-2">קטגוריות הכנסה</p>
+                              <div className="space-y-2">
+                                {monthData.incomeCategories.map((cat) => (
+                                  <div key={`income-${cat.category}`} className="flex items-center justify-between rounded-lg bg-emerald-50/60 border border-emerald-100 px-3 py-2">
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-xs font-medium">{cat.category}</span>
+                                      <span className="text-[10px] text-muted-foreground">
+                                        {cat.count} {cat.count === 1 ? "מסמך" : "מסמכים"}
+                                      </span>
+                                    </div>
+                                    <span className="text-xs font-semibold text-emerald-700">₪{cat.total.toLocaleString("he-IL")}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
                         </div>
                       )}
                     </Card>
@@ -799,7 +951,7 @@ export default function SmartInvoices() {
               <div className="flex items-center justify-between">
                 <h3 className="text-sm font-semibold flex items-center gap-2">
                   <FileText className="size-4 text-muted-foreground" />
-                  חשבוניות
+                  מסמכים כספיים
                   {invoices && invoices.length > 0 && (
                     <span className="text-muted-foreground font-normal">({filteredInvoices.length})</span>
                   )}
@@ -837,11 +989,22 @@ export default function SmartInvoices() {
                       <option key={s} value={s}>{STATUS_LABELS[s]?.label ?? s}</option>
                     ))}
                   </select>
+                  <select
+                    data-testid="flow-filter"
+                    value={flowFilter ?? ""}
+                    onChange={(e) => setFlowFilter(e.target.value || null)}
+                    className="text-sm border rounded-lg px-2.5 py-1.5 bg-card h-9"
+                  >
+                    <option value="">כל סוגי התזרים</option>
+                    {ALL_FLOW_DIRECTIONS.map((flow) => (
+                      <option key={flow} value={flow}>{FLOW_DIRECTION_LABELS[flow].label}</option>
+                    ))}
+                  </select>
                   {hasActiveFilters && (
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => { setSearchQuery(""); setCategoryFilter(null); setStatusFilter(null); }}
+                      onClick={() => { setSearchQuery(""); setCategoryFilter(null); setStatusFilter(null); setFlowFilter(null); }}
                       className="gap-1 text-muted-foreground h-9"
                     >
                       <X className="w-3.5 h-3.5" />
@@ -862,7 +1025,7 @@ export default function SmartInvoices() {
                 <Card className="border-destructive/40">
                   <CardContent className="py-10 text-center">
                     <AlertCircle className="size-8 text-destructive/60 mx-auto mb-3" />
-                    <h3 className="text-sm font-semibold mb-1">שגיאה בטעינת חשבוניות</h3>
+                    <h3 className="text-sm font-semibold mb-1">שגיאה בטעינת מסמכים כספיים</h3>
                     <p className="text-xs text-muted-foreground mb-3">
                       {invoicesError.message.includes("Rate limit") || invoicesError.message.includes("Too many")
                         ? "יותר מדי בקשות — נסה שוב בעוד רגע"
@@ -883,9 +1046,9 @@ export default function SmartInvoices() {
                     <div className="size-14 rounded-2xl bg-muted/60 flex items-center justify-center mx-auto mb-4">
                       <Mail className="size-7 text-muted-foreground/40" />
                     </div>
-                    <h3 className="text-sm font-semibold mb-1">לא נמצאו חשבוניות</h3>
+                    <h3 className="text-sm font-semibold mb-1">לא נמצאו מסמכים כספיים</h3>
                     <p className="text-xs text-muted-foreground">
-                      לחץ על "סרוק" כדי לחפש חשבוניות בתיבת הדואר שלך
+                      לחץ על "סרוק" כדי לחפש מסמכים כספיים בתיבת הדואר שלך
                     </p>
                   </CardContent>
                 </Card>
@@ -904,8 +1067,34 @@ export default function SmartInvoices() {
                     const isSingle = group.invoices.length === 1;
                     const singleInv = isSingle ? group.invoices[0] : null;
                     const singleExtracted = singleInv ? getExtractedData(singleInv) : null;
+                    const singleFlowDirection = singleInv ? getFlowDirection(singleInv) : "unknown";
                     const primaryCat = group.categories[0] ?? "אחר";
                     const catColor = CATEGORY_COLORS[primaryCat] ?? CATEGORY_COLORS["אחר"];
+                    const groupFlowDirection = group.incomeCount > 0 && group.expenseCount === 0 && group.unknownCount === 0
+                      ? "income"
+                      : group.expenseCount > 0 && group.incomeCount === 0 && group.unknownCount === 0
+                        ? "expense"
+                        : group.unknownCount > 0 && group.incomeCount === 0 && group.expenseCount === 0
+                          ? "unknown"
+                          : null;
+                    const groupFlowLabel = groupFlowDirection
+                      ? FLOW_DIRECTION_LABELS[groupFlowDirection].label
+                      : "מעורב";
+                    const groupFlowClass = groupFlowDirection
+                      ? FLOW_DIRECTION_LABELS[groupFlowDirection].badgeClass
+                      : "bg-amber-50 text-amber-700 border-amber-200";
+                    const groupAmountText = isSingle && singleInv
+                      ? formatAmountDisplay(singleInv, getEffectiveAmount(singleInv))
+                      : group.incomeCount > 0 && group.expenseCount === 0 && group.unknownCount === 0
+                        ? `+₪${group.totalAmount.toLocaleString("he-IL")}`
+                        : group.expenseCount > 0 && group.incomeCount === 0 && group.unknownCount === 0
+                          ? `-₪${group.totalAmount.toLocaleString("he-IL")}`
+                          : `₪${group.totalAmount.toLocaleString("he-IL")}`;
+                    const groupAmountClass = isSingle && singleInv
+                      ? FLOW_DIRECTION_LABELS[singleFlowDirection].amountClass
+                      : groupFlowDirection
+                        ? FLOW_DIRECTION_LABELS[groupFlowDirection].amountClass
+                        : "text-foreground";
 
                     return (
                       <Card key={group.provider} className="overflow-hidden transition-all hover:shadow-md hover:border-primary/20">
@@ -942,9 +1131,12 @@ export default function SmartInvoices() {
                               <div className="min-w-0">
                                 <div className="flex items-center gap-2">
                                   <p className="font-medium text-sm truncate">{group.provider}</p>
+                                  <Badge variant="outline" className={`text-[10px] px-1.5 py-0 shrink-0 ${groupFlowClass}`}>
+                                    {groupFlowLabel}
+                                  </Badge>
                                   {!isSingle && (
                                     <Badge variant="secondary" className="text-[10px] px-1.5 py-0 shrink-0">
-                                      {group.invoices.length} חשבוניות
+                                      {group.invoices.length} מסמכים
                                     </Badge>
                                   )}
                                 </div>
@@ -975,15 +1167,22 @@ export default function SmartInvoices() {
                                 </a>
                               )}
                               {group.totalAmount > 0 && (
-                                <p className="font-semibold text-sm">
-                                  {isSingle ? getCurrency(singleInv!) : "₪"}{group.totalAmount.toLocaleString("he-IL")}
+                                <p className={`font-semibold text-sm ${groupAmountClass}`}>
+                                  {groupAmountText}
                                 </p>
                               )}
                               {isSingle && (
-                                <div className={`flex items-center gap-1 text-xs ${(STATUS_LABELS[singleInv!.status ?? "unknown"] ?? STATUS_LABELS.unknown).color}`}>
-                                  {(STATUS_LABELS[singleInv!.status ?? "unknown"] ?? STATUS_LABELS.unknown).icon}
-                                  <span className="hidden sm:inline">{(STATUS_LABELS[singleInv!.status ?? "unknown"] ?? STATUS_LABELS.unknown).label}</span>
-                                </div>
+                                <>
+                                  <div className={`flex items-center gap-1 text-xs ${(STATUS_LABELS[singleInv!.status ?? "unknown"] ?? STATUS_LABELS.unknown).color}`}>
+                                    {(STATUS_LABELS[singleInv!.status ?? "unknown"] ?? STATUS_LABELS.unknown).icon}
+                                    <span className="hidden sm:inline">{(STATUS_LABELS[singleInv!.status ?? "unknown"] ?? STATUS_LABELS.unknown).label}</span>
+                                  </div>
+                                  {singleExtracted?.documentType && (
+                                    <span className="text-[10px] text-muted-foreground hidden md:inline">
+                                      {DOCUMENT_TYPE_LABELS[singleExtracted.documentType] ?? singleExtracted.documentType}
+                                    </span>
+                                  )}
+                                </>
                               )}
                               {(isSingle ? expandedInvoiceId === singleInv!.id : isGroupExpanded) ? (
                                 <ChevronUp className="w-4 h-4 text-muted-foreground" />
@@ -1004,6 +1203,7 @@ export default function SmartInvoices() {
                                 const status = STATUS_LABELS[inv.status ?? "unknown"] ?? STATUS_LABELS.unknown;
                                 const amount = getEffectiveAmount(inv);
                                 const isSubExpanded = expandedInvoiceId === inv.id;
+                                const flowDirection = getFlowDirection(inv);
 
                                 return (
                                   <div key={inv.id} className="border-b last:border-b-0">
@@ -1017,11 +1217,16 @@ export default function SmartInvoices() {
                                           <p className="text-xs truncate max-w-xs">
                                             {extracted.description || inv.subject || "חשבונית"}
                                           </p>
-                                          {inv.invoiceDate && (
-                                            <p className="text-[10px] text-muted-foreground">
-                                              {new Date(inv.invoiceDate).toLocaleDateString("he-IL")}
-                                            </p>
-                                          )}
+                                          <div className="flex items-center gap-2">
+                                            {inv.invoiceDate && (
+                                              <p className="text-[10px] text-muted-foreground">
+                                                {new Date(inv.invoiceDate).toLocaleDateString("he-IL")}
+                                              </p>
+                                            )}
+                                            <Badge variant="outline" className={`text-[10px] px-1.5 py-0 ${FLOW_DIRECTION_LABELS[flowDirection].badgeClass}`}>
+                                              {FLOW_DIRECTION_LABELS[flowDirection].label}
+                                            </Badge>
+                                          </div>
                                         </div>
                                       </div>
                                       <div className="flex items-center gap-2 shrink-0">
@@ -1038,8 +1243,8 @@ export default function SmartInvoices() {
                                           </a>
                                         )}
                                         {amount > 0 && (
-                                          <span className="text-xs font-semibold">
-                                            {getCurrency(inv)}{amount.toLocaleString("he-IL")}
+                                          <span className={`text-xs font-semibold ${FLOW_DIRECTION_LABELS[flowDirection].amountClass}`}>
+                                            {formatAmountDisplay(inv, amount)}
                                           </span>
                                         )}
                                         <div className={`flex items-center gap-1 text-[11px] ${status.color}`}>
@@ -1077,7 +1282,7 @@ export default function SmartInvoices() {
 function InvoiceDetails({ inv, connectionCount, nested }: { inv: Invoice; connectionCount: number; nested?: boolean }) {
   const extracted = getExtractedData(inv);
   const effectiveAmount = getEffectiveAmount(inv);
-  const currency = getCurrency(inv);
+  const flowDirection = getFlowDirection(inv);
   return (
     <div className={`border-t space-y-3 animate-fade-in ${nested ? "py-3 px-8 bg-muted/10" : "py-3 px-4"}`}>
       {effectiveAmount > 0 && (
@@ -1086,10 +1291,31 @@ function InvoiceDetails({ inv, connectionCount, nested }: { inv: Invoice; connec
             <Banknote className="w-4 h-4" />
             <span className="text-xs font-medium">סכום</span>
           </div>
-          <p className="text-lg font-bold text-primary">{currency}{effectiveAmount.toLocaleString("he-IL")}</p>
+          <p className={`text-lg font-bold ${FLOW_DIRECTION_LABELS[flowDirection].amountClass}`}>{formatAmountDisplay(inv, effectiveAmount)}</p>
         </div>
       )}
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
+        <div>
+          <div className="flex items-center gap-1.5 text-muted-foreground mb-0.5">
+            {FLOW_DIRECTION_LABELS[flowDirection].icon}
+            <span className="text-[11px] font-medium">סוג תזרים</span>
+          </div>
+          <p className="text-xs">{FLOW_DIRECTION_LABELS[flowDirection].label}</p>
+        </div>
+        <div>
+          <div className="flex items-center gap-1.5 text-muted-foreground mb-0.5">
+            <FileText className="w-3.5 h-3.5" />
+            <span className="text-[11px] font-medium">סוג מסמך</span>
+          </div>
+          <p className="text-xs">{DOCUMENT_TYPE_LABELS[extracted.documentType ?? "unknown"] ?? extracted.documentType ?? "לא ידוע"}</p>
+        </div>
+        <div>
+          <div className="flex items-center gap-1.5 text-muted-foreground mb-0.5">
+            <Users className="w-3.5 h-3.5" />
+            <span className="text-[11px] font-medium">תפקיד הצד השני</span>
+          </div>
+          <p className="text-xs">{COUNTERPARTY_ROLE_LABELS[extracted.counterpartyRole ?? "unknown"] ?? extracted.counterpartyRole ?? "לא ידוע"}</p>
+        </div>
         {inv.subject && (
           <div className="col-span-2 sm:col-span-3">
             <div className="flex items-center gap-1.5 text-muted-foreground mb-0.5">
@@ -1121,9 +1347,27 @@ function InvoiceDetails({ inv, connectionCount, nested }: { inv: Invoice; connec
           <div>
             <div className="flex items-center gap-1.5 text-muted-foreground mb-0.5">
               <Hash className="w-3.5 h-3.5" />
-              <span className="text-[11px] font-medium">מספר חשבונית</span>
+              <span className="text-[11px] font-medium">מספר מסמך</span>
             </div>
             <p className="text-xs">{extracted.invoiceNumber}</p>
+          </div>
+        )}
+        {extracted.issuerName && (
+          <div>
+            <div className="flex items-center gap-1.5 text-muted-foreground mb-0.5">
+              <Building className="w-3.5 h-3.5" />
+              <span className="text-[11px] font-medium">מנפיק</span>
+            </div>
+            <p className="text-xs">{extracted.issuerName}</p>
+          </div>
+        )}
+        {extracted.recipientName && (
+          <div>
+            <div className="flex items-center gap-1.5 text-muted-foreground mb-0.5">
+              <Users className="w-3.5 h-3.5" />
+              <span className="text-[11px] font-medium">נמען</span>
+            </div>
+            <p className="text-xs">{extracted.recipientName}</p>
           </div>
         )}
         {extracted.fromEmail && (
@@ -1145,6 +1389,16 @@ function InvoiceDetails({ inv, connectionCount, nested }: { inv: Invoice; connec
           </div>
         )}
       </div>
+
+      {extracted.classificationReason && (
+        <div className="bg-muted/30 rounded-lg p-3">
+          <p className="text-[11px] font-medium text-muted-foreground mb-1">סיבת הסיווג</p>
+          <p className="text-sm">{extracted.classificationReason}</p>
+          {typeof extracted.confidence === "number" && (
+            <p className="text-[11px] text-muted-foreground mt-1">רמת ביטחון: {Math.round(extracted.confidence * 100)}%</p>
+          )}
+        </div>
+      )}
 
       {extracted.description && (
         <div className="bg-muted/40 rounded-lg p-3">

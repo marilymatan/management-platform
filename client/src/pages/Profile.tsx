@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Progress } from "@/components/ui/progress";
 import {
@@ -62,6 +63,9 @@ const profileSchema = z.object({
   hasSpecialHealthConditions: z.boolean().optional(),
   healthConditionsDetails: z.string().nullable().optional(),
   hasPets: z.boolean().optional(),
+  businessName: z.string().max(160).nullable().optional(),
+  businessTaxId: z.string().max(64).nullable().optional(),
+  businessEmailDomains: z.string().max(1000).nullable().optional(),
 });
 
 type ProfileFormValues = z.infer<typeof profileSchema>;
@@ -140,6 +144,9 @@ export default function Profile() {
       hasSpecialHealthConditions: false,
       healthConditionsDetails: null,
       hasPets: false,
+      businessName: null,
+      businessTaxId: null,
+      businessEmailDomains: null,
     },
   });
 
@@ -161,6 +168,9 @@ export default function Profile() {
         hasSpecialHealthConditions: p.hasSpecialHealthConditions ?? false,
         healthConditionsDetails: p.healthConditionsDetails,
         hasPets: p.hasPets ?? false,
+        businessName: p.businessName ?? null,
+        businessTaxId: p.businessTaxId ?? null,
+        businessEmailDomains: p.businessEmailDomains ?? null,
       });
     }
   }, [profileQuery.data, form]);
@@ -170,6 +180,8 @@ export default function Profile() {
   const numberOfChildren = form.watch("numberOfChildren") ?? 0;
   const ownsApartment = form.watch("ownsApartment") ?? false;
   const hasSpecialHealth = form.watch("hasSpecialHealthConditions") ?? false;
+  const employmentStatus = form.watch("employmentStatus");
+  const isBusinessProfile = employmentStatus === "business_owner" || employmentStatus === "self_employed";
 
   const onSubmit = async (data: ProfileFormValues) => {
     setSaving(true);
@@ -451,6 +463,63 @@ export default function Profile() {
                     </FormItem>
                   )}
                 />
+                {isBusinessProfile && (
+                  <>
+                    <FormField
+                      control={form.control}
+                      name="businessName"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel className="text-xs font-medium text-muted-foreground">שם העסק</FormLabel>
+                          <FormControl>
+                            <Input
+                              placeholder="לדוגמה: לומי פתרונות ביטוח"
+                              value={field.value || ""}
+                              onChange={(e) => field.onChange(e.target.value || null)}
+                              className="mt-1.5"
+                            />
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="businessTaxId"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel className="text-xs font-medium text-muted-foreground">ח.פ / עוסק מורשה</FormLabel>
+                          <FormControl>
+                            <Input
+                              placeholder="לדוגמה: 514123456"
+                              value={field.value || ""}
+                              onChange={(e) => field.onChange(e.target.value || null)}
+                              className="mt-1.5"
+                            />
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="businessEmailDomains"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel className="text-xs font-medium text-muted-foreground">דומיינים או כתובות מייל עסקיות</FormLabel>
+                          <FormControl>
+                            <Textarea
+                              rows={4}
+                              placeholder={"mybusiness.co.il\nbilling@mybusiness.co.il"}
+                              value={field.value || ""}
+                              onChange={(e) => field.onChange(e.target.value || null)}
+                              className="mt-1.5"
+                            />
+                          </FormControl>
+                          <p className="text-[11px] text-muted-foreground">הזן כל דומיין או כתובת בשורה נפרדת או מופרדים בפסיקים</p>
+                        </FormItem>
+                      )}
+                    />
+                  </>
+                )}
               </div>
             </CardContent>
           </Card>

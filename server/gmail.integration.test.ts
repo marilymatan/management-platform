@@ -6,30 +6,34 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // Mock the gmail module
-vi.mock("./gmail", () => ({
-  getGmailAuthUrl: vi.fn((redirectUri: string, state: string) =>
-    `https://accounts.google.com/o/oauth2/auth?redirect_uri=${redirectUri}&state=${state}`
-  ),
-  exchangeCodeForTokens: vi.fn().mockResolvedValue({
-    accessToken: "mock-access-token",
-    refreshToken: "mock-refresh-token",
-    email: "test@gmail.com",
-    expiresAt: new Date(Date.now() + 3600 * 1000),
-  }),
-  saveGmailConnection: vi.fn().mockResolvedValue(undefined),
-  getGmailConnection: vi.fn().mockResolvedValue(null),
-  disconnectGmail: vi.fn().mockResolvedValue(undefined),
-  scanGmailForInvoices: vi.fn().mockResolvedValue({
-    scanned: 10,
-    found: 3,
-    saved: 2,
-    invoices: [
-      { provider: "בזק", amount: 199.9, category: "תקשורת", date: "2026-03-01", subject: "חשבונית בזק", description: "חשבון חודשי לשירותי אינטרנט ותקשורת" },
-      { provider: "חברת החשמל", amount: 450, category: "חשמל", date: "2026-03-05", subject: "חשבון חשמל", description: "חשבון חשמל חודשי" },
-    ],
-  }),
-  verifyGmailScopes: vi.fn().mockResolvedValue(true),
-}));
+vi.mock("./gmail", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./gmail")>();
+  return {
+    ...actual,
+    getGmailAuthUrl: vi.fn((redirectUri: string, state: string) =>
+      `https://accounts.google.com/o/oauth2/auth?redirect_uri=${redirectUri}&state=${state}`
+    ),
+    exchangeCodeForTokens: vi.fn().mockResolvedValue({
+      accessToken: "mock-access-token",
+      refreshToken: "mock-refresh-token",
+      email: "test@gmail.com",
+      expiresAt: new Date(Date.now() + 3600 * 1000),
+    }),
+    saveGmailConnection: vi.fn().mockResolvedValue(undefined),
+    getGmailConnection: vi.fn().mockResolvedValue(null),
+    disconnectGmail: vi.fn().mockResolvedValue(undefined),
+    scanGmailForInvoices: vi.fn().mockResolvedValue({
+      scanned: 10,
+      found: 3,
+      saved: 2,
+      invoices: [
+        { provider: "בזק", amount: 199.9, category: "תקשורת", flowDirection: "expense", date: "2026-03-01", subject: "חשבונית בזק", description: "חשבון חודשי לשירותי אינטרנט ותקשורת" },
+        { provider: "חברת החשמל", amount: 450, category: "חשמל", flowDirection: "expense", date: "2026-03-05", subject: "חשבון חשמל", description: "חשבון חשמל חודשי" },
+      ],
+    }),
+    verifyGmailScopes: vi.fn().mockResolvedValue(true),
+  };
+});
 
 // Mock the db module
 vi.mock("./db", () => ({
@@ -75,6 +79,7 @@ describe("Gmail integration", () => {
       expect(firstInvoice).toHaveProperty("provider");
       expect(firstInvoice).toHaveProperty("amount");
       expect(firstInvoice).toHaveProperty("category");
+    expect(firstInvoice).toHaveProperty("flowDirection");
     });
 
     it("should return invoice with description", async () => {
@@ -121,6 +126,23 @@ describe("Invoice data structure", () => {
     const validStatuses = ["pending", "paid", "overdue", "unknown"];
     expect(validStatuses).toContain("pending");
     expect(validStatuses).toContain("paid");
+  });
+
+  it("should have correct flowDirection values", () => {
+    const validFlowDirections = ["expense", "income", "unknown"];
+    expect(validFlowDirections).toContain("expense");
+    expect(validFlowDirections).toContain("income");
+    expect(validFlowDirections).toContain("unknown");
+  });
+});
+
+describe("Business identity helpers", () => {
+  it("normalizes domains and email addresses", async () => {
+    const { parseBusinessEmailDomains } = await import("./gmail");
+    expect(parseBusinessEmailDomains("lumi.co.il\nbilling@lumi.co.il, sales.lumi.co.il")).toEqual([
+      "lumi.co.il",
+      "sales.lumi.co.il",
+    ]);
   });
 });
 

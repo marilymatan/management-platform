@@ -57,6 +57,9 @@ describe("UserProfile type", () => {
       hasSpecialHealthConditions: false,
       healthConditionsDetails: null,
       hasPets: true,
+      businessName: "לומי ביטוח",
+      businessTaxId: "514123456",
+      businessEmailDomains: "lumi.co.il",
     };
     expect(profile.maritalStatus).toBe("married");
     expect(profile.numberOfChildren).toBe(2);
@@ -79,6 +82,9 @@ describe("UserProfile type", () => {
       hasSpecialHealthConditions: false,
       healthConditionsDetails: null,
       hasPets: false,
+      businessName: null,
+      businessTaxId: null,
+      businessEmailDomains: null,
     };
     expect(profile.numberOfChildren).toBe(0);
     expect(profile.dateOfBirth).toBeNull();

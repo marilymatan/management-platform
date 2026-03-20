@@ -356,21 +356,40 @@ export async function getUserProfile(userId: number) {
   const db = await getDb();
   if (!db) return null;
   const result = await db.select().from(userProfiles).where(eq(userProfiles.userId, userId)).limit(1);
-  return result.length > 0 ? result[0] : null;
+  if (result.length === 0) return null;
+  const profile = result[0];
+  return {
+    ...profile,
+    businessName: profile.businessName ? decryptField(profile.businessName) : profile.businessName,
+    businessTaxId: profile.businessTaxId ? decryptField(profile.businessTaxId) : profile.businessTaxId,
+    businessEmailDomains: profile.businessEmailDomains ? decryptField(profile.businessEmailDomains) : profile.businessEmailDomains,
+  };
 }
 
 export async function upsertUserProfile(userId: number, data: Omit<InsertUserProfile, "id" | "userId" | "createdAt" | "updatedAt">) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
+  const preparedData: Omit<InsertUserProfile, "id" | "userId" | "createdAt" | "updatedAt"> = { ...data };
+  for (const field of ["businessName", "businessTaxId", "businessEmailDomains"] as const) {
+    const value = preparedData[field];
+    if (value === undefined) continue;
+    if (typeof value !== "string") {
+      preparedData[field] = value ?? null;
+      continue;
+    }
+    const normalized = value.trim();
+    preparedData[field] = normalized ? encryptField(normalized) : null;
+  }
+
   const existing = await getUserProfile(userId);
   if (existing) {
     await db
       .update(userProfiles)
-      .set({ ...data, updatedAt: new Date() })
+      .set({ ...preparedData, updatedAt: new Date() })
       .where(eq(userProfiles.userId, userId));
   } else {
-    await db.insert(userProfiles).values({ ...data, userId });
+    await db.insert(userProfiles).values({ ...preparedData, userId });
   }
   return getUserProfile(userId);
 }
