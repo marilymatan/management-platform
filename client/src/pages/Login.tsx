@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
-import { motion } from "framer-motion";
+import { motion, type Variants } from "framer-motion";
 import { Sparkles, Shield, Wallet, Bell, FileSearch, ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { getLoginUrl } from "@/const";
@@ -29,16 +29,18 @@ const FEATURES = [
   },
 ];
 
-const containerVariants = {
+const easeOut: [number, number, number, number] = [0.16, 1, 0.3, 1];
+
+const containerVariants: Variants = {
   hidden: {},
   visible: {
     transition: { staggerChildren: 0.12 },
   },
 };
 
-const itemVariants = {
+const itemVariants: Variants = {
   hidden: { opacity: 0, y: 20 },
-  visible: { opacity: 1, y: 0, transition: { duration: 0.5, ease: "easeOut" } },
+  visible: { opacity: 1, y: 0, transition: { duration: 0.5, ease: easeOut } },
 };
 
 function GoogleIcon({ className }: { className?: string }) {
@@ -159,7 +161,7 @@ export default function Login() {
           className="w-full max-w-[400px]"
           initial={{ opacity: 0, x: -20 }}
           animate={{ opacity: 1, x: 0 }}
-          transition={{ duration: 0.5, delay: 0.3, ease: "easeOut" }}
+          transition={{ duration: 0.5, delay: 0.3, ease: easeOut }}
         >
           <div className="text-center mb-8">
             <div className="lg:hidden flex items-center justify-center gap-2 mb-6">

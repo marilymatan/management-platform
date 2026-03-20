@@ -31,6 +31,8 @@ interface DocumentItem {
   link?: string;
 }
 
+type PolicyDocumentFile = string | { name?: string };
+
 const TYPE_CONFIG: Record<string, { label: string; icon: React.ReactNode; color: string }> = {
   insurance: {
     label: "ביטוח",
@@ -63,10 +65,11 @@ export default function Documents() {
 
   analyses?.forEach(analysis => {
     if (analysis.status === "completed") {
-      analysis.files?.forEach((file, idx) => {
+      const analysisFiles = (analysis.files ?? []) as PolicyDocumentFile[];
+      analysisFiles.forEach((file, idx) => {
         documents.push({
           id: `policy-${analysis.sessionId}-${idx}`,
-          name: typeof file === "string" ? file : (file as any).name || "פוליסה",
+          name: typeof file === "string" ? file : file.name || "פוליסה",
           type: "insurance",
           date: new Date(analysis.createdAt),
           description: analysis.analysisResult?.generalInfo?.policyName || "סריקת פוליסה",
