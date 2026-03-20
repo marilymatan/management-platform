@@ -1,4 +1,40 @@
 import { test, expect } from "@playwright/test";
+import superjson from "superjson";
+
+const previewPdfUrl = "http://127.0.0.1:3000/test-preview.pdf";
+const previewPdfBody = Buffer.from("%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF");
+const documentsTestUser = {
+  id: 1,
+  name: "בודק",
+  email: "tester@example.com",
+  role: "user",
+};
+const documentsTestAnalyses = [
+  {
+    sessionId: "session-1",
+    status: "completed",
+    createdAt: new Date("2026-03-20T10:00:00.000Z"),
+    analysisResult: {
+      generalInfo: {
+        policyName: "פוליסת בריאות",
+      },
+    },
+    files: [
+      {
+        name: "policy.pdf",
+        fileKey: "policies/session-1/policy.pdf",
+      },
+    ],
+  },
+];
+
+function createTrpcSuccessResponse(data: unknown) {
+  return {
+    result: {
+      data: superjson.serialize(data),
+    },
+  };
+}
 
 test.describe("Family and documents pages (unauthenticated)", () => {
   test("family page redirects to login when not authenticated", async ({ page }) => {
@@ -50,5 +86,57 @@ test.describe("Family and documents tRPC endpoint availability", () => {
     expect([200, 401]).toContain(response.status());
     const body = await response.json();
     expect(body).toBeDefined();
+  });
+});
+
+test.describe("Documents preview flow", () => {
+  test("opens a pdf in a new tab and keeps the documents page active", async ({ page }) => {
+    await page.route("**/api/trpc/**", async (route) => {
+      const url = new URL(route.request().url());
+      const procedureNames = url.pathname.replace("/api/trpc/", "").split(",");
+      const responses = procedureNames.map((procedureName) => {
+        switch (procedureName) {
+          case "auth.me":
+            return createTrpcSuccessResponse(documentsTestUser);
+          case "profile.getImageUrl":
+            return createTrpcSuccessResponse(null);
+          case "policy.getUserAnalyses":
+            return createTrpcSuccessResponse(documentsTestAnalyses);
+          case "gmail.getInvoices":
+            return createTrpcSuccessResponse([]);
+          case "documents.getClassifications":
+            return createTrpcSuccessResponse([]);
+          case "policy.getSecureFileUrl":
+            return createTrpcSuccessResponse({ url: previewPdfUrl });
+          default:
+            return createTrpcSuccessResponse(null);
+        }
+      });
+
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(url.searchParams.get("batch") === "1" ? responses : responses[0]),
+      });
+    });
+
+    await page.route("**/test-preview.pdf", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/pdf",
+        body: previewPdfBody,
+      });
+    });
+
+    await page.goto("/documents");
+    await expect(page).toHaveURL(/\/documents$/);
+    await expect(page.getByRole("heading", { name: "מסמכים" })).toBeVisible({ timeout: 15_000 });
+
+    const popupPromise = page.waitForEvent("popup");
+    await page.getByTestId("document-view-policy-session-1-0").click();
+    const popup = await popupPromise;
+
+    await expect(page).toHaveURL(/\/documents$/);
+    await expect.poll(() => popup.url()).toContain("/test-preview.pdf");
   });
 });

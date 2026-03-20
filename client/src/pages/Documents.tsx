@@ -101,6 +101,16 @@ function getPolicyDocumentFileKey(file: PolicyDocumentFile) {
   return undefined;
 }
 
+function openDocumentPreview(url: string, previewWindow?: Window | null) {
+  const nextWindow = previewWindow ?? window.open("about:blank", "_blank");
+  if (!nextWindow) {
+    return false;
+  }
+  nextWindow.opener = null;
+  nextWindow.location.replace(url);
+  return true;
+}
+
 export default function Documents() {
   const { user } = useAuth({ redirectOnUnauthenticated: true });
   const [, setLocation] = useLocation();
@@ -310,6 +320,35 @@ export default function Documents() {
     });
   };
 
+  const handleOpenDocument = async (doc: DocumentItem) => {
+    if (doc.sourceType === "analysis_file" && doc.fileKey) {
+      const previewWindow = window.open("about:blank", "_blank");
+      try {
+        const { url } = await utils.policy.getSecureFileUrl.fetch({
+          sessionId: doc.sourceId,
+          fileKey: doc.fileKey,
+        });
+        if (!openDocumentPreview(url, previewWindow)) {
+          toast.error("הדפדפן חסם את פתיחת המסמך. אפשר חלונות קופצים ונסה שוב");
+        }
+        return;
+      } catch {
+        previewWindow?.close();
+        toast.error("לא הצלחנו לפתוח את קובץ ה-PDF");
+        return;
+      }
+    }
+    if (doc.fileLink) {
+      if (!openDocumentPreview(doc.fileLink)) {
+        toast.error("הדפדפן חסם את פתיחת המסמך. אפשר חלונות קופצים ונסה שוב");
+      }
+      return;
+    }
+    if (doc.routeLink) {
+      setLocation(doc.routeLink);
+    }
+  };
+
   if (!user) return null;
 
   return (
@@ -451,34 +490,8 @@ export default function Documents() {
                         <Button
                           variant="ghost"
                           size="sm"
-                          onClick={async () => {
-                            if (doc.sourceType === "analysis_file" && doc.fileKey) {
-                              const previewWindow = window.open("", "_blank", "noopener,noreferrer");
-                              try {
-                                const { url } = await utils.policy.getSecureFileUrl.fetch({
-                                  sessionId: doc.sourceId,
-                                  fileKey: doc.fileKey,
-                                });
-                                if (previewWindow) {
-                                  previewWindow.location.href = url;
-                                } else {
-                                  window.location.assign(url);
-                                }
-                                return;
-                              } catch {
-                                previewWindow?.close();
-                                toast.error("לא הצלחנו לפתוח את קובץ ה-PDF");
-                                return;
-                              }
-                            }
-                            if (doc.fileLink) {
-                              window.open(doc.fileLink, "_blank", "noopener,noreferrer");
-                              return;
-                            }
-                            if (doc.routeLink) {
-                              setLocation(doc.routeLink);
-                            }
-                          }}
+                          data-testid={`document-view-${doc.id}`}
+                          onClick={() => void handleOpenDocument(doc)}
                           className="gap-1"
                         >
                           <Eye className="size-3.5" />
