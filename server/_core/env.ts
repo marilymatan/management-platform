@@ -9,6 +9,7 @@ export const ENV = {
   llmApiUrl: process.env.LLM_API_URL ?? "https://generativelanguage.googleapis.com/v1beta/openai",
   llmApiKey: process.env.LLM_API_KEY ?? "",
   llmModel: process.env.LLM_MODEL ?? "gemini-2.5-flash",
+  lumiComplexModel: process.env.LUMI_COMPLEX_MODEL ?? process.env.LLM_MODEL ?? "gemini-2.5-flash",
   llmSupportsFileUrl: process.env.LLM_SUPPORTS_FILE_URL === "true",
   gmailClientId: process.env.GMAIL_CLIENT_ID ?? "",
   gmailClientSecret: process.env.GMAIL_CLIENT_SECRET ?? "",

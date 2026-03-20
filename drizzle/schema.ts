@@ -71,6 +71,7 @@ export const apiUsageLogs = pgTable("api_usage_logs", {
   userId: integer("user_id"),
   sessionId: varchar("session_id", { length: 64 }),
   action: usageActionEnum("action").notNull(),
+  model: varchar("model", { length: 120 }).notNull().default("unknown"),
   promptTokens: integer("prompt_tokens").notNull().default(0),
   completionTokens: integer("completion_tokens").notNull().default(0),
   totalTokens: integer("total_tokens").notNull().default(0),

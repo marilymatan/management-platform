@@ -57,6 +57,13 @@
       "when": 1773996899154,
       "tag": "0007_lame_virginia_dare",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1773999480575,
+      "tag": "0008_funny_nomad",
+      "breakpoints": true
     }
   ]
 }

@@ -53,6 +53,12 @@ import { decryptField, decryptJson, encryptJson } from "./encryption";
 import { eq, desc, and } from "drizzle-orm";
 import { audit, getClientIp, getRecentAuditLogs, getSecurityEvents } from "./auditLog";
 import { summarizeMonthlyInvoices } from "./invoiceSummary";
+import {
+  buildAssistantHomeContext as buildLumiHomeContext,
+  buildAssistantSystemPrompt as buildLumiSystemPrompt,
+  getAssistantSessionId as getLumiSessionId,
+  shouldUseComplexLumiModel,
+} from "./assistantContext";
 
 function signOAuthState(payload: Record<string, unknown>): string {
   const json = JSON.stringify(payload);
@@ -857,27 +863,29 @@ export const appRouter = router({
   assistant: router({
     getHomeContext: protectedProcedure.query(async ({ ctx }) => {
       if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
-      const [profile, analyses, invoices, gmailConnections, familyMembers] = await Promise.all([
+      const [profile, analyses, invoices, gmailConnections, familyMembers, documentClassifications] = await Promise.all([
         getUserProfile(ctx.user.id),
         getUserAnalyses(ctx.user.id),
         getAssistantInvoices(ctx.user.id),
         getAllGmailConnections(ctx.user.id),
         getFamilyMembers(ctx.user.id),
+        getDocumentClassifications(ctx.user.id),
       ]);
 
-      return buildAssistantHomeContext({
+      return buildLumiHomeContext({
         userName: ctx.user.name,
         profile,
         analyses,
         invoices,
         familyMembers,
         gmailConnections,
+        documentClassifications,
       });
     }),
 
     getChatHistory: protectedProcedure.query(async ({ ctx }) => {
       if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
-      const sessionId = getAssistantSessionId(ctx.user.id);
+      const sessionId = getLumiSessionId(ctx.user.id);
       const history = await getChatHistory(sessionId);
       return history.map((msg) => ({
         role: msg.role as "user" | "assistant",
@@ -891,7 +899,7 @@ export const appRouter = router({
       }))
       .mutation(async ({ ctx, input }) => {
         if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
-        const sessionId = getAssistantSessionId(ctx.user.id);
+        const sessionId = getLumiSessionId(ctx.user.id);
 
         await addChatMessage({
           sessionId,
@@ -899,32 +907,48 @@ export const appRouter = router({
           content: input.message,
         });
 
-        const [history, profile, analyses, invoices, gmailConnections, familyMembers] = await Promise.all([
+        const [history, profile, analyses, invoices, gmailConnections, familyMembers, documentClassifications] = await Promise.all([
           getChatHistory(sessionId),
           getUserProfile(ctx.user.id),
           getUserAnalyses(ctx.user.id),
           getAssistantInvoices(ctx.user.id),
           getAllGmailConnections(ctx.user.id),
           getFamilyMembers(ctx.user.id),
+          getDocumentClassifications(ctx.user.id),
         ]);
 
-        const systemPrompt = buildAssistantSystemPrompt({
+        const assistantPrompt = buildLumiSystemPrompt({
+          message: input.message,
           profile,
           analyses,
           invoices,
           familyMembers,
           gmailConnections,
+          documentClassifications,
         });
+        const useComplexModel = shouldUseComplexLumiModel({
+          message: input.message,
+          meta: {
+            domainCount: assistantPrompt.meta.domainCount,
+            termCount: assistantPrompt.meta.termCount,
+            relevantPolicyCount: assistantPrompt.meta.relevantPolicyCount,
+            relevantInvoiceCount: assistantPrompt.meta.relevantInvoiceCount,
+            relevantDocumentCount: assistantPrompt.meta.relevantDocumentCount,
+            matchedCoverageCount: assistantPrompt.meta.matchedCoverageCount,
+            matchedCategories: assistantPrompt.meta.matchedCategories,
+          },
+        });
+        const selectedModel = useComplexModel ? ENV.lumiComplexModel : ENV.llmModel;
 
         const messages = [
-          { role: "system" as const, content: systemPrompt },
-          ...history.slice(-12).map((msg) => ({
+          { role: "system" as const, content: assistantPrompt.systemPrompt },
+          ...history.slice(-assistantPrompt.meta.suggestedHistoryLimit).map((msg) => ({
             role: msg.role as "user" | "assistant",
             content: msg.content,
           })),
         ];
 
-        const response = await invokeLLM({ messages });
+        const response = await invokeLLM({ messages, model: selectedModel });
         const assistantContent = extractLLMContent(response);
 
         await addChatMessage({
@@ -939,6 +963,7 @@ export const appRouter = router({
             userId: ctx.user.id,
             sessionId,
             action: "chat",
+            model: response.model || selectedModel,
             promptTokens: usage.prompt_tokens ?? 0,
             completionTokens: usage.completion_tokens ?? 0,
           });
@@ -1161,6 +1186,7 @@ export const appRouter = router({
               userId: analysis.userId ?? null,
               sessionId: input.sessionId,
               action: "analyze",
+              model: response.model || ENV.llmModel,
               promptTokens: usage.prompt_tokens ?? 0,
               completionTokens: usage.completion_tokens ?? 0,
             });
@@ -1223,6 +1249,7 @@ export const appRouter = router({
                   userId: analysis.userId ?? null,
                   sessionId: input.sessionId,
                   action: "analyze",
+                  model: insightsResponse.model || ENV.llmModel,
                   promptTokens: insightsUsage.prompt_tokens ?? 0,
                   completionTokens: insightsUsage.completion_tokens ?? 0,
                 });
@@ -1346,6 +1373,7 @@ export const appRouter = router({
             userId: analysis.userId ?? null,
             sessionId: input.sessionId,
             action: "chat",
+            model: response.model || ENV.llmModel,
             promptTokens: chatUsage.prompt_tokens ?? 0,
             completionTokens: chatUsage.completion_tokens ?? 0,
           });

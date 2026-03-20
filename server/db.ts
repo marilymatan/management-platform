@@ -214,7 +214,7 @@ export async function getUserAnalyses(userId: number) {
     .select()
     .from(analyses)
     .where(eq(analyses.userId, userId))
-    .orderBy(analyses.createdAt);
+    .orderBy(desc(analyses.createdAt));
   return result.map(decryptAnalysisData);
 }
 
@@ -238,12 +238,30 @@ export async function deleteAnalysis(sessionId: string, userId: number) {
   await db.delete(analyses).where(eq(analyses.sessionId, sessionId));
 }
 
-const COST_PER_1K_TOKENS = 0.0025;
+const MODEL_COST_PER_1K_TOKENS: Record<string, number> = {
+  "gemini-2.5-flash": 0.0025,
+  "gemini-2.5-pro": 0.0125,
+};
+
+function getCostPer1kTokens(model?: string | null) {
+  if (!model) return MODEL_COST_PER_1K_TOKENS["gemini-2.5-flash"];
+  if (MODEL_COST_PER_1K_TOKENS[model] !== undefined) {
+    return MODEL_COST_PER_1K_TOKENS[model];
+  }
+  if (model.includes("pro")) {
+    return MODEL_COST_PER_1K_TOKENS["gemini-2.5-pro"];
+  }
+  if (model.includes("flash")) {
+    return MODEL_COST_PER_1K_TOKENS["gemini-2.5-flash"];
+  }
+  return MODEL_COST_PER_1K_TOKENS["gemini-2.5-flash"];
+}
 
 export async function logApiUsage(data: {
   userId?: number | null;
   sessionId?: string | null;
   action: "analyze" | "chat";
+  model?: string | null;
   promptTokens: number;
   completionTokens: number;
 }) {
@@ -253,11 +271,12 @@ export async function logApiUsage(data: {
     return;
   }
   const totalTokens = data.promptTokens + data.completionTokens;
-  const costUsd = ((totalTokens / 1000) * COST_PER_1K_TOKENS).toFixed(6);
+  const costUsd = ((totalTokens / 1000) * getCostPer1kTokens(data.model)).toFixed(6);
   const entry: InsertApiUsageLog = {
     userId: data.userId ?? null,
     sessionId: data.sessionId ?? null,
     action: data.action,
+    model: data.model ?? "unknown",
     promptTokens: data.promptTokens,
     completionTokens: data.completionTokens,
     totalTokens,
