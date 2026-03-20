@@ -36,6 +36,8 @@ import {
   getSystemHealth,
   getNewUsersOverTime,
   getCategoryDistribution,
+  getCategorySummaryCache,
+  upsertCategorySummaryCache,
 } from "./db";
 import { TRPCError } from "@trpc/server";
 import {
@@ -133,7 +135,7 @@ const ANALYSIS_SYSTEM_PROMPT = `אתה מומחה לניתוח פוליסות ב
     {
       "id": "מזהה ייחודי",
       "title": "שם הכיסוי/ההטבה",
-      "category": "קטגוריה (למשל: רפואה משלימה, אשפוז, שיניים, עיניים, תרופות, ניתוחים, אחר)",
+      "category": "קטגוריה משנית בתוך סוג הביטוח — ראה רשימה למטה",
       "limit": "מגבלת שימוש (למשל: עד 12 טיפולים בשנה)",
       "details": "תיאור מפורט של הכיסוי",
       "eligibility": "תנאי זכאות",
@@ -179,6 +181,12 @@ const ANALYSIS_SYSTEM_PROMPT = `אתה מומחה לניתוח פוליסות ב
   * "life" - ביטוח חיים (ביטוח חיים, ריסק, אובדן כושר עבודה, נכות, מוות, סיעודי, פנסיה)
   * "car" - ביטוח רכב (ביטוח רכב, מקיף, צד ג, חובה, רכב)
   * "home" - ביטוח דירה (ביטוח דירה, מבנה, תכולה, רעידת אדמה, צנרת)
+- עבור category של כל כיסוי, סווג לפי סוג הפוליסה:
+  * ביטוח בריאות (health): "רפואה משלימה", "אשפוז", "שיניים", "עיניים", "תרופות", "ניתוח", "נפש", "הריון ולידה", "אחר"
+  * ביטוח חיים (life): "ביטוח חיים", "אובדן כושר עבודה", "סיעודי", "נכות", "פנסיה", "ריסק", "אחר"
+  * ביטוח רכב (car): "חובה", "מקיף", "צד ג", "נזקי גוף", "רכוש", "גניבה", "אחר"
+  * ביטוח דירה (home): "מבנה", "תכולה", "צד ג", "נזקי טבע", "צנרת", "אחר"
+  חשוב: תמיד השתמש בקטגוריות מגוונות ומתאימות לתוכן. אל תסווג את כל הכיסויים לקטגוריה אחת — חלק אותם לפי תת-נושאים ברורים.
 - הקפד על דיוק בנתונים הכספיים
 - שמור על שפה ברורה ומובנת בעברית
 - החזר JSON תקין בלבד
@@ -1525,12 +1533,12 @@ export const appRouter = router({
       .query(async ({ ctx, input }) => {
         if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
 
-        const [profile, analyses] = await Promise.all([
+        const [profile, allAnalyses] = await Promise.all([
           getUserProfile(ctx.user.id),
           getUserAnalyses(ctx.user.id),
         ]);
 
-        const categoryAnalyses = analyses.filter(
+        const categoryAnalyses = allAnalyses.filter(
           (analysis) =>
             analysis.status === "completed" &&
             analysis.analysisResult &&
@@ -1542,6 +1550,21 @@ export const appRouter = router({
             code: "NOT_FOUND",
             message: "לא נמצאו סקירות לקטגוריית הביטוח הזאת",
           });
+        }
+
+        const dataHash = crypto
+          .createHash("sha256")
+          .update(
+            categoryAnalyses
+              .map((a) => `${a.sessionId}:${new Date(a.updatedAt).getTime()}`)
+              .sort()
+              .join("|")
+          )
+          .digest("hex");
+
+        const cached = await getCategorySummaryCache(ctx.user.id, input.category);
+        if (cached && cached.dataHash === dataHash && cached.summaryData) {
+          return cached.summaryData as InsuranceCategoryLlmSummary;
         }
 
         const categoryTitle = INSURANCE_CATEGORY_TITLES[input.category];
@@ -1620,6 +1643,8 @@ ${JSON.stringify(payload, null, 2)}`,
           recommendedActions: parsed.recommendedActions,
           recommendedQuestions: parsed.recommendedQuestions,
         };
+
+        await upsertCategorySummaryCache(ctx.user.id, input.category, result, dataHash);
 
         const usage = response.usage;
         if (usage) {

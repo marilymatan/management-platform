@@ -64,6 +64,13 @@
       "when": 1773999480575,
       "tag": "0008_funny_nomad",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1774003038326,
+      "tag": "0009_crazy_shinobi_shaw",
+      "breakpoints": true
     }
   ]
 }

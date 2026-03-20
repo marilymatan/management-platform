@@ -114,5 +114,7 @@ data/
 .manus-logs/
 .manus/
 
+# Playwright artifacts
 playwright-report/
 test-results/
+blob-report/

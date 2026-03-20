@@ -1,7 +1,7 @@
 import { eq, desc, sql, and, asc } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import pg from "pg";
-import { InsertUser, users, analyses, chatMessages, apiUsageLogs, userProfiles, gmailConnections, smartInvoices, auditLogs, familyMembers, documentClassifications, type InsertAnalysis, type InsertChatMessage, type InsertApiUsageLog, type InsertUserProfile, type InsertFamilyMember, type InsertDocumentClassification } from "../drizzle/schema";
+import { InsertUser, users, analyses, chatMessages, apiUsageLogs, userProfiles, gmailConnections, smartInvoices, auditLogs, familyMembers, documentClassifications, categorySummaryCache, type InsertAnalysis, type InsertChatMessage, type InsertApiUsageLog, type InsertUserProfile, type InsertFamilyMember, type InsertDocumentClassification, type InsertCategorySummaryCache } from "../drizzle/schema";
 import { ENV } from './_core/env';
 import type { PolicyAnalysis } from "@shared/insurance";
 import { encryptField, decryptField, encryptJson, decryptJson } from "./encryption";
@@ -1103,4 +1103,58 @@ export async function getCategoryDistribution() {
     category: r.category as string,
     count: Number(r.count),
   }));
+}
+
+export async function getCategorySummaryCache(userId: number, category: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db
+    .select()
+    .from(categorySummaryCache)
+    .where(
+      and(
+        eq(categorySummaryCache.userId, userId),
+        eq(categorySummaryCache.category, category as any)
+      )
+    )
+    .limit(1);
+  if (result.length === 0) return null;
+  const row = result[0];
+  return {
+    ...row,
+    summaryData: decryptJson(row.summaryData),
+  };
+}
+
+export async function upsertCategorySummaryCache(
+  userId: number,
+  category: string,
+  summaryData: unknown,
+  dataHash: string
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const encrypted = encryptJson(summaryData);
+  await db
+    .insert(categorySummaryCache)
+    .values({
+      userId,
+      category: category as any,
+      summaryData: encrypted,
+      dataHash,
+    })
+    .onConflictDoUpdate({
+      target: [categorySummaryCache.userId, categorySummaryCache.category],
+      set: {
+        summaryData: encrypted,
+        dataHash,
+        updatedAt: new Date(),
+      },
+    });
+}
+
+export async function invalidateCategorySummaryCacheForUser(userId: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(categorySummaryCache).where(eq(categorySummaryCache.userId, userId));
 }

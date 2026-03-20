@@ -130,10 +130,10 @@ export default function InsuranceCategoryPage() {
     { category: category ?? "health" },
     {
       enabled: !!user && !!category && !isLoading && categoryPolicies.length > 0,
-      staleTime: 0,
-      gcTime: 0,
+      staleTime: 1000 * 60 * 30,
+      gcTime: 1000 * 60 * 60,
       retry: 1,
-      refetchOnMount: "always",
+      refetchOnMount: true,
       refetchOnWindowFocus: false,
       refetchOnReconnect: false,
     }

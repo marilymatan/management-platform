@@ -21,6 +21,21 @@ import {
   Shield,
   Search,
   ChevronLeft,
+  Car,
+  Home,
+  Flame,
+  Droplets,
+  Lock,
+  User,
+  Briefcase,
+  HeartPulse,
+  Baby,
+  Wallet,
+  Building,
+  Sofa,
+  Users,
+  CloudRain,
+  Wrench,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import type { Coverage } from "@shared/insurance";
@@ -41,6 +56,28 @@ const CATEGORY_CONFIG: Record<string, { icon: React.ReactNode; color: string; bo
   "ניתוח": { icon: <Scissors className="size-4" />, color: "text-orange-600", border: "border-r-orange-400", bg: "bg-orange-50" },
   "נפש": { icon: <Brain className="size-4" />, color: "text-indigo-600", border: "border-r-indigo-400", bg: "bg-indigo-50" },
   "פסיכ": { icon: <Brain className="size-4" />, color: "text-indigo-600", border: "border-r-indigo-400", bg: "bg-indigo-50" },
+  "הריון ולידה": { icon: <Baby className="size-4" />, color: "text-rose-600", border: "border-r-rose-400", bg: "bg-rose-50" },
+
+  "חובה": { icon: <Shield className="size-4" />, color: "text-red-600", border: "border-r-red-400", bg: "bg-red-50" },
+  "מקיף": { icon: <Car className="size-4" />, color: "text-amber-600", border: "border-r-amber-400", bg: "bg-amber-50" },
+  "צד ג": { icon: <Users className="size-4" />, color: "text-sky-600", border: "border-r-sky-400", bg: "bg-sky-50" },
+  "נזקי גוף": { icon: <HeartPulse className="size-4" />, color: "text-rose-600", border: "border-r-rose-400", bg: "bg-rose-50" },
+  "רכוש": { icon: <Wallet className="size-4" />, color: "text-emerald-600", border: "border-r-emerald-400", bg: "bg-emerald-50" },
+  "גניבה": { icon: <Lock className="size-4" />, color: "text-slate-600", border: "border-r-slate-400", bg: "bg-slate-50" },
+  "רכב": { icon: <Car className="size-4" />, color: "text-amber-600", border: "border-r-amber-400", bg: "bg-amber-50" },
+
+  "ביטוח חיים": { icon: <User className="size-4" />, color: "text-blue-600", border: "border-r-blue-400", bg: "bg-blue-50" },
+  "אובדן כושר עבודה": { icon: <Briefcase className="size-4" />, color: "text-orange-600", border: "border-r-orange-400", bg: "bg-orange-50" },
+  "סיעודי": { icon: <HeartPulse className="size-4" />, color: "text-teal-600", border: "border-r-teal-400", bg: "bg-teal-50" },
+  "נכות": { icon: <Activity className="size-4" />, color: "text-violet-600", border: "border-r-violet-400", bg: "bg-violet-50" },
+  "פנסיה": { icon: <Wallet className="size-4" />, color: "text-emerald-600", border: "border-r-emerald-400", bg: "bg-emerald-50" },
+  "ריסק": { icon: <Flame className="size-4" />, color: "text-red-600", border: "border-r-red-400", bg: "bg-red-50" },
+
+  "מבנה": { icon: <Building className="size-4" />, color: "text-stone-600", border: "border-r-stone-400", bg: "bg-stone-50" },
+  "תכולה": { icon: <Sofa className="size-4" />, color: "text-amber-600", border: "border-r-amber-400", bg: "bg-amber-50" },
+  "נזקי טבע": { icon: <CloudRain className="size-4" />, color: "text-sky-600", border: "border-r-sky-400", bg: "bg-sky-50" },
+  "צנרת": { icon: <Droplets className="size-4" />, color: "text-blue-600", border: "border-r-blue-400", bg: "bg-blue-50" },
+  "דירה": { icon: <Home className="size-4" />, color: "text-emerald-600", border: "border-r-emerald-400", bg: "bg-emerald-50" },
 };
 
 function getCategoryConfig(category: string) {

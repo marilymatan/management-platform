@@ -238,3 +238,19 @@ export const documentClassifications = pgTable("document_classifications", {
 
 export type DocumentClassification = typeof documentClassifications.$inferSelect;
 export type InsertDocumentClassification = typeof documentClassifications.$inferInsert;
+
+export const categorySummaryCache = pgTable("category_summary_cache", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull(),
+  category: insuranceCategoryEnum("category").notNull(),
+  summaryData: text("summary_data").notNull(),
+  dataHash: varchar("data_hash", { length: 128 }).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull().$onUpdate(() => new Date()),
+}, (table) => ({
+  userCategoryUniq: uniqueIndex("category_summary_cache_user_category_uniq").on(table.userId, table.category),
+  userIdIdx: index("category_summary_cache_user_id_idx").on(table.userId),
+}));
+
+export type CategorySummaryCache = typeof categorySummaryCache.$inferSelect;
+export type InsertCategorySummaryCache = typeof categorySummaryCache.$inferInsert;

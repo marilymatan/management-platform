@@ -8,12 +8,16 @@ const {
   logApiUsageMock,
   invokeLLMMock,
   auditMock,
+  getCategorySummaryCacheMock,
+  upsertCategorySummaryCacheMock,
 } = vi.hoisted(() => ({
   getUserAnalysesMock: vi.fn(),
   getUserProfileMock: vi.fn(),
   logApiUsageMock: vi.fn(),
   invokeLLMMock: vi.fn(),
   auditMock: vi.fn(),
+  getCategorySummaryCacheMock: vi.fn(),
+  upsertCategorySummaryCacheMock: vi.fn(),
 }));
 
 vi.mock("./_core/env", () => ({
@@ -78,6 +82,8 @@ vi.mock("./db", () => ({
   getSystemHealth: vi.fn().mockResolvedValue({}),
   getNewUsersOverTime: vi.fn().mockResolvedValue([]),
   getCategoryDistribution: vi.fn().mockResolvedValue([]),
+  getCategorySummaryCache: getCategorySummaryCacheMock,
+  upsertCategorySummaryCache: upsertCategorySummaryCacheMock,
   getDb: vi.fn().mockResolvedValue(null),
 }));
 
@@ -139,6 +145,7 @@ function makeAnalysis(params: {
     sessionId: params.sessionId,
     userId: 1,
     createdAt: new Date("2026-03-20T09:00:00.000Z"),
+    updatedAt: new Date("2026-03-20T09:00:00.000Z"),
     status: "completed",
     insuranceCategory: params.category,
     files: [{ name: `${params.policyName}.pdf`, size: 1024 }],
@@ -193,6 +200,11 @@ beforeEach(() => {
   logApiUsageMock.mockReset();
   invokeLLMMock.mockReset();
   auditMock.mockReset();
+  getCategorySummaryCacheMock.mockReset();
+  upsertCategorySummaryCacheMock.mockReset();
+
+  getCategorySummaryCacheMock.mockResolvedValue(null);
+  upsertCategorySummaryCacheMock.mockResolvedValue(undefined);
 
   getUserProfileMock.mockResolvedValue({
     id: 1,
