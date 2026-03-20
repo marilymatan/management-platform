@@ -49,6 +49,23 @@ export interface PersonalizedInsight {
   priority: "high" | "medium" | "low";
 }
 
+export type InsuranceSummaryTone = "warning" | "info" | "success";
+
+export interface InsuranceCategorySummaryHighlight {
+  id: string;
+  title: string;
+  description: string;
+  tone: InsuranceSummaryTone;
+}
+
+export interface InsuranceCategoryLlmSummary {
+  category: InsuranceCategory;
+  overview: string;
+  highlights: InsuranceCategorySummaryHighlight[];
+  recommendedActions: string[];
+  recommendedQuestions: string[];
+}
+
 export interface UserProfile {
   dateOfBirth: string | null;
   gender: string | null;

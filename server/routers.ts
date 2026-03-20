@@ -38,7 +38,12 @@ import {
   getCategoryDistribution,
 } from "./db";
 import { TRPCError } from "@trpc/server";
-import type { PolicyAnalysis } from "@shared/insurance";
+import {
+  inferInsuranceCategory,
+  type InsuranceCategory,
+  type InsuranceCategoryLlmSummary,
+  type PolicyAnalysis,
+} from "@shared/insurance";
 import {
   getGmailAuthUrl,
   exchangeCodeForTokens,
@@ -235,6 +240,115 @@ const PERSONALIZED_INSIGHTS_PROMPT = `אתה יועץ ביטוח מומחה ומ
     }
   ]
 }`;
+
+const CATEGORY_SUMMARY_SYSTEM_PROMPT = `אתה יועץ ביטוח ישראלי. קיבלת כמה סקירות של פוליסות מאותה קטגוריית ביטוח עבור אותו משתמש.
+
+המטרה: לייצר סיכום מאוחד אחד, ברור ופרקטי, של כל מה שיש בקטגוריית הביטוח הזאת.
+
+החזר JSON בלבד בפורמט הבא:
+{
+  "overview": "סיכום מאוחד ב-2 עד 4 משפטים",
+  "highlights": [
+    {
+      "id": "מזהה קצר",
+      "title": "כותרת קצרה",
+      "description": "הסבר קונקרטי",
+      "tone": "warning | info | success"
+    }
+  ],
+  "recommendedActions": ["פעולה מומלצת 1"],
+  "recommendedQuestions": ["שאלה מומלצת 1"]
+}
+
+כללים:
+- overview חייב להתייחס לכל הסקירות ביחד, לא רק לפוליסה אחת
+- highlights צריכים להיות קונקרטיים ומבוססי נתונים, 3 עד 5 פריטים
+- recommendedActions צריכים להיות קצרים וישימים, 2 עד 4 פריטים
+- recommendedQuestions צריכים להיות שאלות המשך חכמות, 2 עד 3 פריטים
+- התייחס לחפיפות, פערים, חריגים, תאריכי חידוש, פרמיות והבדלים בין פוליסות כשזה רלוונטי
+- אם חסר מידע, ציין זאת במפורש ואל תמציא
+- כל הטקסט בעברית ברורה, בגובה העיניים`;
+
+const INSURANCE_CATEGORY_TITLES: Record<InsuranceCategory, string> = {
+  health: "ביטוחי בריאות",
+  life: "ביטוחי חיים",
+  car: "ביטוחי רכב",
+  home: "ביטוחי דירה",
+};
+
+function resolveAnalysisCategoryForSummary(analysis: any): InsuranceCategory {
+  return (
+    analysis.insuranceCategory ??
+    analysis.analysisResult?.generalInfo?.insuranceCategory ??
+    inferInsuranceCategory(
+      analysis.analysisResult?.generalInfo?.policyType,
+      analysis.analysisResult?.coverages
+    )
+  );
+}
+
+function buildCategorySummaryMetrics(analyses: any[]) {
+  return {
+    policyCount: analyses.length,
+    fileCount: analyses.reduce((sum, analysis) => sum + ((analysis.files ?? []) as unknown[]).length, 0),
+    coverageCount: analyses.reduce((sum, analysis) => sum + ((analysis.analysisResult?.coverages ?? []) as unknown[]).length, 0),
+    duplicateGroups: analyses.reduce((sum, analysis) => sum + ((analysis.analysisResult?.duplicateCoverages ?? []) as unknown[]).length, 0),
+    knownMonthlyPremiums: analyses
+      .map((analysis) => analysis.analysisResult?.generalInfo?.monthlyPremium)
+      .filter((value): value is string => Boolean(value)),
+    renewalDates: analyses
+      .map((analysis) => ({
+        policyName: analysis.analysisResult?.generalInfo?.policyName ?? "פוליסה",
+        endDate: analysis.analysisResult?.generalInfo?.endDate ?? "לא מצוין בפוליסה",
+      })),
+  };
+}
+
+function buildCategorySummaryPayload(analyses: any[]) {
+  return analyses.map((analysis) => ({
+    sessionId: analysis.sessionId,
+    createdAt: analysis.createdAt instanceof Date ? analysis.createdAt.toISOString() : String(analysis.createdAt),
+    files: ((analysis.files ?? []) as Array<{ name?: string }>).map((file) => file?.name ?? "קובץ"),
+    generalInfo: {
+      policyName: analysis.analysisResult?.generalInfo?.policyName ?? "לא מצוין בפוליסה",
+      insurerName: analysis.analysisResult?.generalInfo?.insurerName ?? "לא מצוין בפוליסה",
+      policyNumber: analysis.analysisResult?.generalInfo?.policyNumber ?? "לא מצוין בפוליסה",
+      policyType: analysis.analysisResult?.generalInfo?.policyType ?? "לא מצוין בפוליסה",
+      monthlyPremium: analysis.analysisResult?.generalInfo?.monthlyPremium ?? "לא מצוין בפוליסה",
+      annualPremium: analysis.analysisResult?.generalInfo?.annualPremium ?? "לא מצוין בפוליסה",
+      startDate: analysis.analysisResult?.generalInfo?.startDate ?? "לא מצוין בפוליסה",
+      endDate: analysis.analysisResult?.generalInfo?.endDate ?? "לא מצוין בפוליסה",
+      importantNotes: analysis.analysisResult?.generalInfo?.importantNotes ?? [],
+      fineprint: analysis.analysisResult?.generalInfo?.fineprint ?? [],
+    },
+    summary: analysis.analysisResult?.summary ?? "אין סיכום זמין",
+    coverages: (analysis.analysisResult?.coverages ?? []).map((coverage: any) => ({
+      title: coverage.title,
+      category: coverage.category,
+      limit: coverage.limit,
+      details: coverage.details,
+      eligibility: coverage.eligibility,
+      copay: coverage.copay,
+      maxReimbursement: coverage.maxReimbursement,
+      exclusions: coverage.exclusions,
+      waitingPeriod: coverage.waitingPeriod,
+      sourceFile: coverage.sourceFile ?? "לא מצוין בפוליסה",
+    })),
+    duplicateCoverages: (analysis.analysisResult?.duplicateCoverages ?? []).map((duplicate: any) => ({
+      title: duplicate.title,
+      explanation: duplicate.explanation,
+      recommendation: duplicate.recommendation,
+      sourceFiles: duplicate.sourceFiles ?? [],
+    })),
+    personalizedInsights: (analysis.analysisResult?.personalizedInsights ?? []).map((insight: any) => ({
+      title: insight.title,
+      description: insight.description,
+      type: insight.type,
+      priority: insight.priority,
+      relevantCoverage: insight.relevantCoverage ?? "",
+    })),
+  }));
+}
 
 function buildProfileContext(profile: any): string {
   const labels: Record<string, string> = {
@@ -1404,6 +1518,130 @@ export const appRouter = router({
           role: msg.role as "user" | "assistant",
           content: msg.content,
         }));
+      }),
+
+    summarizeCategory: protectedProcedure
+      .input(z.object({ category: z.enum(["health", "life", "car", "home"]) }))
+      .query(async ({ ctx, input }) => {
+        if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
+
+        const [profile, analyses] = await Promise.all([
+          getUserProfile(ctx.user.id),
+          getUserAnalyses(ctx.user.id),
+        ]);
+
+        const categoryAnalyses = analyses.filter(
+          (analysis) =>
+            analysis.status === "completed" &&
+            analysis.analysisResult &&
+            resolveAnalysisCategoryForSummary(analysis) === input.category
+        );
+
+        if (categoryAnalyses.length === 0) {
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: "לא נמצאו סקירות לקטגוריית הביטוח הזאת",
+          });
+        }
+
+        const categoryTitle = INSURANCE_CATEGORY_TITLES[input.category];
+        const profileContext = profile ? buildProfileContext(profile) : "לא הוזן פרופיל מפורט";
+        const metrics = buildCategorySummaryMetrics(categoryAnalyses);
+        const payload = buildCategorySummaryPayload(categoryAnalyses);
+        const summarySessionId = `category-summary-${ctx.user.id}-${input.category}`;
+
+        const response = await invokeLLM({
+          model: ENV.llmModel,
+          maxTokens: 3000,
+          messages: [
+            {
+              role: "system",
+              content: CATEGORY_SUMMARY_SYSTEM_PROMPT,
+            },
+            {
+              role: "user",
+              content: `קטגוריית הביטוח: ${categoryTitle}
+
+פרופיל הלקוח:
+${profileContext}
+
+מדדים מצטברים:
+${JSON.stringify(metrics, null, 2)}
+
+סקירות מלאות של הקטגוריה:
+${JSON.stringify(payload, null, 2)}`,
+            },
+          ],
+          response_format: {
+            type: "json_schema",
+            json_schema: {
+              name: "insurance_category_summary",
+              strict: true,
+              schema: {
+                type: "object",
+                properties: {
+                  overview: { type: "string" },
+                  highlights: {
+                    type: "array",
+                    items: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string" },
+                        title: { type: "string" },
+                        description: { type: "string" },
+                        tone: { type: "string", enum: ["warning", "info", "success"] },
+                      },
+                      required: ["id", "title", "description", "tone"],
+                      additionalProperties: false,
+                    },
+                  },
+                  recommendedActions: {
+                    type: "array",
+                    items: { type: "string" },
+                  },
+                  recommendedQuestions: {
+                    type: "array",
+                    items: { type: "string" },
+                  },
+                },
+                required: ["overview", "highlights", "recommendedActions", "recommendedQuestions"],
+                additionalProperties: false,
+              },
+            },
+          },
+        });
+
+        const content = extractLLMContent(response);
+        const parsed = parseLLMJson<Omit<InsuranceCategoryLlmSummary, "category">>(content);
+        const result: InsuranceCategoryLlmSummary = {
+          category: input.category,
+          overview: parsed.overview,
+          highlights: parsed.highlights,
+          recommendedActions: parsed.recommendedActions,
+          recommendedQuestions: parsed.recommendedQuestions,
+        };
+
+        const usage = response.usage;
+        if (usage) {
+          await logApiUsage({
+            userId: ctx.user.id,
+            sessionId: summarySessionId,
+            action: "chat",
+            model: response.model || ENV.llmModel,
+            promptTokens: usage.prompt_tokens ?? 0,
+            completionTokens: usage.completion_tokens ?? 0,
+          });
+        }
+
+        await audit({
+          userId: ctx.user.id,
+          action: "summarize_category",
+          resource: "analysis_category",
+          resourceId: input.category,
+          details: JSON.stringify({ count: categoryAnalyses.length }),
+        });
+
+        return result;
       }),
 
     /** Get all analyses for the current user */

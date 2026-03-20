@@ -5,6 +5,8 @@ import { InsertUser, users, analyses, chatMessages, apiUsageLogs, userProfiles, 
 import { ENV } from './_core/env';
 import type { PolicyAnalysis } from "@shared/insurance";
 import { encryptField, decryptField, encryptJson, decryptJson } from "./encryption";
+import { storageDelete } from "./storage";
+import { deleteAnalysisArtifacts } from "./analysisCleanup";
 
 let _pool: pg.Pool | null = null;
 let _db: ReturnType<typeof drizzle> | null = null;
@@ -234,8 +236,13 @@ export async function deleteAnalysis(sessionId: string, userId: number) {
   if (!analysis || analysis.userId !== userId) {
     throw new Error("Unauthorized");
   }
-  await db.delete(chatMessages).where(eq(chatMessages.sessionId, sessionId));
-  await db.delete(analyses).where(eq(analyses.sessionId, sessionId));
+  await deleteAnalysisArtifacts({
+    db,
+    sessionId,
+    userId,
+    files: analysis.files as Array<string | { fileKey?: string | null }> | null | undefined,
+    deleteStoredFile: storageDelete,
+  });
 }
 
 const MODEL_COST_PER_1K_TOKENS: Record<string, number> = {

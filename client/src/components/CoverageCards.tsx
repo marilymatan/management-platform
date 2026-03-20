@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -28,6 +28,7 @@ import type { Coverage } from "@shared/insurance";
 interface CoverageCardsProps {
   coverages: Coverage[];
   selectedFileFilter?: string | null;
+  initialCategoryFilter?: string | null;
 }
 
 const CATEGORY_CONFIG: Record<string, { icon: React.ReactNode; color: string; border: string; bg: string }> = {
@@ -71,10 +72,19 @@ function DetailRow({ label, value }: { label: string; value?: string }) {
   );
 }
 
-export function CoverageCards({ coverages, selectedFileFilter }: CoverageCardsProps) {
+export function CoverageCards({ coverages, selectedFileFilter, initialCategoryFilter }: CoverageCardsProps) {
   const [selectedCoverage, setSelectedCoverage] = useState<Coverage | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
-  const [activeCategory, setActiveCategory] = useState<string | null>(null);
+  const [activeCategory, setActiveCategory] = useState<string | null>(initialCategoryFilter ?? null);
+
+  useEffect(() => {
+    const availableCategories = new Set(coverages.map((coverage) => coverage.category || "אחר"));
+    setActiveCategory(
+      initialCategoryFilter && availableCategories.has(initialCategoryFilter)
+        ? initialCategoryFilter
+        : null
+    );
+  }, [coverages, initialCategoryFilter]);
 
   if (coverages.length === 0) {
     return (

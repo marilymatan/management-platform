@@ -6,6 +6,10 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
+  InsuranceCategoryLlmSummary,
+  InsuranceCategoryLlmSummarySkeleton,
+} from "@/components/InsuranceCategoryLlmSummary";
+import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -42,6 +46,7 @@ import {
   formatInsuranceCurrency,
   insuranceCategoryLabels,
 } from "@/lib/insuranceOverview";
+import { buildAnalysisViewUrl } from "@/lib/analysisView";
 
 const CATEGORY_CONFIG: Record<
   InsuranceCategory,
@@ -83,22 +88,7 @@ const CATEGORY_CONFIG: Record<
   },
 };
 
-type AnalysisDocumentFile = string | { name?: string };
-
-function getAnalysisFileName(file: AnalysisDocumentFile) {
-  return typeof file === "string" ? file : file.name;
-}
-
-function buildAnalysisViewUrl(sessionId: string, policyName: string, files: AnalysisDocumentFile[] | undefined) {
-  const fileNames = (files ?? [])
-    .map(getAnalysisFileName)
-    .filter((name): name is string => Boolean(name?.trim()));
-  const preferredFileName = fileNames.find((name) => name === policyName) ?? (fileNames.length === 1 ? fileNames[0] : null);
-  if (!preferredFileName) {
-    return `/insurance/${sessionId}`;
-  }
-  return `/insurance/${sessionId}?file=${encodeURIComponent(preferredFileName)}`;
-}
+const CATEGORY_FILTERS: InsuranceCategory[] = ["health", "life", "car", "home"];
 
 export default function InsuranceCategoryPage() {
   const { user } = useAuth({ redirectOnUnauthenticated: true });
@@ -114,9 +104,14 @@ export default function InsuranceCategoryPage() {
   });
   const utils = trpc.useUtils();
   const deleteAnalysisMutation = trpc.policy.delete.useMutation({
-    onSuccess: () => {
+    onSuccess: async () => {
       toast.success("הסריקה נמחקה בהצלחה");
-      utils.policy.getUserAnalyses.invalidate();
+      await Promise.all([
+        utils.policy.getUserAnalyses.invalidate(),
+        category ? utils.policy.summarizeCategory.invalidate({ category }) : Promise.resolve(),
+        utils.documents.getClassifications.invalidate(),
+        utils.assistant.getHomeContext.invalidate(),
+      ]);
     },
     onError: (error) => {
       toast.error("שגיאה במחיקת הסריקה: " + error.message);
@@ -131,11 +126,27 @@ export default function InsuranceCategoryPage() {
     () => (category ? overview.completedPolicies.filter((policy) => policy.category === category) : []),
     [overview.completedPolicies, category]
   );
+  const categorySummaryQuery = trpc.policy.summarizeCategory.useQuery(
+    { category: category ?? "health" },
+    {
+      enabled: !!user && !!category && !isLoading && categoryPolicies.length > 0,
+      staleTime: 0,
+      gcTime: 0,
+      retry: 1,
+      refetchOnMount: "always",
+      refetchOnWindowFocus: false,
+      refetchOnReconnect: false,
+    }
+  );
 
   if (!user || !category || !CATEGORY_CONFIG[category]) return null;
 
   const config = CATEGORY_CONFIG[category];
   const summary = overview.categorySummaries[category];
+  const isCategorySummaryLoading =
+    categoryPolicies.length > 0 &&
+    !categorySummaryQuery.data &&
+    (categorySummaryQuery.isLoading || categorySummaryQuery.isFetching);
   const categoryInsights = [
     ...(summary.nextRenewalDays !== null
       ? [{
@@ -235,6 +246,44 @@ export default function InsuranceCategoryPage() {
         </div>
       </div>
 
+      <div
+        className="animate-fade-in-up rounded-2xl border border-border/60 bg-card/80 p-2"
+        data-testid="insurance-category-filter"
+      >
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => setLocation("/insurance")}
+            className="inline-flex items-center gap-2 rounded-xl border border-border bg-background px-3 py-2 text-sm font-medium text-foreground transition-all hover:border-primary/30 hover:bg-muted/50"
+          >
+            <span>כל הביטוחים</span>
+          </button>
+          {CATEGORY_FILTERS.map((filterCategory) => {
+            const filterConfig = CATEGORY_CONFIG[filterCategory];
+            const isActive = filterCategory === category;
+            return (
+              <button
+                key={filterCategory}
+                type="button"
+                aria-pressed={isActive}
+                data-testid={`insurance-category-filter-${filterCategory}`}
+                onClick={() => setLocation(`/insurance/category/${filterCategory}`)}
+                className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-medium transition-all ${
+                  isActive
+                    ? "border-primary bg-primary text-primary-foreground shadow-sm"
+                    : "border-border bg-background text-foreground hover:border-primary/30 hover:bg-muted/50"
+                }`}
+              >
+                <span className={isActive ? "text-primary-foreground" : filterConfig.textColor}>
+                  {filterConfig.icon}
+                </span>
+                <span>{filterConfig.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-4 animate-fade-in-up stagger-1">
         <Card>
           <CardContent className="pt-5 pb-4">
@@ -290,19 +339,49 @@ export default function InsuranceCategoryPage() {
         </Card>
       </div>
 
-      {categoryInsights.length > 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 animate-fade-in-up stagger-2">
-          {categoryInsights.map((insight) => (
-            <Card key={insight.id} className="border-border/60 bg-muted/15">
-              <CardContent className="p-5 space-y-2">
-                <div className="flex items-center gap-2">
-                  <CircleAlert className="size-4 text-primary" />
-                  <p className="text-sm font-semibold">{insight.title}</p>
-                </div>
-                <p className="text-sm text-muted-foreground leading-relaxed">{insight.description}</p>
-              </CardContent>
-            </Card>
-          ))}
+      {categoryPolicies.length > 0 && isCategorySummaryLoading && (
+        <InsuranceCategoryLlmSummarySkeleton />
+      )}
+
+      {categoryPolicies.length > 0 && categorySummaryQuery.data && (
+        <InsuranceCategoryLlmSummary
+          summary={categorySummaryQuery.data}
+          categoryLabel={config.label}
+          policyCount={summary.scans}
+          pdfCount={summary.pdfs}
+          premiumLabel={summary.monthlyPremium > 0 ? formatInsuranceCurrency(summary.monthlyPremium) : "ללא פרמיה מזוהה"}
+        />
+      )}
+
+      {categoryPolicies.length > 0 && categorySummaryQuery.error && !categorySummaryQuery.data && (
+        <div className="space-y-4 animate-fade-in-up stagger-2">
+          <Card className="border-amber-200 bg-amber-50/70">
+            <CardContent className="p-5 space-y-2">
+              <div className="flex items-center gap-2">
+                <AlertCircle className="size-4 text-amber-600" />
+                <p className="text-sm font-semibold">לא הצלחנו להכין כרגע סיכום חכם</p>
+              </div>
+              <p className="text-sm text-muted-foreground leading-relaxed">
+                אפשר להמשיך לצפות בפוליסות הקיימות, או לרענן את העמוד כדי לנסות שוב.
+              </p>
+            </CardContent>
+          </Card>
+
+          {categoryInsights.length > 0 && (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {categoryInsights.map((insight) => (
+                <Card key={insight.id} className="border-border/60 bg-muted/15">
+                  <CardContent className="p-5 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <CircleAlert className="size-4 text-primary" />
+                      <p className="text-sm font-semibold">{insight.title}</p>
+                    </div>
+                    <p className="text-sm text-muted-foreground leading-relaxed">{insight.description}</p>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -331,9 +410,12 @@ export default function InsuranceCategoryPage() {
                 return null;
               }
               const viewUrl = buildAnalysisViewUrl(
-                policy.sessionId,
-                policy.policyName,
-                matchingAnalysis.files as AnalysisDocumentFile[] | undefined
+                {
+                  sessionId: policy.sessionId,
+                  preferredPolicyName: policy.policyName,
+                  coverages: matchingAnalysis.analysisResult?.coverages as Array<{ category?: string; sourceFile?: string }> | undefined,
+                  insuranceCategory: policy.category,
+                }
               );
               return (
                 <Card

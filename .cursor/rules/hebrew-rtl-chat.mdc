@@ -1,0 +1,48 @@
+---
+description: Hebrew/RTL formatting for every Cursor chat reply (bidirectional text, mixed EN/HE)
+alwaysApply: true
+---
+
+# Hebrew / RTL chat (always)
+
+## Always
+
+On every assistant reply in Cursor chat, wrap all non-code narrative (explanations, headings, lists, prose) in:
+
+```html
+<div dir="rtl">
+
+… markdown here …
+
+</div>
+```
+
+Do not place fenced code blocks inside that div; keep them after the closing `</div>` or in their own `dir="ltr"` wrapper.
+
+If HTML is stripped, start each Hebrew-heavy paragraph with RLM (U+200F, `‏`).
+
+## Code and technical content
+
+Keep code, commands, paths, logs, and stack traces LTR. Use a plain fenced block or:
+
+```html
+<div dir="ltr">
+
+```text
+…
+```
+
+</div>
+```
+
+## Mixed Hebrew and English
+
+For English tokens inside Hebrew (file names, APIs, identifiers), use LRM (U+200E, `‎`) and RLM (U+200F) around the Latin segment when visual order is wrong.
+
+## Exception
+
+Only skip the RTL wrapper if the user explicitly asks for an all-LTR layout for that message.
+
+## Limitation
+
+Chat panel CSS is controlled by Cursor; this rule improves direction and bidi in markdown/HTML where supported. IDE-wide RTL may still need an extension.

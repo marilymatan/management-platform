@@ -35,13 +35,18 @@ import { he } from "date-fns/locale";
 export default function Dashboard() {
   const { user } = useAuth();
   const [, setLocation] = useLocation();
+  const utils = trpc.useUtils();
   const { data: analyses, isLoading } = trpc.policy.getUserAnalyses.useQuery(undefined, {
     enabled: !!user,
   });
   const deleteAnalysisMutation = trpc.policy.delete.useMutation({
-    onSuccess: () => {
+    onSuccess: async () => {
       toast.success("הסריקה נמחקה בהצלחה");
-      trpc.useUtils().policy.getUserAnalyses.invalidate();
+      await Promise.all([
+        utils.policy.getUserAnalyses.invalidate(),
+        utils.documents.getClassifications.invalidate(),
+        utils.assistant.getHomeContext.invalidate(),
+      ]);
     },
     onError: (error) => {
       toast.error("שגיאה במחיקת הסריקה: " + error.message);

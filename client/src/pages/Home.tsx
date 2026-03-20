@@ -41,6 +41,14 @@ function getRequestedAnalysisFileFilter() {
   return value?.trim() ? value : null;
 }
 
+function getRequestedAnalysisCoverageCategory() {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  const value = new URLSearchParams(window.location.search).get("coverageCategory");
+  return value?.trim() ? value : null;
+}
+
 function resolveSelectedFileFilter(result: PolicyAnalysis | null, requestedFileFilter: string | null) {
   if (!result || !requestedFileFilter) {
     return null;
@@ -69,6 +77,7 @@ export default function Home() {
   const [selectedFileFilter, setSelectedFileFilter] = useState<string | null>(null);
   const requestedSessionId = params?.sessionId && params.sessionId !== "new" ? params.sessionId : null;
   const requestedFileFilter = getRequestedAnalysisFileFilter();
+  const requestedCoverageCategory = getRequestedAnalysisCoverageCategory();
   const isViewingSavedAnalysis = Boolean(requestedSessionId);
 
   const uploadMutation = trpc.policy.upload.useMutation();
@@ -454,7 +463,11 @@ export default function Home() {
             </TabsList>
 
             <TabsContent value="coverages" className="mt-5">
-              <CoverageCards coverages={analysisResult.coverages} selectedFileFilter={selectedFileFilter} />
+              <CoverageCards
+                coverages={analysisResult.coverages}
+                selectedFileFilter={selectedFileFilter}
+                initialCategoryFilter={requestedCoverageCategory}
+              />
             </TabsContent>
 
             <TabsContent value="financial" className="mt-5">
