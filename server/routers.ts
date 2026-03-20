@@ -199,6 +199,22 @@ const ANALYSIS_SYSTEM_PROMPT = `אתה מומחה לניתוח פוליסות ב
 - תן המלצה מעשית למשתמש (למשל: כדאי לבדוק אם ניתן לבטל אחד מהכיסויים ולחסוך בפרמיה)
 - אם אין כיסויים כפולים, החזר מערך ריק []`;
 
+const PDF_BATCH_SIZE = 3;
+
+const BATCH_MERGE_PROMPT = `אתה מומחה לניתוח פוליסות ביטוח בעברית. קיבלת תוצאות ניתוח של מספר קבוצות קבצי פוליסה שנותחו בנפרד.
+
+משימתך:
+1. אחד את כל פרטי המידע הכללי (generalInfo) לאובייקט אחד מסכם. אם יש מספר פוליסות שונות, סכם את שמות כל הפוליסות, חברות הביטוח, מספרי הפוליסות, הפרמיות וכו׳
+2. כתוב סיכום (summary) אחד כולל שמכסה את כל הפוליסות
+3. זהה כיסויים כפולים (duplicateCoverages) בין הקבוצות השונות — השתמש ב-id המדויקים כפי שהתקבלו (מתחילים ב-b0-, b1-, b2- וכו׳)
+
+הנחיות:
+- בדוק כיסויים כפולים בין קבוצות שונות, לא רק בתוך אותה קבוצה
+- כיסוי נחשב כפול כאשר שני כיסויים מכסים את אותו סוג טיפול/שירות
+- עבור insuranceCategory, בחר את הקטגוריה הנפוצה ביותר
+- שמור על שפה ברורה ומובנת בעברית
+- החזר JSON תקין בלבד`;
+
 const CHAT_SYSTEM_PROMPT = `אתה עוזר וירטואלי מומחה בפוליסות ביטוח. תפקידך לענות על שאלות של המשתמש לגבי פוליסת הביטוח שלו.
 
 כללים חשובים:
@@ -1187,131 +1203,237 @@ export const appRouter = router({
         await updateAnalysisStatus(input.sessionId, "processing");
 
         try {
-          let userContent: any[];
+          const typedFiles = analysis.files as Array<{ name: string; fileKey?: string; url?: string }>;
 
-          const fileParts = await Promise.all(
-            analysis.files.map(async (file: { name: string; fileKey?: string; url?: string }) => {
-              const fileKey = file.fileKey || file.url;
-              if (!fileKey) return null;
-              const buffer = await storageRead(fileKey);
-              if (!buffer) return null;
-              const base64 = buffer.toString("base64");
-              return {
-                type: "image_url" as const,
-                image_url: {
-                  url: `data:application/pdf;base64,${base64}`,
-                },
-              };
-            })
-          );
-          userContent = [
-            { type: "text", text: `נא לנתח את פוליסות הביטוח הבאות (${analysis.files.length} קבצים) ולהחזיר את המידע בפורמט JSON המבוקש:` },
-            ...fileParts.filter(Boolean),
-          ];
+          const loadFileParts = async (fileList: typeof typedFiles) => {
+            const parts = await Promise.all(
+              fileList.map(async (file) => {
+                const fileKey = file.fileKey || file.url;
+                if (!fileKey) return null;
+                const buffer = await storageRead(fileKey);
+                if (!buffer) return null;
+                const base64 = buffer.toString("base64");
+                return {
+                  type: "image_url" as const,
+                  image_url: { url: `data:application/pdf;base64,${base64}` },
+                };
+              })
+            );
+            return parts.filter((p): p is NonNullable<typeof parts[number]> => p !== null);
+          };
 
-          const response = await invokeLLM({
-            messages: [
-              { role: "system", content: ANALYSIS_SYSTEM_PROMPT },
-              {
-                role: "user",
-                content: userContent,
+          const generalInfoSchema = {
+            type: "object",
+            properties: {
+              policyName: { type: "string" },
+              insurerName: { type: "string" },
+              policyNumber: { type: "string" },
+              policyType: { type: "string" },
+              insuranceCategory: { type: "string", enum: ["health", "life", "car", "home"] },
+              monthlyPremium: { type: "string" },
+              annualPremium: { type: "string" },
+              startDate: { type: "string" },
+              endDate: { type: "string" },
+              importantNotes: { type: "array", items: { type: "string" } },
+              fineprint: { type: "array", items: { type: "string" } },
+            },
+            required: ["policyName", "insurerName", "policyNumber", "policyType", "insuranceCategory", "monthlyPremium", "annualPremium", "startDate", "endDate", "importantNotes", "fineprint"],
+            additionalProperties: false,
+          };
+
+          const duplicateCoveragesSchema = {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                id: { type: "string" },
+                title: { type: "string" },
+                coverageIds: { type: "array", items: { type: "string" } },
+                sourceFiles: { type: "array", items: { type: "string" } },
+                explanation: { type: "string" },
+                recommendation: { type: "string" },
               },
-            ],
-            maxTokens: 65536,
-            response_format: {
-              type: "json_schema",
-              json_schema: {
-                name: "policy_analysis",
-                strict: true,
-                schema: {
-                  type: "object",
-                  properties: {
-                    coverages: {
-                      type: "array",
-                      items: {
-                        type: "object",
-                        properties: {
-                          id: { type: "string" },
-                          title: { type: "string" },
-                          category: { type: "string" },
-                          limit: { type: "string" },
-                          details: { type: "string" },
-                          eligibility: { type: "string" },
-                          copay: { type: "string" },
-                          maxReimbursement: { type: "string" },
-                          exclusions: { type: "string" },
-                          waitingPeriod: { type: "string" },
-                          sourceFile: { type: "string" },
-                        },
-                        required: ["id", "title", "category", "limit", "details", "eligibility", "copay", "maxReimbursement", "exclusions", "waitingPeriod", "sourceFile"],
-                        additionalProperties: false,
-                      },
-                    },
-                    generalInfo: {
+              required: ["id", "title", "coverageIds", "sourceFiles", "explanation", "recommendation"],
+              additionalProperties: false,
+            },
+          };
+
+          const analysisResponseFormat = {
+            type: "json_schema" as const,
+            json_schema: {
+              name: "policy_analysis",
+              strict: true,
+              schema: {
+                type: "object",
+                properties: {
+                  coverages: {
+                    type: "array",
+                    items: {
                       type: "object",
                       properties: {
-                        policyName: { type: "string" },
-                        insurerName: { type: "string" },
-                        policyNumber: { type: "string" },
-                        policyType: { type: "string" },
-                        insuranceCategory: { type: "string", enum: ["health", "life", "car", "home"] },
-                        monthlyPremium: { type: "string" },
-                        annualPremium: { type: "string" },
-                        startDate: { type: "string" },
-                        endDate: { type: "string" },
-                        importantNotes: { type: "array", items: { type: "string" } },
-                        fineprint: { type: "array", items: { type: "string" } },
+                        id: { type: "string" },
+                        title: { type: "string" },
+                        category: { type: "string" },
+                        limit: { type: "string" },
+                        details: { type: "string" },
+                        eligibility: { type: "string" },
+                        copay: { type: "string" },
+                        maxReimbursement: { type: "string" },
+                        exclusions: { type: "string" },
+                        waitingPeriod: { type: "string" },
+                        sourceFile: { type: "string" },
                       },
-                      required: ["policyName", "insurerName", "policyNumber", "policyType", "insuranceCategory", "monthlyPremium", "annualPremium", "startDate", "endDate", "importantNotes", "fineprint"],
+                      required: ["id", "title", "category", "limit", "details", "eligibility", "copay", "maxReimbursement", "exclusions", "waitingPeriod", "sourceFile"],
                       additionalProperties: false,
                     },
-                    summary: { type: "string" },
-                    duplicateCoverages: {
-                      type: "array",
-                      items: {
-                        type: "object",
-                        properties: {
-                          id: { type: "string" },
-                          title: { type: "string" },
-                          coverageIds: { type: "array", items: { type: "string" } },
-                          sourceFiles: { type: "array", items: { type: "string" } },
-                          explanation: { type: "string" },
-                          recommendation: { type: "string" },
-                        },
-                        required: ["id", "title", "coverageIds", "sourceFiles", "explanation", "recommendation"],
-                        additionalProperties: false,
-                      },
-                    },
                   },
-                  required: ["coverages", "generalInfo", "summary", "duplicateCoverages"],
-                  additionalProperties: false,
+                  generalInfo: generalInfoSchema,
+                  summary: { type: "string" },
+                  duplicateCoverages: duplicateCoveragesSchema,
                 },
+                required: ["coverages", "generalInfo", "summary", "duplicateCoverages"],
+                additionalProperties: false,
               },
             },
-          });
+          };
 
-          const content = extractLLMContent(response);
-          let analysisResult: PolicyAnalysis;
-          try {
-            analysisResult = parseLLMJson<PolicyAnalysis>(content);
-          } catch (parseError: any) {
-            console.error("[Analysis] JSON parse failed:", parseError.message, "| Content length:", content.length, "| finish_reason:", response.choices?.[0]?.finish_reason);
-            throw new Error(
-              "שגיאה בעיבוד תגובת ה-AI. התגובה לא התקבלה בפורמט תקין. נסה להעלות פחות קבצים בבת אחת."
-            );
-          }
+          const logLlmUsage = async (resp: { usage?: { prompt_tokens?: number; completion_tokens?: number }; model?: string }) => {
+            if (resp.usage) {
+              await logApiUsage({
+                userId: analysis.userId ?? null,
+                sessionId: input.sessionId,
+                action: "analyze",
+                model: resp.model || ENV.llmModel,
+                promptTokens: resp.usage.prompt_tokens ?? 0,
+                completionTokens: resp.usage.completion_tokens ?? 0,
+              });
+            }
+          };
 
-          // Track token usage for billing
-          const usage = response.usage;
-          if (usage) {
-            await logApiUsage({
-              userId: analysis.userId ?? null,
-              sessionId: input.sessionId,
-              action: "analyze",
-              model: response.model || ENV.llmModel,
-              promptTokens: usage.prompt_tokens ?? 0,
-              completionTokens: usage.completion_tokens ?? 0,
+          const runBatchAnalysis = async (fileList: typeof typedFiles, label: string): Promise<PolicyAnalysis> => {
+            const fileParts = await loadFileParts(fileList);
+            const response = await invokeLLM({
+              messages: [
+                { role: "system", content: ANALYSIS_SYSTEM_PROMPT },
+                {
+                  role: "user",
+                  content: [
+                    { type: "text" as const, text: `נא לנתח את פוליסות הביטוח הבאות (${label}) ולהחזיר את המידע בפורמט JSON המבוקש:` },
+                    ...fileParts,
+                  ],
+                },
+              ],
+              maxTokens: 65536,
+              response_format: analysisResponseFormat,
             });
+            await logLlmUsage(response);
+            return parseLLMJson<PolicyAnalysis>(extractLLMContent(response));
+          };
+
+          let analysisResult: PolicyAnalysis;
+
+          if (typedFiles.length <= PDF_BATCH_SIZE) {
+            try {
+              analysisResult = await runBatchAnalysis(typedFiles, `${typedFiles.length} קבצים`);
+            } catch (err: any) {
+              console.error("[Analysis] Failed:", err.message);
+              throw new Error("שגיאה בעיבוד תגובת ה-AI. התגובה לא התקבלה בפורמט תקין. נסה להעלות פחות קבצים בבת אחת.");
+            }
+          } else {
+            const batches: (typeof typedFiles)[] = [];
+            for (let i = 0; i < typedFiles.length; i += PDF_BATCH_SIZE) {
+              batches.push(typedFiles.slice(i, i + PDF_BATCH_SIZE));
+            }
+
+            const batchResults: PolicyAnalysis[] = [];
+            for (let batchIdx = 0; batchIdx < batches.length; batchIdx++) {
+              try {
+                const result = await runBatchAnalysis(
+                  batches[batchIdx],
+                  `${batches[batchIdx].length} קבצים, קבוצה ${batchIdx + 1} מתוך ${batches.length}`
+                );
+                result.coverages = result.coverages.map(c => ({ ...c, id: `b${batchIdx}-${c.id}` }));
+                if (result.duplicateCoverages) {
+                  result.duplicateCoverages = result.duplicateCoverages.map(d => ({
+                    ...d,
+                    id: `b${batchIdx}-${d.id}`,
+                    coverageIds: d.coverageIds.map(cid => `b${batchIdx}-${cid}`),
+                  }));
+                }
+                batchResults.push(result);
+              } catch (batchErr: any) {
+                console.error(`[Analysis] Batch ${batchIdx + 1}/${batches.length} failed:`, batchErr.message);
+                throw new Error(`שגיאה בעיבוד קבוצה ${batchIdx + 1} מתוך ${batches.length}. ${batchErr.message}`);
+              }
+            }
+
+            const allCoverages = batchResults.flatMap(r => r.coverages);
+            const withinBatchDuplicates = batchResults.flatMap(r => r.duplicateCoverages || []);
+            const coverageSummary = allCoverages.map(c => ({
+              id: c.id, title: c.title, category: c.category,
+              sourceFile: c.sourceFile, copay: c.copay, limit: c.limit,
+            }));
+            const batchGeneralInfos = batchResults.map((r, i) => ({ batch: i, ...r.generalInfo }));
+            const batchSummariesText = batchResults.map((r, i) => `קבוצה ${i + 1}: ${r.summary}`).join("\n");
+
+            try {
+              const mergeResponse = await invokeLLM({
+                messages: [
+                  { role: "system", content: BATCH_MERGE_PROMPT },
+                  {
+                    role: "user",
+                    content: `מידע כללי מכל הקבוצות:\n${JSON.stringify(batchGeneralInfos, null, 2)}\n\nסיכומי הקבוצות:\n${batchSummariesText}\n\nכל הכיסויים (תקציר):\n${JSON.stringify(coverageSummary, null, 2)}\n\nכיסויים כפולים שזוהו בתוך קבוצות:\n${JSON.stringify(withinBatchDuplicates, null, 2)}`,
+                  },
+                ],
+                maxTokens: 16384,
+                response_format: {
+                  type: "json_schema" as const,
+                  json_schema: {
+                    name: "batch_merge",
+                    strict: true,
+                    schema: {
+                      type: "object",
+                      properties: {
+                        generalInfo: generalInfoSchema,
+                        summary: { type: "string" },
+                        duplicateCoverages: duplicateCoveragesSchema,
+                      },
+                      required: ["generalInfo", "summary", "duplicateCoverages"],
+                      additionalProperties: false,
+                    },
+                  },
+                },
+              });
+              await logLlmUsage(mergeResponse);
+              const merged = parseLLMJson<{
+                generalInfo: PolicyAnalysis["generalInfo"];
+                summary: string;
+                duplicateCoverages: NonNullable<PolicyAnalysis["duplicateCoverages"]>;
+              }>(extractLLMContent(mergeResponse));
+
+              const allDups = [...withinBatchDuplicates, ...(merged.duplicateCoverages || [])];
+              const seenIds = new Set<string>();
+              const uniqueDups = allDups.filter(d => {
+                if (seenIds.has(d.id)) return false;
+                seenIds.add(d.id);
+                return true;
+              });
+
+              analysisResult = {
+                coverages: allCoverages,
+                generalInfo: merged.generalInfo,
+                summary: merged.summary,
+                duplicateCoverages: uniqueDups,
+              };
+            } catch (mergeErr: any) {
+              console.error("[Analysis] Merge step failed:", mergeErr.message);
+              analysisResult = {
+                coverages: allCoverages,
+                generalInfo: batchResults[0].generalInfo,
+                summary: batchSummariesText,
+                duplicateCoverages: withinBatchDuplicates,
+              };
+            }
           }
 
           const userProfile = ctx.user ? await getUserProfile(ctx.user.id) : null;
