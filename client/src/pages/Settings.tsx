@@ -86,6 +86,26 @@ const profileSchema = z.object({
 });
 
 type ProfileFormValues = z.infer<typeof profileSchema>;
+type ProfileQueryData = {
+  dateOfBirth: string | null;
+  gender: "male" | "female" | "other" | null;
+  maritalStatus: "single" | "married" | "divorced" | "widowed" | null;
+  numberOfChildren: number;
+  childrenAges: string | null;
+  employmentStatus: "salaried" | "self_employed" | "business_owner" | "student" | "retired" | "unemployed" | null;
+  incomeRange: "below_5k" | "5k_10k" | "10k_15k" | "15k_25k" | "25k_40k" | "above_40k" | null;
+  ownsApartment: boolean;
+  hasActiveMortgage: boolean;
+  numberOfVehicles: number;
+  hasExtremeSports: boolean;
+  hasSpecialHealthConditions: boolean;
+  healthConditionsDetails: string | null;
+  hasPets: boolean;
+  businessName: string | null;
+  businessTaxId: string | null;
+  businessEmailDomains: string | null;
+  profileImageKey: string | null;
+};
 
 const MARITAL_OPTIONS = [
   { value: "single", label: "רווק/ה" },
@@ -167,6 +187,26 @@ export default function Settings() {
     enabled: !!user && isAdmin,
   });
 
+  const toFormValues = (profile: ProfileQueryData): ProfileFormValues => ({
+    dateOfBirth: profile.dateOfBirth ? profile.dateOfBirth.split("T")[0] : null,
+    gender: profile.gender as any,
+    maritalStatus: profile.maritalStatus as any,
+    numberOfChildren: profile.numberOfChildren ?? 0,
+    childrenAges: profile.childrenAges,
+    employmentStatus: profile.employmentStatus as any,
+    incomeRange: profile.incomeRange as any,
+    ownsApartment: profile.ownsApartment ?? false,
+    hasActiveMortgage: profile.hasActiveMortgage ?? false,
+    numberOfVehicles: profile.numberOfVehicles ?? 0,
+    hasExtremeSports: profile.hasExtremeSports ?? false,
+    hasSpecialHealthConditions: profile.hasSpecialHealthConditions ?? false,
+    healthConditionsDetails: profile.healthConditionsDetails,
+    hasPets: profile.hasPets ?? false,
+    businessName: profile.businessName ?? null,
+    businessTaxId: profile.businessTaxId ?? null,
+    businessEmailDomains: profile.businessEmailDomains ?? null,
+  });
+
   const form = useForm<ProfileFormValues>({
     resolver: zodResolver(profileSchema),
     defaultValues: {
@@ -192,26 +232,7 @@ export default function Settings() {
 
   useEffect(() => {
     if (profileQuery.data) {
-      const p = profileQuery.data;
-      form.reset({
-        dateOfBirth: p.dateOfBirth ? p.dateOfBirth.split("T")[0] : null,
-        gender: p.gender as any,
-        maritalStatus: p.maritalStatus as any,
-        numberOfChildren: p.numberOfChildren ?? 0,
-        childrenAges: p.childrenAges,
-        employmentStatus: p.employmentStatus as any,
-        incomeRange: p.incomeRange as any,
-        ownsApartment: p.ownsApartment ?? false,
-        hasActiveMortgage: p.hasActiveMortgage ?? false,
-        numberOfVehicles: p.numberOfVehicles ?? 0,
-        hasExtremeSports: p.hasExtremeSports ?? false,
-        hasSpecialHealthConditions: p.hasSpecialHealthConditions ?? false,
-        healthConditionsDetails: p.healthConditionsDetails,
-        hasPets: p.hasPets ?? false,
-        businessName: p.businessName ?? null,
-        businessTaxId: p.businessTaxId ?? null,
-        businessEmailDomains: p.businessEmailDomains ?? null,
-      });
+      form.reset(toFormValues(profileQuery.data));
     }
   }, [profileQuery.data, form]);
 
@@ -226,8 +247,12 @@ export default function Settings() {
   const onSubmit = async (data: ProfileFormValues) => {
     setSaving(true);
     try {
-      await updateMutation.mutateAsync(data);
-      await utils.profile.get.invalidate();
+      const result = await updateMutation.mutateAsync(data);
+      if (result.profile) {
+        utils.profile.get.setData(undefined, result.profile);
+        form.reset(toFormValues(result.profile));
+      }
+      await utils.profile.get.refetch();
       toast.success("הפרופיל עודכן בהצלחה");
     } catch {
       toast.error("שגיאה בעדכון הפרופיל");

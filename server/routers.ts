@@ -276,6 +276,30 @@ function buildProfileContext(profile: any): string {
   return parts.join("\n");
 }
 
+function serializeProfileForClient(profile: any) {
+  if (!profile) return null;
+  return {
+    dateOfBirth: profile.dateOfBirth ? new Date(profile.dateOfBirth).toISOString() : null,
+    gender: profile.gender,
+    maritalStatus: profile.maritalStatus,
+    numberOfChildren: profile.numberOfChildren ?? 0,
+    childrenAges: profile.childrenAges,
+    employmentStatus: profile.employmentStatus,
+    incomeRange: profile.incomeRange,
+    ownsApartment: profile.ownsApartment ?? false,
+    hasActiveMortgage: profile.hasActiveMortgage ?? false,
+    numberOfVehicles: profile.numberOfVehicles ?? 0,
+    hasExtremeSports: profile.hasExtremeSports ?? false,
+    hasSpecialHealthConditions: profile.hasSpecialHealthConditions ?? false,
+    healthConditionsDetails: profile.healthConditionsDetails,
+    hasPets: profile.hasPets ?? false,
+    businessName: profile.businessName ?? null,
+    businessTaxId: profile.businessTaxId ?? null,
+    businessEmailDomains: profile.businessEmailDomains ?? null,
+    profileImageKey: profile.profileImageKey ?? null,
+  };
+}
+
 export const appRouter = router({
   system: systemRouter,
   auth: router({
@@ -291,27 +315,7 @@ export const appRouter = router({
     get: protectedProcedure.query(async ({ ctx }) => {
       if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
       const profile = await getUserProfile(ctx.user.id);
-      if (!profile) return null;
-      return {
-        dateOfBirth: profile.dateOfBirth?.toISOString() ?? null,
-        gender: profile.gender,
-        maritalStatus: profile.maritalStatus,
-        numberOfChildren: profile.numberOfChildren ?? 0,
-        childrenAges: profile.childrenAges,
-        employmentStatus: profile.employmentStatus,
-        incomeRange: profile.incomeRange,
-        ownsApartment: profile.ownsApartment ?? false,
-        hasActiveMortgage: profile.hasActiveMortgage ?? false,
-        numberOfVehicles: profile.numberOfVehicles ?? 0,
-        hasExtremeSports: profile.hasExtremeSports ?? false,
-        hasSpecialHealthConditions: profile.hasSpecialHealthConditions ?? false,
-        healthConditionsDetails: profile.healthConditionsDetails,
-        hasPets: profile.hasPets ?? false,
-        businessName: profile.businessName ?? null,
-        businessTaxId: profile.businessTaxId ?? null,
-        businessEmailDomains: profile.businessEmailDomains ?? null,
-        profileImageKey: profile.profileImageKey ?? null,
-      };
+      return serializeProfileForClient(profile);
     }),
 
     uploadImage: protectedProcedure
@@ -378,7 +382,7 @@ export const appRouter = router({
           }
         }
         const profile = await upsertUserProfile(ctx.user.id, data);
-        return { success: true, profile };
+        return { success: true, profile: serializeProfileForClient(profile) };
       }),
   }),
 
