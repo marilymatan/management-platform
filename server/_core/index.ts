@@ -85,8 +85,14 @@ async function startServer() {
   const server = createServer(app);
   app.set("trust proxy", 1);
 
-  app.use(express.json({ limit: "5mb" }));
-  app.use(express.urlencoded({ limit: "5mb", extended: true }));
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    if (req.path.startsWith("/api/trpc")) return next();
+    express.json({ limit: "5mb" })(req, res, next);
+  });
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    if (req.path.startsWith("/api/trpc")) return next();
+    express.urlencoded({ limit: "5mb", extended: true })(req, res, next);
+  });
 
   registerSecurityMiddleware(app);
 
