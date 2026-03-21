@@ -24,9 +24,11 @@ describe("queue claim SQL", () => {
     );
     const sqlText = normalizeSql(rendered.sql);
 
-    expect(sqlText).toContain('"analyses"."status" = $1');
-    expect(sqlText).toContain('"analyses"."status" = $3');
+    expect(sqlText).toContain('"analyses"."attempt_count" < $1');
+    expect(sqlText).toContain('"analyses"."status" = $2');
+    expect(sqlText).toContain('"analyses"."status" = $4');
     expect(rendered.params).toEqual([
+      10,
       "pending",
       now,
       "processing",

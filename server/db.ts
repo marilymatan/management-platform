@@ -308,6 +308,8 @@ export async function updateAnalysisStatus(
   await db.update(analyses).set(updateData).where(eq(analyses.sessionId, sessionId));
 }
 
+const CLAIM_MAX_ATTEMPTS = 10;
+
 export function buildClaimNextPendingAnalysisCandidateQuery(
   now: Date,
   staleBefore: Date,
@@ -315,12 +317,15 @@ export function buildClaimNextPendingAnalysisCandidateQuery(
   return sql`
     SELECT ${analyses.id}
     FROM ${analyses}
-    WHERE (
-      ${analyses.status} = ${"pending"}
-      AND (${analyses.nextRetryAt} IS NULL OR ${analyses.nextRetryAt} <= ${now})
-    ) OR (
-      ${analyses.status} = ${"processing"}
-      AND (${analyses.lastHeartbeatAt} IS NULL OR ${analyses.lastHeartbeatAt} <= ${staleBefore})
+    WHERE ${analyses.attemptCount} < ${CLAIM_MAX_ATTEMPTS}
+    AND (
+      (
+        ${analyses.status} = ${"pending"}
+        AND (${analyses.nextRetryAt} IS NULL OR ${analyses.nextRetryAt} <= ${now})
+      ) OR (
+        ${analyses.status} = ${"processing"}
+        AND (${analyses.lastHeartbeatAt} IS NULL OR ${analyses.lastHeartbeatAt} <= ${staleBefore})
+      )
     )
     ORDER BY ${analyses.createdAt} ASC
     LIMIT 1
@@ -352,6 +357,15 @@ export function buildClaimNextPendingAnalysisUpdateQuery(
   `;
 }
 
+function mapSnakeToCamel(row: Record<string, unknown>): Record<string, unknown> {
+  const mapped: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(row)) {
+    const camel = key.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+    mapped[camel] = value;
+  }
+  return mapped;
+}
+
 export async function claimNextPendingAnalysis(workerId: string, staleBefore: Date) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -369,7 +383,9 @@ export async function claimNextPendingAnalysis(workerId: string, staleBefore: Da
     );
     return updateResult.rows[0] ?? null;
   });
-  return row ? decryptAnalysisData(row) : null;
+  if (!row) return null;
+  const camelRow = mapSnakeToCamel(row as Record<string, unknown>);
+  return decryptAnalysisData(camelRow);
 }
 
 export async function heartbeatAnalysis(sessionId: string, workerId: string) {

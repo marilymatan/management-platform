@@ -73,12 +73,28 @@ class PolicyAnalysisWorker {
         if (!analysis) {
           break;
         }
-        await this.processAnalysis(analysis as {
+        const typed = analysis as {
           sessionId: string;
           userId?: number | null;
           attemptCount: number;
           files: Array<{ name: string; fileKey?: string; url?: string }>;
-        });
+        };
+        if (!typed.sessionId) {
+          console.error("[PolicyWorker] Claimed analysis missing sessionId, skipping:", Object.keys(analysis));
+          break;
+        }
+        if (typed.attemptCount > ANALYSIS_WORKER_MAX_ATTEMPTS * 2) {
+          console.error("[PolicyWorker] Analysis exceeded safety limit:", typed.sessionId, "attempts:", typed.attemptCount);
+          try {
+            await failAnalysis(typed.sessionId, this.workerId, "Exceeded maximum retry attempts");
+          } catch { /* already broken, move on */ }
+          continue;
+        }
+        try {
+          await this.processAnalysis(typed);
+        } catch (error) {
+          console.error("[PolicyWorker] processAnalysis error:", error);
+        }
       }
     } catch (error) {
       console.error("[PolicyWorker] Failed to drain queue:", error);
@@ -117,16 +133,20 @@ class PolicyAnalysisWorker {
         });
       }
     } catch (error) {
-      const retryable = analysis.attemptCount < ANALYSIS_WORKER_MAX_ATTEMPTS && isRetryableAnalysisError(error);
-      if (retryable) {
-        await requeueAnalysis(
-          analysis.sessionId,
-          this.workerId,
-          new Date(Date.now() + getRetryDelayMs(analysis.attemptCount))
-        );
-      } else {
-        const message = error instanceof Error ? error.message : "Unknown error";
-        await failAnalysis(analysis.sessionId, this.workerId, message);
+      try {
+        const retryable = analysis.attemptCount < ANALYSIS_WORKER_MAX_ATTEMPTS && isRetryableAnalysisError(error);
+        if (retryable) {
+          await requeueAnalysis(
+            analysis.sessionId,
+            this.workerId,
+            new Date(Date.now() + getRetryDelayMs(analysis.attemptCount))
+          );
+        } else {
+          const message = error instanceof Error ? error.message : "Unknown error";
+          await failAnalysis(analysis.sessionId, this.workerId, message);
+        }
+      } catch (statusError) {
+        console.error("[PolicyWorker] Failed to update analysis status:", analysis.sessionId, statusError);
       }
     } finally {
       clearInterval(heartbeatTimer);
