@@ -364,10 +364,15 @@ test.describe("Savings and onboarding", () => {
     await page.goto("/savings");
 
     await expect(page.getByTestId("savings-center-page")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId("savings-center-highlight-card")).toBeVisible();
+    await expect(page.getByTestId("savings-center-summary-strip")).toBeVisible();
     await expect(page.getByText("איפה אפשר לחסוך ואיזה צעדים עושים עכשיו")).toBeVisible();
-    await expect(page.getByText("ייתכן כפל כיסוי באמבולטורי")).toBeVisible();
+    await expect(
+      page.getByTestId("savings-center-highlight-card").getByRole("heading", { name: "ייתכן כפל כיסוי באמבולטורי" })
+    ).toBeVisible();
     await page.getByRole("tab", { name: "מעקב פעולות" }).click();
-    await expect(page.getByText("בדוק חידוש בהראל")).toBeVisible();
+    await expect(page.getByTestId("savings-center-actions-summary")).toBeVisible();
+    await expect(page.getByLabel("מעקב פעולות").getByText("בדוק חידוש בהראל")).toBeVisible();
     await expect(page.getByText("זוהו שינויי חיוב ביטוחיים בחודש מרץ.")).toBeVisible();
   });
 
@@ -393,7 +398,7 @@ test.describe("Savings and onboarding", () => {
     await expect(page.getByTestId("savings-center-page")).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText("לא הצלחנו לרענן כרגע את רשימת הפעולות, אז לומי מציגה כאן את נתוני הגיבוי שכבר הופקו בדוח החיסכון.")).toBeVisible();
     await page.getByRole("tab", { name: "מעקב פעולות" }).click();
-    await expect(page.getByText("בדוק חידוש בהראל")).toBeVisible();
+    await expect(page.getByLabel("מעקב פעולות").getByText("בדוק חידוש בהראל")).toBeVisible();
   });
 
   test("shows the onboarding wizard for a new user", async ({ page }) => {
