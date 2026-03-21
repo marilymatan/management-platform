@@ -54,6 +54,7 @@ import {
   TrendingUp,
   Camera,
   Filter,
+  Search,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -410,6 +411,7 @@ export default function Settings() {
             </CardContent>
           </Card>
 
+          <Form {...form}>
           <Card className="mb-5 border-dashed" data-testid="settings-email-scan-filters">
             <CardContent className="pt-5 pb-5 text-start">
               <div className="flex items-start gap-2 mb-4">
@@ -494,7 +496,6 @@ export default function Settings() {
             </CardContent>
           </Card>
 
-          <Form {...form}>
             <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-5">
               <Card>
                 <CardContent className="pt-5 pb-5">
@@ -931,7 +932,6 @@ export default function Settings() {
                 {saving ? "שומר..." : "שמור פרופיל"}
               </Button>
             </form>
-          </Form>
 
           <Card className="border-red-200/60 bg-red-50/30 mt-5">
             <CardContent className="pt-5 pb-5">
@@ -956,6 +956,7 @@ export default function Settings() {
               </div>
             </CardContent>
           </Card>
+          </Form>
         </TabsContent>
 
         <TabsContent value="usage">

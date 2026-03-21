@@ -238,18 +238,20 @@ test.describe("Insurance command center", () => {
   test("renders the family coverage map with household statuses", async ({ page }) => {
     await page.goto("/family");
     await expect(page.getByTestId("family-page")).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByRole("heading", { name: "מפת כיסוי משפחתית" })).toBeVisible();
+    await expect(page.getByTestId("coverage-orbit-map")).toBeVisible();
     await expect(page.getByText("בעל/ת החשבון")).toBeVisible();
     await expect(page.getByText("רן ישראלי", { exact: true }).first()).toBeVisible();
     await expect(page.getByText("נועה ישראלי", { exact: true }).first()).toBeVisible();
-    await expect(page.getByText("לבדיקה", { exact: true }).first()).toBeVisible();
+    await expect(page.getByText("יש כיסוי", { exact: true }).first()).toBeVisible();
     await expect(page.getByText("חסר מידע", { exact: true }).first()).toBeVisible();
   });
 
-  test("renders the dedicated insurance map route", async ({ page }) => {
+  test("renders the dedicated insurance map route with orbital map", async ({ page }) => {
     await page.goto("/insurance-map");
     await expect(page.getByTestId("family-insurance-map-page")).toBeVisible({ timeout: 15_000 });
     await expect(page.getByRole("heading", { name: "תמונה אחת של כל הכיסויים בבית" })).toBeVisible();
+    await expect(page.getByTestId("coverage-score-ring")).toBeVisible();
+    await expect(page.getByTestId("coverage-orbit-map")).toBeVisible();
     await expect(page.getByText("בעל/ת החשבון")).toBeVisible();
     await expect(page.getByText("רן ישראלי", { exact: true }).first()).toBeVisible();
     await expect(page.getByText("נועה ישראלי", { exact: true }).first()).toBeVisible();

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   buildFamilyCoverageSnapshot,
+  computeCoverageScore,
   getFamilyCoverageStatusClasses,
   getFamilyCoverageStatusLabel,
 } from "@/lib/familyCoverage";
@@ -168,6 +169,56 @@ describe("buildFamilyCoverageSnapshot", () => {
     expect(snapshot.rows[2].hint).toBe("זקוק לבדיקה תקופתית");
     expect(snapshot.rows[3].relationLabel).toBe("אחר");
     expect(snapshot.rows[3].hint).toBe("רגישות לתרופות");
+  });
+
+  it("computes coverage score as percentage of covered among relevant cells", () => {
+    const snapshot = buildFamilyCoverageSnapshot(
+      [
+        {
+          sessionId: "health-1",
+          status: "completed",
+          createdAt: new Date("2026-03-20T10:00:00.000Z"),
+          insuranceCategory: "health" as const,
+          files: [],
+          analysisResult: {
+            generalInfo: {
+              policyName: "בריאות",
+              insurerName: "מגדל",
+              monthlyPremium: "100",
+              insuranceCategory: "health" as const,
+            },
+            coverages: [],
+            duplicateCoverages: [],
+            personalizedInsights: [],
+            summary: "",
+          },
+        },
+      ],
+      { ownsApartment: true, hasActiveMortgage: true, numberOfVehicles: 1, maritalStatus: "married" },
+      [],
+    );
+
+    const score = computeCoverageScore(snapshot.rows);
+    expect(score).toBe(25);
+  });
+
+  it("returns 0 for coverage score when all cells are not relevant", () => {
+    const score = computeCoverageScore([
+      {
+        id: "x",
+        fullName: "test",
+        relationLabel: "test",
+        hint: "",
+        kind: "primary",
+        cells: [
+          { category: "health", label: "", status: "not_relevant", summary: "" },
+          { category: "life", label: "", status: "not_relevant", summary: "" },
+          { category: "car", label: "", status: "not_relevant", summary: "" },
+          { category: "home", label: "", status: "not_relevant", summary: "" },
+        ],
+      },
+    ]);
+    expect(score).toBe(0);
   });
 
   it("returns readable labels and classes for every family coverage status", () => {

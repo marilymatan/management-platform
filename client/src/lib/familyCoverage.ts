@@ -148,6 +148,20 @@ export function getFamilyCoverageStatusClasses(status: FamilyCoverageStatus) {
   return "border-border bg-muted/40 text-muted-foreground";
 }
 
+export function computeCoverageScore(rows: FamilyCoverageRow[]) {
+  let relevant = 0;
+  let covered = 0;
+  for (const row of rows) {
+    for (const cell of row.cells) {
+      if (cell.status !== "not_relevant") {
+        relevant += 1;
+        if (cell.status === "household_covered") covered += 1;
+      }
+    }
+  }
+  return relevant === 0 ? 0 : Math.round((covered / relevant) * 100);
+}
+
 export function buildFamilyCoverageSnapshot(
   analyses: AnalysesInput,
   profile?: ProfileLike | null,

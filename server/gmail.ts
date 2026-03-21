@@ -1450,59 +1450,69 @@ export async function discoverPolicyPdfs(
   if (connections.length === 0) return [];
 
   const discovered: DiscoveredPolicyPdf[] = [];
+  let connectionsSucceeded = 0;
 
   for (const conn of connections) {
-    const emails = await fetchRecentEmails(conn.id, daysBack, userFilters);
+    try {
+      const emails = await fetchRecentEmails(conn.id, daysBack, userFilters);
+      connectionsSucceeded++;
 
-    for (const email of emails) {
-      if (email.pdfAttachments.length === 0) continue;
+      for (const email of emails) {
+        if (email.pdfAttachments.length === 0) continue;
 
-      const detectedProvider = detectProvider(email.subject, email.from, email.body);
-      const shouldInclude =
-        looksLikeInsuranceMessage({
-          subject: email.subject,
-          from: email.from,
-          body: email.body,
-          attachmentFilename: email.pdfAttachments[0]?.filename ?? null,
-          detectedProvider,
-        }) || looksLikeInsurancePdfCandidate({
-          subject: email.subject,
-          from: email.from,
-          body: email.body,
-          attachmentFilename: email.pdfAttachments[0]?.filename ?? null,
-          detectedProvider,
-        });
+        const detectedProvider = detectProvider(email.subject, email.from, email.body);
+        const shouldInclude =
+          looksLikeInsuranceMessage({
+            subject: email.subject,
+            from: email.from,
+            body: email.body,
+            attachmentFilename: email.pdfAttachments[0]?.filename ?? null,
+            detectedProvider,
+          }) || looksLikeInsurancePdfCandidate({
+            subject: email.subject,
+            from: email.from,
+            body: email.body,
+            attachmentFilename: email.pdfAttachments[0]?.filename ?? null,
+            detectedProvider,
+          });
 
-      if (!shouldInclude) continue;
+        if (!shouldInclude) continue;
 
-      const [existingArtifact] = await db
-        .select({ id: insuranceArtifacts.id })
-        .from(insuranceArtifacts)
-        .where(
-          and(
-            eq(insuranceArtifacts.userId, userId),
-            eq(insuranceArtifacts.gmailMessageId, email.messageId)
+        const [existingArtifact] = await db
+          .select({ id: insuranceArtifacts.id })
+          .from(insuranceArtifacts)
+          .where(
+            and(
+              eq(insuranceArtifacts.userId, userId),
+              eq(insuranceArtifacts.gmailMessageId, email.messageId)
+            )
           )
-        )
-        .limit(1);
+          .limit(1);
 
-      email.pdfAttachments.forEach((attachment) => {
-        const fallbackText = `${email.subject} ${email.body} ${attachment.filename}`;
-        discovered.push({
-          connectionId: conn.id,
-          gmailMessageId: email.messageId,
-          subject: email.subject,
-          from: email.from,
-          date: email.date,
-          attachmentName: attachment.filename,
-          attachmentId: attachment.attachmentId,
-          provider: detectedProvider?.name ?? extractSenderName(email.from),
-          insuranceCategory: inferInsuranceCategoryFromText(fallbackText),
-          artifactType: inferInsuranceArtifactType(fallbackText, true),
-          alreadyKnown: Boolean(existingArtifact),
+        email.pdfAttachments.forEach((attachment) => {
+          const fallbackText = `${email.subject} ${email.body} ${attachment.filename}`;
+          discovered.push({
+            connectionId: conn.id,
+            gmailMessageId: email.messageId,
+            subject: email.subject,
+            from: email.from,
+            date: email.date,
+            attachmentName: attachment.filename,
+            attachmentId: attachment.attachmentId,
+            provider: detectedProvider?.name ?? extractSenderName(email.from),
+            insuranceCategory: inferInsuranceCategoryFromText(fallbackText),
+            artifactType: inferInsuranceArtifactType(fallbackText, true),
+            alreadyKnown: Boolean(existingArtifact),
+          });
         });
-      });
+      }
+    } catch (err) {
+      console.error(`[Gmail] discoverPolicyPdfs failed for connection ${conn.id}:`, err);
     }
+  }
+
+  if (connectionsSucceeded === 0 && connections.length > 0) {
+    throw new Error("All Gmail connections failed during policy discovery");
   }
 
   return discovered

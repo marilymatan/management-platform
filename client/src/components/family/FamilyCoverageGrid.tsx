@@ -1,12 +1,17 @@
-import { Shield, Sparkles } from "lucide-react";
+import { useState, useCallback } from "react";
+import { AnimatePresence, motion } from "framer-motion";
+import { Heart, Shield, Car, Home, Sparkles, ChevronDown } from "lucide-react";
+import type { InsuranceCategory } from "@shared/insurance";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import {
   getFamilyCoverageStatusClasses,
   getFamilyCoverageStatusLabel,
   type FamilyCoverageRow,
+  type FamilyCoverageStatus,
 } from "@/lib/familyCoverage";
+import { CoverageOrbitMap } from "./CoverageOrbitMap";
+import { CoverageDetailPanel } from "./CoverageDetailPanel";
 
 type FamilyCoverageGridProps = {
   rows: FamilyCoverageRow[];
@@ -18,6 +23,112 @@ type FamilyCoverageGridProps = {
   onOpenAssistant: () => void;
 };
 
+const CATEGORY_ICON: Record<InsuranceCategory, typeof Heart> = {
+  health: Heart,
+  life: Shield,
+  car: Car,
+  home: Home,
+};
+
+const STATUS_DOT_CLASS: Record<FamilyCoverageStatus, string> = {
+  household_covered: "bg-success",
+  needs_review: "bg-warning",
+  missing: "bg-destructive",
+  not_relevant: "bg-muted-foreground/40",
+};
+
+function MobileMemberCard({
+  row,
+  isExpanded,
+  onToggle,
+}: {
+  row: FamilyCoverageRow;
+  isExpanded: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <motion.div
+      layout
+      initial={{ opacity: 0, y: 16 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="rounded-2xl border border-border bg-card overflow-hidden"
+    >
+      <button
+        onClick={onToggle}
+        className="w-full p-4 flex items-center gap-3 text-start"
+        aria-expanded={isExpanded}
+        aria-label={`${row.fullName} - ${row.relationLabel}`}
+        data-testid={`mobile-member-card-${row.id}`}
+      >
+        <div className="size-10 rounded-xl bg-primary/8 flex items-center justify-center shrink-0">
+          <span className="text-sm font-bold text-primary">
+            {row.fullName.charAt(0)}
+          </span>
+        </div>
+
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <p className="text-sm font-semibold truncate">{row.fullName}</p>
+            <Badge variant="outline" className="text-[10px] shrink-0">
+              {row.relationLabel}
+            </Badge>
+          </div>
+          <p className="text-[11px] text-muted-foreground mt-0.5">{row.hint}</p>
+        </div>
+
+        <div className="flex items-center gap-1.5 shrink-0 me-1">
+          {row.cells.map((cell) => (
+            <span
+              key={cell.category}
+              className={`size-2.5 rounded-full ${STATUS_DOT_CLASS[cell.status]}`}
+              title={`${cell.label}: ${getFamilyCoverageStatusLabel(cell.status)}`}
+            />
+          ))}
+        </div>
+
+        <ChevronDown
+          className={`size-4 text-muted-foreground transition-transform shrink-0 ${isExpanded ? "rotate-180" : ""}`}
+        />
+      </button>
+
+      <AnimatePresence>
+        {isExpanded && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.25 }}
+            className="overflow-hidden"
+          >
+            <div className="px-4 pb-4 grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              {row.cells.map((cell) => {
+                const Icon = CATEGORY_ICON[cell.category];
+                return (
+                  <div
+                    key={cell.category}
+                    className={`rounded-xl border p-3 space-y-1.5 ${getFamilyCoverageStatusClasses(cell.status)}`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5">
+                        <Icon className="size-3.5" />
+                        <p className="text-xs font-semibold">{cell.label}</p>
+                      </div>
+                      <Badge variant="secondary" className="bg-background/70 text-current text-[10px]">
+                        {getFamilyCoverageStatusLabel(cell.status)}
+                      </Badge>
+                    </div>
+                    <p className="text-[11px] leading-relaxed">{cell.summary}</p>
+                  </div>
+                );
+              })}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.div>
+  );
+}
+
 export function FamilyCoverageGrid({
   rows,
   householdSize,
@@ -27,107 +138,84 @@ export function FamilyCoverageGrid({
   onOpenInsurance,
   onOpenAssistant,
 }: FamilyCoverageGridProps) {
+  const [selectedMemberId, setSelectedMemberId] = useState<string | null>(null);
+  const [expandedMobileId, setExpandedMobileId] = useState<string | null>(null);
+
+  const selectedRow = rows.find((r) => r.id === selectedMemberId) ?? null;
+
+  const handleSelectMember = useCallback((id: string | null) => {
+    setSelectedMemberId(id);
+  }, []);
+
+  const toggleMobileCard = useCallback((id: string) => {
+    setExpandedMobileId((prev) => (prev === id ? null : id));
+  }, []);
+
   return (
-    <div className="animate-fade-in-up stagger-5 space-y-4">
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div className="space-y-1">
-          <div className="flex items-center gap-2">
-            <Shield className="size-4 text-primary" />
-            <h3 className="text-sm font-semibold">מפת כיסוי משפחתית</h3>
-          </div>
-          <p className="text-sm text-muted-foreground">
-            תצוגה מרוכזת של הכיסויים הקיימים, הפערים, והאזורים שעדיין צריכים שיוך אישי לכל בני הבית.
-          </p>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <Button size="sm" variant="outline" onClick={onOpenInsurance} className="gap-1.5">
-            <Shield className="size-4" />
-            למסך הביטוחים
-          </Button>
-          <Button size="sm" onClick={onOpenAssistant} className="gap-1.5">
-            <Sparkles className="size-4" />
-            שאל את לומי
-          </Button>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <Card>
-          <CardContent className="pt-5 pb-4">
-            <p className="text-[11px] text-muted-foreground">בני בית בתמונה</p>
-            <p className="text-2xl font-bold mt-1">{householdSize}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-5 pb-4">
-            <p className="text-[11px] text-muted-foreground">קטגוריות עם מסמכים</p>
-            <p className="text-2xl font-bold mt-1">{categoriesWithData}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-5 pb-4">
-            <p className="text-[11px] text-muted-foreground">שיוכים לבדיקה</p>
-            <p className="text-2xl font-bold mt-1">{reviewCount}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-5 pb-4">
-            <p className="text-[11px] text-muted-foreground">פערי מידע פתוחים</p>
-            <p className="text-2xl font-bold mt-1">{missingCount}</p>
-          </CardContent>
-        </Card>
-      </div>
-
+    <div className="space-y-6">
       <div className="flex items-center gap-2 flex-wrap">
-        <Badge variant="outline" className="border-success/20 bg-success/10 text-success">
-          {getFamilyCoverageStatusLabel("household_covered")}
-        </Badge>
-        <Badge variant="outline" className="border-warning/30 bg-warning/10 text-warning-foreground">
-          {getFamilyCoverageStatusLabel("needs_review")}
-        </Badge>
-        <Badge variant="outline" className="border-destructive/20 bg-destructive/10 text-destructive">
-          {getFamilyCoverageStatusLabel("missing")}
-        </Badge>
-        <Badge variant="outline" className="border-border bg-muted/40 text-muted-foreground">
-          {getFamilyCoverageStatusLabel("not_relevant")}
-        </Badge>
+        <Button size="sm" variant="outline" onClick={onOpenInsurance} className="gap-1.5">
+          <Shield className="size-4" />
+          למסך הביטוחים
+        </Button>
+        <Button size="sm" onClick={onOpenAssistant} className="gap-1.5">
+          <Sparkles className="size-4" />
+          שאל את לומי
+        </Button>
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-        {rows.map((row) => (
-          <Card key={row.id} className="overflow-hidden">
-            <CardContent className="p-5 space-y-4">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <p className="text-base font-semibold">{row.fullName}</p>
-                    <Badge variant="outline">{row.relationLabel}</Badge>
-                  </div>
-                  <p className="text-xs text-muted-foreground mt-1">{row.hint}</p>
-                </div>
-                <div className="rounded-xl bg-primary/8 px-3 py-1.5 text-xs font-medium text-primary">
-                  {row.kind === "primary" ? "הקשר ראשי" : "בן בית"}
-                </div>
-              </div>
+      <div className="hidden md:block">
+        <CoverageOrbitMap
+          rows={rows}
+          selectedMemberId={selectedMemberId}
+          onSelectMember={handleSelectMember}
+        />
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {row.cells.map((cell) => (
-                  <div
-                    key={`${row.id}-${cell.category}`}
-                    className={`rounded-xl border p-3 space-y-2 ${getFamilyCoverageStatusClasses(cell.status)}`}
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="text-sm font-medium">{cell.label}</p>
-                      <Badge variant="secondary" className="bg-background/70 text-current">
-                        {getFamilyCoverageStatusLabel(cell.status)}
-                      </Badge>
-                    </div>
-                    <p className="text-xs leading-relaxed">{cell.summary}</p>
-                  </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
+        <AnimatePresence mode="wait">
+          {selectedRow && (
+            <div className="mt-6">
+              <CoverageDetailPanel
+                key={selectedRow.id}
+                row={selectedRow}
+                onClose={() => setSelectedMemberId(null)}
+              />
+            </div>
+          )}
+        </AnimatePresence>
+      </div>
+
+      <div className="md:hidden space-y-3" data-testid="mobile-coverage-flow">
+        <div className="flex items-center gap-2 flex-wrap">
+          {(
+            [
+              { status: "household_covered" as const, cls: "bg-success" },
+              { status: "needs_review" as const, cls: "bg-warning" },
+              { status: "missing" as const, cls: "bg-destructive" },
+              { status: "not_relevant" as const, cls: "bg-muted-foreground/40" },
+            ] as const
+          ).map((item) => (
+            <div key={item.status} className="flex items-center gap-1">
+              <span className={`size-2 rounded-full ${item.cls}`} />
+              <span className="text-[10px] text-muted-foreground">
+                {getFamilyCoverageStatusLabel(item.status)}
+              </span>
+            </div>
+          ))}
+        </div>
+
+        {rows.map((row, i) => (
+          <motion.div
+            key={row.id}
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: i * 0.06 }}
+          >
+            <MobileMemberCard
+              row={row}
+              isExpanded={expandedMobileId === row.id}
+              onToggle={() => toggleMobileCard(row.id)}
+            />
+          </motion.div>
         ))}
       </div>
     </div>

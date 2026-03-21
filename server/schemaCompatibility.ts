@@ -26,6 +26,14 @@ const userProfileColumns: ColumnSpec[] = [
     columnName: "business_email_domains",
     ddl: `ALTER TABLE "user_profiles" ADD COLUMN IF NOT EXISTS "business_email_domains" text`,
   },
+  {
+    columnName: "email_scan_senders",
+    ddl: `ALTER TABLE "user_profiles" ADD COLUMN IF NOT EXISTS "email_scan_senders" text`,
+  },
+  {
+    columnName: "email_scan_keywords",
+    ddl: `ALTER TABLE "user_profiles" ADD COLUMN IF NOT EXISTS "email_scan_keywords" text`,
+  },
 ];
 
 const analysisQueueColumns: ColumnSpec[] = [
@@ -282,6 +290,17 @@ export async function getAppliedMigrationTags(db: SchemaCompatibilityDb, tags: s
       const checks = await Promise.all([
         hasColumn(db, "document_classifications", "family_member_id"),
         hasIndex(db, "document_classifications_family_member_idx"),
+      ]);
+      if (checks.every(Boolean)) applied.add(tag);
+      continue;
+    }
+
+    if (tag === "0014_clean_stature") {
+      const checks = await Promise.all([
+        hasColumn(db, "analyses", "processed_file_count"),
+        hasColumn(db, "analyses", "active_batch_file_count"),
+        hasColumn(db, "user_profiles", "email_scan_senders"),
+        hasColumn(db, "user_profiles", "email_scan_keywords"),
       ]);
       if (checks.every(Boolean)) applied.add(tag);
     }
