@@ -43,6 +43,8 @@ async function mockSavingsCenter(page: Page) {
             savedSoFar: 480,
             score: 74,
             totalMonthlySpend: 620,
+            policyCount: 2,
+            categoriesWithData: ["health", "life"],
             opportunities: [
               {
                 id: 11,
@@ -104,6 +106,55 @@ async function mockSavingsCenter(page: Page) {
               },
             ],
           });
+        default:
+          return createTrpcSuccessResponse(null);
+      }
+    });
+
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(url.searchParams.get("batch") === "1" ? responses : responses[0]),
+    });
+  });
+}
+
+async function mockSavingsCenterWithoutOpenSignals(page: Page) {
+  await page.route("**/api/trpc/**", async (route) => {
+    const url = new URL(route.request().url());
+    const procedureNames = url.pathname.replace("/api/trpc/", "").split(",");
+    const responses = procedureNames.map((procedureName) => {
+      switch (procedureName) {
+        case "auth.me":
+          return createTrpcSuccessResponse(testUser);
+        case "profile.get":
+          return createTrpcSuccessResponse({
+            maritalStatus: "married",
+            numberOfChildren: 2,
+            ownsApartment: true,
+            hasActiveMortgage: true,
+            numberOfVehicles: 0,
+            onboardingCompleted: true,
+          });
+        case "profile.getImageUrl":
+          return createTrpcSuccessResponse(null);
+        case "savings.getReport":
+          return createTrpcSuccessResponse({
+            overview: "",
+            totalMonthlySaving: 0,
+            totalAnnualSaving: 0,
+            savedSoFar: 0,
+            score: 81,
+            totalMonthlySpend: 540,
+            policyCount: 2,
+            categoriesWithData: ["health", "life"],
+            opportunities: [],
+            actionItems: [],
+          });
+        case "actions.list":
+          return createTrpcSuccessResponse([]);
+        case "monitoring.getMonthlyReport":
+          return createTrpcSuccessResponse(null);
         default:
           return createTrpcSuccessResponse(null);
       }
@@ -231,6 +282,21 @@ test.describe("Savings and onboarding", () => {
     await page.getByRole("tab", { name: "מעקב פעולות" }).click();
     await expect(page.getByText("בדוק חידוש בהראל")).toBeVisible();
     await expect(page.getByText("זוהו שינויי חיוב ביטוחיים בחודש מרץ.")).toBeVisible();
+  });
+
+  test("explains when policies exist but there are no open savings signals", async ({ page }) => {
+    await mockSavingsCenterWithoutOpenSignals(page);
+    await page.goto("/savings");
+
+    await expect(page.getByTestId("savings-center-page")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText("זוהו כבר 2 פוליסות פעילות. המסך הזה מתמלא רק כשיש כפל, פער, חידוש קרוב או שינוי חיוב שמצריך פעולה.")).toBeVisible();
+    await expect(page.getByTestId("savings-center-report-empty-with-policies")).toBeVisible();
+    await expect(page.getByText("זיהינו כבר 2 פוליסות, אבל אין כרגע הזדמנויות פתוחות")).toBeVisible();
+    await expect(page.getByTestId("savings-center-report-empty-with-policies").getByText("ביטוחי בריאות")).toBeVisible();
+
+    await page.getByRole("tab", { name: "מעקב פעולות" }).click();
+    await expect(page.getByTestId("savings-center-actions-empty-with-policies")).toBeVisible();
+    await expect(page.getByText("כרגע אין משימות פתוחות על הביטוחים שזוהו")).toBeVisible();
   });
 
   test("shows the onboarding wizard for a new user", async ({ page }) => {

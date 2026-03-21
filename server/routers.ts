@@ -1427,6 +1427,10 @@ export const appRouter = router({
         savedSoFar,
         score: state.scoreSnapshot.score,
         totalMonthlySpend: state.scoreSnapshot.totalMonthlySpend,
+        policyCount: state.scoreSnapshot.overview.completedPolicies.length,
+        categoriesWithData: Object.values(state.scoreSnapshot.overview.categorySummaries)
+          .filter((category) => category.hasData)
+          .map((category) => category.category),
         opportunities: state.opportunities,
         actionItems: state.actions,
       };
