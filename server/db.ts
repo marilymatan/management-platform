@@ -308,43 +308,67 @@ export async function updateAnalysisStatus(
   await db.update(analyses).set(updateData).where(eq(analyses.sessionId, sessionId));
 }
 
-export async function claimNextPendingAnalysis(workerId: string, staleBefore: Date) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  const now = new Date();
-  const result = await db.execute(sql`
-    WITH candidate AS (
-      SELECT ${analyses.id}
-      FROM ${analyses}
-      WHERE (
-        ${analyses.status} = 'pending'
-        AND (${analyses.nextRetryAt} IS NULL OR ${analyses.nextRetryAt} <= ${now})
-      ) OR (
-        ${analyses.status} = 'processing'
-        AND (${analyses.lastHeartbeatAt} IS NULL OR ${analyses.lastHeartbeatAt} <= ${staleBefore})
-      )
-      ORDER BY ${analyses.createdAt} ASC
-      LIMIT 1
-      FOR UPDATE SKIP LOCKED
+export function buildClaimNextPendingAnalysisCandidateQuery(
+  now: Date,
+  staleBefore: Date,
+) {
+  return sql`
+    SELECT ${analyses.id}
+    FROM ${analyses}
+    WHERE (
+      ${analyses.status} = ${"pending"}
+      AND (${analyses.nextRetryAt} IS NULL OR ${analyses.nextRetryAt} <= ${now})
+    ) OR (
+      ${analyses.status} = ${"processing"}
+      AND (${analyses.lastHeartbeatAt} IS NULL OR ${analyses.lastHeartbeatAt} <= ${staleBefore})
     )
+    ORDER BY ${analyses.createdAt} ASC
+    LIMIT 1
+    FOR UPDATE SKIP LOCKED
+  `;
+}
+
+export function buildClaimNextPendingAnalysisUpdateQuery(
+  candidateId: number,
+  workerId: string,
+  now: Date,
+) {
+  return sql`
     UPDATE ${analyses}
     SET
-      "status" = 'processing',
-      "attempt_count" = ${analyses.attemptCount} + 1,
+      "status" = ${"processing"},
+      "attempt_count" = "attempt_count" + 1,
       "processed_file_count" = 0,
       "active_batch_file_count" = 0,
       "locked_by" = ${workerId},
       "last_heartbeat_at" = ${now},
-      "started_at" = COALESCE(${analyses.startedAt}, ${now}),
+      "started_at" = COALESCE("started_at", ${now}),
       "completed_at" = NULL,
       "next_retry_at" = NULL,
       "error_message" = NULL,
       "updated_at" = ${now}
-    FROM candidate
-    WHERE ${analyses.id} = candidate.id
+    WHERE ${analyses.id} = ${candidateId}
     RETURNING *
-  `);
-  const row = result.rows[0];
+  `;
+}
+
+export async function claimNextPendingAnalysis(workerId: string, staleBefore: Date) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const now = new Date();
+  const row = await db.transaction(async (tx) => {
+    const candidateResult = await tx.execute(
+      buildClaimNextPendingAnalysisCandidateQuery(now, staleBefore),
+    );
+    const candidate = candidateResult.rows[0] as { id: number } | undefined;
+    if (!candidate) {
+      return null;
+    }
+    const updateResult = await tx.execute(
+      buildClaimNextPendingAnalysisUpdateQuery(candidate.id, workerId, now),
+    );
+    return updateResult.rows[0] ?? null;
+  });
   return row ? decryptAnalysisData(row) : null;
 }
 

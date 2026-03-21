@@ -117,6 +117,48 @@ export async function getGmailScanJobByJobId(userId: number, jobId: string) {
   return decryptGmailScanJob(job);
 }
 
+export function buildClaimNextPendingGmailScanJobCandidateQuery(
+  now: Date,
+  staleBefore: Date,
+) {
+  return sql`
+    SELECT ${gmailScanJobs.id}
+    FROM ${gmailScanJobs}
+    WHERE (
+      ${gmailScanJobs.status} = ${"pending"}
+      AND (${gmailScanJobs.nextRetryAt} IS NULL OR ${gmailScanJobs.nextRetryAt} <= ${now})
+    ) OR (
+      ${gmailScanJobs.status} = ${"processing"}
+      AND (${gmailScanJobs.lastHeartbeatAt} IS NULL OR ${gmailScanJobs.lastHeartbeatAt} <= ${staleBefore})
+    )
+    ORDER BY ${gmailScanJobs.createdAt} ASC
+    LIMIT 1
+    FOR UPDATE SKIP LOCKED
+  `;
+}
+
+export function buildClaimNextPendingGmailScanJobUpdateQuery(
+  candidateId: number,
+  workerId: string,
+  now: Date,
+) {
+  return sql`
+    UPDATE ${gmailScanJobs}
+    SET
+      "status" = ${"processing"},
+      "attempt_count" = "attempt_count" + 1,
+      "locked_by" = ${workerId},
+      "last_heartbeat_at" = ${now},
+      "started_at" = COALESCE("started_at", ${now}),
+      "completed_at" = NULL,
+      "next_retry_at" = NULL,
+      "error_message" = NULL,
+      "updated_at" = ${now}
+    WHERE ${gmailScanJobs.id} = ${candidateId}
+    RETURNING *
+  `;
+}
+
 export async function claimNextPendingGmailScanJob(
   workerId: string,
   staleBefore: Date,
@@ -125,38 +167,19 @@ export async function claimNextPendingGmailScanJob(
   if (!db) throw new Error("Database not available");
 
   const now = new Date();
-  const result = await db.execute(sql`
-    WITH candidate AS (
-      SELECT ${gmailScanJobs.id}
-      FROM ${gmailScanJobs}
-      WHERE (
-        ${gmailScanJobs.status} = 'pending'
-        AND (${gmailScanJobs.nextRetryAt} IS NULL OR ${gmailScanJobs.nextRetryAt} <= ${now})
-      ) OR (
-        ${gmailScanJobs.status} = 'processing'
-        AND (${gmailScanJobs.lastHeartbeatAt} IS NULL OR ${gmailScanJobs.lastHeartbeatAt} <= ${staleBefore})
-      )
-      ORDER BY ${gmailScanJobs.createdAt} ASC
-      LIMIT 1
-      FOR UPDATE SKIP LOCKED
-    )
-    UPDATE ${gmailScanJobs}
-    SET
-      "status" = 'processing',
-      "attempt_count" = ${gmailScanJobs.attemptCount} + 1,
-      "locked_by" = ${workerId},
-      "last_heartbeat_at" = ${now},
-      "started_at" = COALESCE(${gmailScanJobs.startedAt}, ${now}),
-      "completed_at" = NULL,
-      "next_retry_at" = NULL,
-      "error_message" = NULL,
-      "updated_at" = ${now}
-    FROM candidate
-    WHERE ${gmailScanJobs.id} = candidate.id
-    RETURNING *
-  `);
-
-  const row = result.rows[0] as typeof gmailScanJobs.$inferSelect | undefined;
+  const row = await db.transaction(async (tx) => {
+    const candidateResult = await tx.execute(
+      buildClaimNextPendingGmailScanJobCandidateQuery(now, staleBefore),
+    );
+    const candidate = candidateResult.rows[0] as { id: number } | undefined;
+    if (!candidate) {
+      return null;
+    }
+    const updateResult = await tx.execute(
+      buildClaimNextPendingGmailScanJobUpdateQuery(candidate.id, workerId, now),
+    );
+    return updateResult.rows[0] as typeof gmailScanJobs.$inferSelect | undefined;
+  });
   return decryptGmailScanJob(row ?? null);
 }
 
