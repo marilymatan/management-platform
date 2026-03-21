@@ -370,6 +370,15 @@ function normalizeHubProfile(profile: any) {
   };
 }
 
+function logInsuranceMapDependencyFailure(
+  source: "profile" | "family members",
+  userId: number,
+  error: unknown,
+) {
+  const message = error instanceof Error ? error.message : String(error);
+  console.warn(`[insuranceMap] Failed to load ${source} for user ${userId}: ${message}`);
+}
+
 function serializeFamilyMemberForClient(member: any) {
   return {
     id: member.id,
@@ -1404,10 +1413,19 @@ export const appRouter = router({
   insuranceMap: router({
     get: protectedProcedure.query(async ({ ctx }) => {
       if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
-      const [profile, analyses, familyMembers] = await Promise.all([
-        getUserProfile(ctx.user.id),
-        getUserAnalyses(ctx.user.id),
-        getFamilyMembers(ctx.user.id),
+      const analysesPromise = getUserAnalyses(ctx.user.id);
+      const profilePromise = getUserProfile(ctx.user.id).catch((error) => {
+        logInsuranceMapDependencyFailure("profile", ctx.user.id, error);
+        return null;
+      });
+      const familyMembersPromise = getFamilyMembers(ctx.user.id).catch((error) => {
+        logInsuranceMapDependencyFailure("family members", ctx.user.id, error);
+        return [];
+      });
+      const [analyses, profile, familyMembers] = await Promise.all([
+        analysesPromise,
+        profilePromise,
+        familyMembersPromise,
       ]);
       return buildFamilyCoverageSnapshot(analyses, normalizeHubProfile(profile), familyMembers);
     }),
@@ -1720,6 +1738,8 @@ export const appRouter = router({
           sessionId: analysis.sessionId,
           files: analysis.files,
           status: analysis.status,
+          processedFileCount: analysis.processedFileCount ?? 0,
+          activeBatchFileCount: analysis.activeBatchFileCount ?? 0,
           createdAt: analysis.createdAt,
           startedAt: analysis.startedAt ?? null,
           lastHeartbeatAt: analysis.lastHeartbeatAt ?? null,

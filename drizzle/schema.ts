@@ -49,6 +49,8 @@ export const analyses = pgTable("analyses", {
   analysisResult: text("analysis_result"),
   status: analysisStatusEnum("status").default("pending").notNull(),
   attemptCount: integer("attempt_count").default(0).notNull(),
+  processedFileCount: integer("processed_file_count").default(0).notNull(),
+  activeBatchFileCount: integer("active_batch_file_count").default(0).notNull(),
   lockedBy: varchar("locked_by", { length: 128 }),
   lastHeartbeatAt: timestamp("last_heartbeat_at"),
   startedAt: timestamp("started_at"),

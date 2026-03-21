@@ -100,7 +100,10 @@ class PolicyAnalysisWorker {
     }, ANALYSIS_WORKER_HEARTBEAT_MS);
 
     try {
-      const result = await analyzePolicySession(analysis);
+      const result = await analyzePolicySession({
+        ...analysis,
+        workerId: this.workerId,
+      });
       await completeAnalysis(analysis.sessionId, this.workerId, {
         analysisResult: result.analysisResult,
         insuranceCategory: result.insuranceCategory,

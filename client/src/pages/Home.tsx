@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Progress } from "@/components/ui/progress";
 import { FileUpload } from "@/components/FileUpload";
 import { ManualPolicyEntry } from "@/components/ManualPolicyEntry";
 import { CoverageCards } from "@/components/CoverageCards";
@@ -14,6 +15,7 @@ import { FinancialSummary } from "@/components/FinancialSummary";
 import { PolicyChatbot } from "@/components/PolicyChatbot";
 import { DuplicateCoveragesAlert } from "@/components/DuplicateCoveragesAlert";
 import { PersonalizedInsights } from "@/components/PersonalizedInsights";
+import { POLICY_ANALYSIS_BATCH_SIZE, getAnalysisProgressSnapshot } from "@shared/analysisProgress";
 import { getAnalysisPollInterval } from "@shared/scanNotificationTransitions";
 import {
   Shield,
@@ -28,6 +30,12 @@ import {
   CheckCircle2,
 } from "lucide-react";
 import type { UploadedFile, PolicyAnalysis } from "@shared/insurance";
+
+type UploadProgressState = {
+  loadedBytes: number;
+  totalBytes: number;
+  percent: number;
+};
 
 const STEPS = [
   { icon: <FileSearch className="size-5" />, title: "העלה", desc: "העלה קבצי PDF של הפוליסה" },
@@ -69,6 +77,68 @@ function hasSpecifiedPolicyValue(value?: string | null) {
   return Boolean(value && value !== "לא צוין בפוליסה" && value !== "לא מצוין בפוליסה");
 }
 
+function formatUploadBytes(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function uploadPolicyFilesWithProgress(
+  files: UploadedFile[],
+  onProgress: (progress: UploadProgressState) => void,
+) {
+  return new Promise<{ sessionId: string }>((resolve, reject) => {
+    const formData = new FormData();
+    const knownTotalBytes = files.reduce((sum, file) => sum + file.size, 0);
+
+    files.forEach((file) => {
+      if (file._file) {
+        formData.append("files", file._file, file.name);
+      }
+    });
+
+    const request = new XMLHttpRequest();
+    request.open("POST", "/api/policies/upload");
+    request.withCredentials = true;
+
+    request.upload.addEventListener("progress", (event) => {
+      const totalBytes = event.lengthComputable && event.total > 0 ? event.total : knownTotalBytes;
+      const loadedBytes = event.lengthComputable ? event.loaded : 0;
+      const percent = totalBytes > 0 ? Math.round((loadedBytes / totalBytes) * 100) : 0;
+      onProgress({
+        loadedBytes,
+        totalBytes,
+        percent,
+      });
+    });
+
+    request.addEventListener("load", () => {
+      let payload: any = null;
+      try {
+        payload = request.responseText ? JSON.parse(request.responseText) : null;
+      } catch {
+        payload = null;
+      }
+      if (request.status >= 200 && request.status < 300) {
+        onProgress({
+          loadedBytes: knownTotalBytes,
+          totalBytes: knownTotalBytes,
+          percent: 100,
+        });
+        resolve(payload as { sessionId: string });
+        return;
+      }
+      reject(new Error(payload?.message || payload?.error || "שגיאה בהעלאת הקבצים"));
+    });
+
+    request.addEventListener("error", () => {
+      reject(new Error("שגיאת רשת בהעלאת הקבצים"));
+    });
+
+    request.send(formData);
+  });
+}
+
 export default function Home() {
   useAuth({ redirectOnUnauthenticated: true });
   const [, setLocation] = useLocation();
@@ -79,6 +149,7 @@ export default function Home() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [analysisResult, setAnalysisResult] = useState<PolicyAnalysis | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<UploadProgressState | null>(null);
   const [intakeMode, setIntakeMode] = useState("upload");
   const [activeTab, setActiveTab] = useState("coverages");
   const [selectedFileFilter, setSelectedFileFilter] = useState<string | null>(null);
@@ -104,6 +175,7 @@ export default function Home() {
     if (!requestedSessionId) {
       setFiles([]);
       setIsUploading(false);
+      setUploadProgress(null);
       setActiveTab("coverages");
       setSessionId(null);
       setAnalysisResult(null);
@@ -116,6 +188,7 @@ export default function Home() {
     setActiveTab("coverages");
     setFiles([]);
     setIsUploading(false);
+    setUploadProgress(null);
   }, [requestedSessionId]);
 
   useEffect(() => {
@@ -136,6 +209,7 @@ export default function Home() {
   }, [analysisResult, requestedFileFilter]);
 
   const handleFilesSelected = useCallback((newFiles: File[]) => {
+    setUploadProgress(null);
     const uploadedFiles: UploadedFile[] = newFiles.map(f => ({
       id: nanoid(8),
       name: f.name,
@@ -147,6 +221,7 @@ export default function Home() {
   }, []);
 
   const handleRemoveFile = useCallback((id: string) => {
+    setUploadProgress(null);
     setFiles(prev => prev.filter(f => f.id !== id));
   }, []);
 
@@ -154,25 +229,16 @@ export default function Home() {
     if (files.length === 0) return;
 
     setIsUploading(true);
+    const totalBytes = files.reduce((sum, file) => sum + file.size, 0);
+    setUploadProgress({
+      loadedBytes: 0,
+      totalBytes,
+      percent: 0,
+    });
     setFiles(prev => prev.map(f => ({ ...f, status: "uploading" as const })));
 
     try {
-      const formData = new FormData();
-      files.forEach((file) => {
-        if (file._file) {
-          formData.append("files", file._file, file.name);
-        }
-      });
-      const response = await fetch("/api/policies/upload", {
-        method: "POST",
-        body: formData,
-        credentials: "include",
-      });
-      const payload = await response.json().catch(() => null);
-      if (!response.ok) {
-        throw new Error(payload?.message || payload?.error || "שגיאה בהעלאת הקבצים");
-      }
-      const result = payload as { sessionId: string };
+      const result = await uploadPolicyFilesWithProgress(files, setUploadProgress);
       setSessionId(result.sessionId);
       setFiles(prev => prev.map(f => ({ ...f, status: "queued" as const })));
       setIsUploading(false);
@@ -181,6 +247,7 @@ export default function Home() {
       setLocation(`/insurance/${result.sessionId}`);
     } catch (error: any) {
       setIsUploading(false);
+      setUploadProgress(null);
       setFiles(prev => prev.map(f => ({ ...f, status: "error" as const, error: error.message })));
       toast.error("שגיאה בהעלאת הפוליסה: " + (error.message || "נסה שוב"));
     }
@@ -207,6 +274,7 @@ export default function Home() {
     setSessionId(null);
     setAnalysisResult(null);
     setIsUploading(false);
+    setUploadProgress(null);
     setActiveTab("coverages");
     setSelectedFileFilter(null);
     setLocation("/insurance/new");
@@ -231,6 +299,12 @@ export default function Home() {
   }, [requestedSessionId]);
 
   const analysisStatus = getAnalysisQuery.data?.status ?? null;
+  const analysisProgress = getAnalysisProgressSnapshot({
+    status: analysisStatus,
+    files: getAnalysisQuery.data?.files,
+    processedFileCount: getAnalysisQuery.data?.processedFileCount,
+    activeBatchFileCount: getAnalysisQuery.data?.activeBatchFileCount,
+  });
   const heroPremiumLabel = analysisResult
     ? (() => {
         const info = analysisResult.generalInfo;
@@ -347,18 +421,43 @@ export default function Home() {
 
             {isUploading && (
               <Card className="mt-6 border-primary/20 bg-primary/5 animate-fade-in-up">
-                <CardContent className="py-8 text-center" data-testid="policy-uploading-card">
-                  <div className="relative size-14 mx-auto mb-4">
-                    <div className="absolute inset-0 rounded-full border-2 border-primary/20" />
-                    <div className="absolute inset-0 rounded-full border-2 border-primary border-t-transparent animate-spin" />
-                    <Loader2 className="absolute inset-0 m-auto size-6 text-primary" />
+                <CardContent className="p-5" data-testid="policy-uploading-card" role="status" aria-live="polite">
+                  <div className="flex items-start gap-4">
+                    <div className="relative size-12 shrink-0">
+                      <div className="absolute inset-0 rounded-full border-2 border-primary/20" />
+                      <div className="absolute inset-0 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+                      <Loader2 className="absolute inset-0 m-auto size-5 text-primary" />
+                    </div>
+                    <div className="min-w-0 flex-1 space-y-3">
+                      <div className="flex items-start justify-between gap-3 flex-wrap">
+                        <div>
+                          <p className="text-sm font-semibold text-foreground">מעלה את הקבצים...</p>
+                          <p className="text-xs text-muted-foreground mt-1.5">
+                            ברגע שההעלאה תסתיים, העיבוד ימשיך ברקע גם אם תסגור את הדפדפן
+                          </p>
+                        </div>
+                        {uploadProgress ? (
+                          <p className="text-xl font-bold text-foreground" style={{ fontVariantNumeric: "tabular-nums" }}>
+                            {uploadProgress.percent}%
+                          </p>
+                        ) : null}
+                      </div>
+                      {uploadProgress ? (
+                        <div className="space-y-2">
+                          <Progress
+                            value={uploadProgress.percent}
+                            aria-label={`התקדמות העלאת קבצים ${uploadProgress.percent} אחוז`}
+                          />
+                          <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+                            <span>
+                              {formatUploadBytes(uploadProgress.loadedBytes)} מתוך {formatUploadBytes(uploadProgress.totalBytes)}
+                            </span>
+                            <span>{files.length} קבצים</span>
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
                   </div>
-                  <p className="text-sm font-semibold text-foreground">
-                    מעלה את הקבצים...
-                  </p>
-                  <p className="text-xs text-muted-foreground mt-1.5">
-                    ברגע שההעלאה תסתיים, העיבוד ימשיך ברקע גם אם תסגור את הדפדפן
-                  </p>
                 </CardContent>
               </Card>
             )}
@@ -402,7 +501,31 @@ export default function Home() {
                 <p className="text-sm text-muted-foreground mt-2">
                   אפשר לצאת מהעמוד או לסגור את הדפדפן. לומי ממשיך לעבד את הפוליסה ברקע והתוצאות יופיעו כאן כשהן יהיו מוכנות.
                 </p>
-                {getAnalysisQuery.data?.files?.length ? (
+                {analysisProgress ? (
+                  <div className="mt-5 rounded-2xl border border-primary/15 bg-background/80 p-4 text-start space-y-3">
+                    <div className="flex items-start justify-between gap-3 flex-wrap">
+                      <div>
+                        <p className="text-xs text-muted-foreground">התקדמות הסריקה</p>
+                        <p className="text-2xl font-bold text-foreground" style={{ fontVariantNumeric: "tabular-nums" }}>
+                          {analysisProgress.visibleFileCount}/{analysisProgress.totalFiles}
+                        </p>
+                      </div>
+                      <p className="text-xs text-muted-foreground max-w-[220px] leading-relaxed text-end">
+                        לומי מחלק את הסריקה לקבוצות של עד {POLICY_ANALYSIS_BATCH_SIZE} קבצים כדי לשמור על יציבות ומהירות.
+                      </p>
+                    </div>
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+                        <span>{analysisStatus === "processing" ? "קצב הסריקה הפעילה" : "הקבצים ממתינים להתחלת עיבוד"}</span>
+                        <span style={{ fontVariantNumeric: "tabular-nums" }}>{Math.round(analysisProgress.progressPercent)}%</span>
+                      </div>
+                      <Progress
+                        value={analysisProgress.progressPercent}
+                        aria-label={`התקדמות סריקת פוליסה ${Math.round(analysisProgress.progressPercent)} אחוז`}
+                      />
+                    </div>
+                  </div>
+                ) : getAnalysisQuery.data?.files?.length ? (
                   <p className="text-xs text-muted-foreground mt-3">
                     נשמרו {getAnalysisQuery.data.files.length} קבצים לסריקה
                   </p>

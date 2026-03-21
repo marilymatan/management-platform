@@ -21,9 +21,17 @@ const testUser = {
   lastSignedIn: new Date().toISOString(),
 };
 
+function createAnalysisFiles(count: number) {
+  return Array.from({ length: count }, (_, index) => ({
+    name: `policy-${index + 1}.pdf`,
+    size: 1024 + index,
+    fileKey: `policies/session-bg-1/file-${index + 1}.pdf`,
+  }));
+}
+
 const completedAnalysis = {
   sessionId: "session-bg-1",
-  files: [{ name: "policy.pdf", size: 1024, fileKey: "policies/session-bg-1/file.pdf" }],
+  files: createAnalysisFiles(8),
   status: "completed",
   result: {
     coverages: [
@@ -105,8 +113,10 @@ test.describe("Background policy upload", () => {
             if (analysisCallCount === 1) {
               return createTrpcSuccessResponse({
                 sessionId: "session-bg-1",
-                files: [{ name: "policy.pdf", size: 1024, fileKey: "policies/session-bg-1/file.pdf" }],
-                status: "pending",
+                files: createAnalysisFiles(8),
+                status: "processing",
+                processedFileCount: 0,
+                activeBatchFileCount: 3,
                 result: null,
                 errorMessage: null,
                 insuranceCategory: null,
@@ -142,6 +152,8 @@ test.describe("Background policy upload", () => {
 
     await expect(page).toHaveURL(/\/insurance\/session-bg-1$/);
     await expect(page.getByTestId("policy-analysis-pending")).toBeVisible();
+    await expect(page.getByTestId("policy-analysis-pending").getByText("3/8", { exact: true })).toBeVisible();
+    await expect(page.getByText("לומי מחלק את הסריקה לקבוצות של עד 3 קבצים")).toBeVisible();
 
     await page.reload();
 

@@ -1,6 +1,7 @@
 import { useAuth } from "@/_core/hooks/useAuth";
 import { useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
+import { AnalysisQueueProgressCard } from "@/components/AnalysisQueueProgressCard";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -176,19 +177,12 @@ export default function Dashboard() {
       </div>
 
       {inFlightAnalyses.length > 0 && (
-        <Card className="mb-8 border-primary/20 bg-primary/5 animate-fade-in-up">
-          <CardContent className="py-4 flex items-center justify-between gap-4 flex-wrap">
-            <div>
-              <p className="text-sm font-semibold text-foreground">יש לך {inFlightAnalyses.length} סריקות בעיבוד ברקע</p>
-              <p className="text-xs text-muted-foreground mt-1">
-                אפשר לפתוח כל סריקה כדי לראות סטטוס, לרענן או לנסות שוב במקרה של שגיאה.
-              </p>
-            </div>
-            <Button variant="outline" size="sm" onClick={() => utils.policy.getUserAnalyses.invalidate()}>
-              רענן רשימה
-            </Button>
-          </CardContent>
-        </Card>
+        <AnalysisQueueProgressCard
+          analyses={inFlightAnalyses}
+          onOpenStatus={() => utils.policy.getUserAnalyses.invalidate()}
+          actionLabel="רענן רשימה"
+          className="mb-8"
+        />
       )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8 animate-fade-in-up stagger-5">

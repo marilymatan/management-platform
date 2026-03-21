@@ -7,9 +7,11 @@ import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { AnalysisQueueProgressCard } from "@/components/AnalysisQueueProgressCard";
 import { GmailPolicyDiscovery } from "@/components/GmailPolicyDiscovery";
 import { MonthlyReportCard } from "@/components/MonthlyReportCard";
 import { OnboardingWizard } from "@/components/OnboardingWizard";
+import { summarizeAnalysisQueue } from "@/lib/analysisProgress";
 import { buildFamilyCoverageSnapshot, type FamilyMemberLike } from "@/lib/familyCoverage";
 import { formatGmailConnectionSummary } from "@/lib/gmailConnections";
 import { formatInsuranceCurrency } from "@/lib/insuranceOverview";
@@ -168,6 +170,7 @@ export default function LumiDashboard() {
   const inFlightPolicies = analysisRows.filter(
     (analysis) => analysis.status === "pending" || analysis.status === "processing",
   );
+  const inFlightSummary = summarizeAnalysisQueue(inFlightPolicies);
   const overdueInvoices = invoices?.filter(
     (invoice) => invoice.status === "overdue" && getInvoiceFlowDirection(invoice) === "expense",
   ) ?? [];
@@ -453,7 +456,9 @@ export default function LumiDashboard() {
                 </Badge>
                 {inFlightPolicies.length > 0 && (
                   <Badge variant="secondary" className="bg-white/15 text-white border-white/15">
-                    {inFlightPolicies.length} פוליסות בעיבוד
+                    {inFlightSummary?.totalFiles
+                      ? `${inFlightSummary.visibleFiles}/${inFlightSummary.totalFiles} בעיבוד`
+                      : `${inFlightPolicies.length} פוליסות בעיבוד`}
                   </Badge>
                 )}
               </div>
@@ -550,19 +555,10 @@ export default function LumiDashboard() {
       </div>
 
       {inFlightPolicies.length > 0 && (
-        <Card className="border-primary/20 bg-primary/5 animate-fade-in-up">
-          <CardContent className="py-4 flex items-center justify-between gap-4 flex-wrap">
-            <div>
-              <p className="text-sm font-semibold text-foreground">יש {inFlightPolicies.length} פוליסות בעיבוד ברקע</p>
-              <p className="text-xs text-muted-foreground mt-1">
-                אפשר להמשיך לעבוד כרגיל. הנתונים יופיעו ברגע שהסריקות יסתיימו.
-              </p>
-            </div>
-            <Button onClick={() => setLocation(`/insurance/${inFlightPolicies[0].sessionId}`)} variant="outline" size="sm">
-              פתח סטטוס
-            </Button>
-          </CardContent>
-        </Card>
+        <AnalysisQueueProgressCard
+          analyses={inFlightPolicies}
+          onOpenStatus={() => setLocation(`/insurance/${inFlightPolicies[0].sessionId}`)}
+        />
       )}
 
       <MonthlyReportCard

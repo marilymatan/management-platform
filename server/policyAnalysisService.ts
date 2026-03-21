@@ -1,7 +1,8 @@
 import { ENV } from "./_core/env";
 import { invokeLLM } from "./_core/llm";
-import { getUserProfile, logApiUsage } from "./db";
+import { getUserProfile, logApiUsage, updateAnalysisProcessingProgress } from "./db";
 import { storageRead } from "./storage";
+import { POLICY_ANALYSIS_BATCH_SIZE } from "@shared/analysisProgress";
 import type { PolicyAnalysis, PremiumPaymentPeriod } from "@shared/insurance";
 
 const ANALYSIS_SYSTEM_PROMPT = `אתה מומחה לניתוח פוליסות ביטוח בעברית. תפקידך לנתח את הטקסט של פוליסת הביטוח ולחלץ ממנו מידע מובנה.
@@ -84,8 +85,6 @@ const ANALYSIS_SYSTEM_PROMPT = `אתה מומחה לניתוח פוליסות ב
 - תן המלצה מעשית למשתמש (למשל: כדאי לבדוק אם ניתן לבטל אחד מהכיסויים ולחסוך בפרמיה)
 - אם אין כיסויים כפולים, החזר מערך ריק []`;
 
-const PDF_BATCH_SIZE = 3;
-
 const BATCH_MERGE_PROMPT = `אתה מומחה לניתוח פוליסות ביטוח בעברית. קיבלת תוצאות ניתוח של מספר קבוצות קבצי פוליסה שנותחו בנפרד.
 
 משימתך:
@@ -150,6 +149,7 @@ type AnalysisRecord = {
   sessionId: string;
   userId?: number | null;
   files: AnalysisFile[];
+  workerId?: string | null;
 };
 
 function extractLLMContent(response: any): string {
@@ -427,10 +427,21 @@ export async function analyzePolicySession(analysis: AnalysisRecord) {
     throw new Error("לא נמצאו קבצים לעיבוד");
   }
 
+  const updateProgress = async (processedFileCount: number, activeBatchFileCount: number) => {
+    if (!analysis.workerId) {
+      return;
+    }
+    await updateAnalysisProcessingProgress(analysis.sessionId, analysis.workerId, {
+      processedFileCount,
+      activeBatchFileCount,
+    });
+  };
+
   let analysisResult: PolicyAnalysis;
 
-  if (typedFiles.length <= PDF_BATCH_SIZE) {
+  if (typedFiles.length <= POLICY_ANALYSIS_BATCH_SIZE) {
     try {
+      await updateProgress(0, typedFiles.length);
       analysisResult = await runBatchAnalysis(
         analysis.sessionId,
         analysis.userId,
@@ -442,12 +453,14 @@ export async function analyzePolicySession(analysis: AnalysisRecord) {
     }
   } else {
     const batches: AnalysisFile[][] = [];
-    for (let i = 0; i < typedFiles.length; i += PDF_BATCH_SIZE) {
-      batches.push(typedFiles.slice(i, i + PDF_BATCH_SIZE));
+    for (let i = 0; i < typedFiles.length; i += POLICY_ANALYSIS_BATCH_SIZE) {
+      batches.push(typedFiles.slice(i, i + POLICY_ANALYSIS_BATCH_SIZE));
     }
 
     const batchResults: PolicyAnalysis[] = [];
     for (let batchIdx = 0; batchIdx < batches.length; batchIdx += 1) {
+      const processedFileCount = batchIdx * POLICY_ANALYSIS_BATCH_SIZE;
+      await updateProgress(processedFileCount, batches[batchIdx].length);
       const batchResult = await runBatchAnalysis(
         analysis.sessionId,
         analysis.userId,
@@ -467,6 +480,8 @@ export async function analyzePolicySession(analysis: AnalysisRecord) {
       }
       batchResults.push(batchResult);
     }
+
+    await updateProgress(typedFiles.length, 0);
 
     const allCoverages = batchResults.flatMap((result) => result.coverages);
     const withinBatchDuplicates = batchResults.flatMap((result) => result.duplicateCoverages || []);

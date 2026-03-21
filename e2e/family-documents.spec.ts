@@ -27,6 +27,26 @@ const documentsTestAnalyses = [
     ],
   },
 ];
+const documentsTestInvoices = [
+  {
+    id: 55,
+    provider: "הראל",
+    category: "ביטוח",
+    customCategory: null,
+    subject: "מסמך ביטוחי חדש",
+    invoiceDate: new Date("2026-03-21T08:00:00.000Z"),
+    createdAt: new Date("2026-03-21T08:00:00.000Z"),
+    extractedData: {
+      pdfUrl: previewPdfUrl,
+      pdfFilename: "harel-mail.pdf",
+      description: "מסמך ביטוחי שזוהה מתוך Gmail",
+    },
+  },
+];
+const documentsTestFamilyMembers = [
+  { id: 11, fullName: "נועה" },
+  { id: 12, fullName: "אורי" },
+];
 
 function createTrpcSuccessResponse(data: unknown) {
   return {
@@ -103,9 +123,23 @@ test.describe("Documents preview flow", () => {
           case "policy.getUserAnalyses":
             return createTrpcSuccessResponse(documentsTestAnalyses);
           case "gmail.getInvoices":
-            return createTrpcSuccessResponse([]);
+            return createTrpcSuccessResponse(documentsTestInvoices);
+          case "family.list":
+            return createTrpcSuccessResponse(documentsTestFamilyMembers);
           case "documents.getClassifications":
-            return createTrpcSuccessResponse([]);
+            return createTrpcSuccessResponse([
+              {
+                id: 1,
+                userId: 1,
+                documentKey: "invoice-55",
+                sourceType: "invoice_pdf",
+                sourceId: "55",
+                manualType: "family",
+                familyMemberId: 12,
+                createdAt: new Date("2026-03-21T08:05:00.000Z"),
+                updatedAt: new Date("2026-03-21T08:05:00.000Z"),
+              },
+            ]);
           case "policy.getSecureFileUrl":
             return createTrpcSuccessResponse({ url: previewPdfUrl });
           default:
@@ -130,7 +164,7 @@ test.describe("Documents preview flow", () => {
 
     await page.goto("/documents");
     await expect(page).toHaveURL(/\/documents$/);
-    await expect(page.getByRole("heading", { name: "מסמכים" })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole("heading", { name: "מסמכי ביטוח" })).toBeVisible({ timeout: 15_000 });
 
     const popupPromise = page.waitForEvent("popup");
     await page.getByTestId("document-view-policy-session-1-0").click();
@@ -138,5 +172,57 @@ test.describe("Documents preview flow", () => {
 
     await expect(page).toHaveURL(/\/documents$/);
     await expect.poll(() => popup.url()).toContain("/test-preview.pdf");
+  });
+
+  test("shows assignment options for insurance and family members", async ({ page }) => {
+    await page.route("**/api/trpc/**", async (route) => {
+      const url = new URL(route.request().url());
+      const procedureNames = url.pathname.replace("/api/trpc/", "").split(",");
+      const responses = procedureNames.map((procedureName) => {
+        switch (procedureName) {
+          case "auth.me":
+            return createTrpcSuccessResponse(documentsTestUser);
+          case "profile.getImageUrl":
+            return createTrpcSuccessResponse(null);
+          case "policy.getUserAnalyses":
+            return createTrpcSuccessResponse(documentsTestAnalyses);
+          case "gmail.getInvoices":
+            return createTrpcSuccessResponse(documentsTestInvoices);
+          case "family.list":
+            return createTrpcSuccessResponse(documentsTestFamilyMembers);
+          case "documents.getClassifications":
+            return createTrpcSuccessResponse([
+              {
+                id: 1,
+                userId: 1,
+                documentKey: "invoice-55",
+                sourceType: "invoice_pdf",
+                sourceId: "55",
+                manualType: "family",
+                familyMemberId: 12,
+                createdAt: new Date("2026-03-21T08:05:00.000Z"),
+                updatedAt: new Date("2026-03-21T08:05:00.000Z"),
+              },
+            ]);
+          default:
+            return createTrpcSuccessResponse(null);
+        }
+      });
+
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(url.searchParams.get("batch") === "1" ? responses : responses[0]),
+      });
+    });
+
+    await page.goto("/documents");
+
+    await expect(page.getByRole("heading", { name: "מסמכי ביטוח" })).toBeVisible({ timeout: 15_000 });
+    const select = page.getByTestId("document-type-select-invoice-55");
+    await expect(select).toBeVisible();
+    await expect(select.locator('option[value="insurance"]')).toHaveText("ביטוח");
+    await expect(select.locator('option[value="family:11"]')).toHaveText("נועה");
+    await expect(select.locator('option[value="family:12"]')).toHaveText("אורי");
   });
 });

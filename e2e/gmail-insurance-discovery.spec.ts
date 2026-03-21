@@ -16,7 +16,7 @@ function createTrpcSuccessResponse(data: unknown) {
   };
 }
 
-async function mockExpensesWithInsuranceDiscoveries(page: Page, discoveries?: unknown[]) {
+async function mockExpensesWithInsuranceDiscoveries(page: Page, discoveries?: unknown[], invoices?: unknown[]) {
   await page.route("**/api/trpc/**", async (route) => {
     const url = new URL(route.request().url());
     const procedureNames = url.pathname.replace("/api/trpc/", "").split(",");
@@ -42,9 +42,22 @@ async function mockExpensesWithInsuranceDiscoveries(page: Page, discoveries?: un
             ],
           });
         case "gmail.getInvoices":
-          return createTrpcSuccessResponse([]);
-        case "gmail.getMonthlySummary":
-          return createTrpcSuccessResponse([]);
+          return createTrpcSuccessResponse(invoices ?? [
+            {
+              id: 501,
+              provider: "הראל",
+              category: "ביטוח",
+              customCategory: null,
+              subject: "מסמך ביטוחי חדש",
+              invoiceDate: new Date("2026-03-18T00:00:00.000Z"),
+              createdAt: new Date("2026-03-18T00:00:00.000Z"),
+              extractedData: {
+                pdfUrl: "/api/files/gmail-invoices/1/file.pdf?token=test&exp=9999999999",
+                pdfFilename: "harel-mail.pdf",
+                description: "מסמך ביטוחי שזוהה מתוך Gmail",
+              },
+            },
+          ]);
         case "gmail.getAuthUrl":
           return createTrpcSuccessResponse({
             url: "https://accounts.google.com/o/oauth2/auth",
@@ -86,12 +99,15 @@ test.describe("Gmail insurance discovery", () => {
     await mockExpensesWithInsuranceDiscoveries(page);
     await page.goto("/expenses");
 
+    await expect(page.getByRole("heading", { name: "סריקת מיילי ביטוח" })).toBeVisible({ timeout: 15_000 });
     await expect(page.getByTestId("insurance-discovery-section")).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText("ממצאי ביטוח מהמייל")).toBeVisible();
     await expect(page.getByTestId("insurance-discovery-card-101")).toBeVisible();
-    await expect(page.getByText("הראל", { exact: true })).toBeVisible();
+    await expect(page.getByTestId("insurance-discovery-card-101").getByText("הראל")).toBeVisible();
     await expect(page.getByText("עדכון פרמיה לביטוח בריאות מהמייל.")).toBeVisible();
     await expect(page.getByText("כדאי לוודא שהחיוב תואם את הפוליסה")).toBeVisible();
+    await expect(page.getByText("מסמכים ביטוחיים שזוהו במייל")).toBeVisible();
+    await expect(page.getByText("harel-mail.pdf")).toBeVisible();
   });
 
   test("shows external action guidance when the email only contains a portal link", async ({ page }) => {

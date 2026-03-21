@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
+import { AnalysisQueueProgressCard } from "@/components/AnalysisQueueProgressCard";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -207,22 +208,10 @@ export default function Insurance() {
       </div>
 
       {inFlightAnalyses.length > 0 && (
-        <Card className="border-primary/20 bg-primary/5 animate-fade-in-up">
-          <CardContent className="p-5 flex items-center justify-between gap-4 flex-wrap">
-            <div>
-              <p className="text-sm font-semibold text-foreground">יש כרגע {inFlightAnalyses.length} פוליסות בעיבוד ברקע</p>
-              <p className="text-sm text-muted-foreground mt-1">
-                הנתונים יופיעו אוטומטית במסך הזה ברגע שהסריקות יושלמו.
-              </p>
-            </div>
-            <Button
-              variant="outline"
-              onClick={() => setLocation(`/insurance/${inFlightAnalyses[0].sessionId}`)}
-            >
-              פתח סטטוס
-            </Button>
-          </CardContent>
-        </Card>
+        <AnalysisQueueProgressCard
+          analyses={inFlightAnalyses}
+          onOpenStatus={() => setLocation(`/insurance/${inFlightAnalyses[0].sessionId}`)}
+        />
       )}
 
       {overview.insights.length > 0 && (

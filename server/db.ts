@@ -133,6 +133,8 @@ type AnalysisStatusUpdate = {
   errorMessage?: string | null;
   insuranceCategory?: string | null;
   attemptCount?: number;
+  processedFileCount?: number;
+  activeBatchFileCount?: number;
   lockedBy?: string | null;
   lastHeartbeatAt?: Date | null;
   startedAt?: Date | null;
@@ -286,6 +288,12 @@ export async function updateAnalysisStatus(
   if (data?.attemptCount !== undefined) {
     updateData.attemptCount = data.attemptCount;
   }
+  if (data?.processedFileCount !== undefined) {
+    updateData.processedFileCount = data.processedFileCount;
+  }
+  if (data?.activeBatchFileCount !== undefined) {
+    updateData.activeBatchFileCount = data.activeBatchFileCount;
+  }
   if (data?.lockedBy !== undefined) {
     updateData.lockedBy = data.lockedBy;
   }
@@ -327,6 +335,8 @@ export async function claimNextPendingAnalysis(workerId: string, staleBefore: Da
     SET
       ${analyses.status} = 'processing',
       ${analyses.attemptCount} = ${analyses.attemptCount} + 1,
+      ${analyses.processedFileCount} = 0,
+      ${analyses.activeBatchFileCount} = 0,
       ${analyses.lockedBy} = ${workerId},
       ${analyses.lastHeartbeatAt} = ${now},
       ${analyses.startedAt} = COALESCE(${analyses.startedAt}, ${now}),
@@ -354,6 +364,30 @@ export async function heartbeatAnalysis(sessionId: string, workerId: string) {
     .where(and(eq(analyses.sessionId, sessionId), eq(analyses.lockedBy, workerId), eq(analyses.status, "processing")));
 }
 
+export async function updateAnalysisProcessingProgress(sessionId: string, workerId: string, data: {
+  processedFileCount?: number;
+  activeBatchFileCount?: number;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const updateData: Partial<InsertAnalysis> = {
+    updatedAt: new Date(),
+  };
+
+  if (data.processedFileCount !== undefined) {
+    updateData.processedFileCount = data.processedFileCount;
+  }
+  if (data.activeBatchFileCount !== undefined) {
+    updateData.activeBatchFileCount = data.activeBatchFileCount;
+  }
+
+  await db
+    .update(analyses)
+    .set(updateData)
+    .where(and(eq(analyses.sessionId, sessionId), eq(analyses.lockedBy, workerId), eq(analyses.status, "processing")));
+}
+
 export async function completeAnalysis(sessionId: string, workerId: string, data: {
   analysisResult: PolicyAnalysis;
   insuranceCategory?: string | null;
@@ -367,6 +401,8 @@ export async function completeAnalysis(sessionId: string, workerId: string, data
       status: "completed",
       analysisResult: serializeAnalysisJsonCompat(data.analysisResult),
       insuranceCategory: (data.insuranceCategory ?? null) as InsertAnalysis["insuranceCategory"],
+      processedFileCount: 0,
+      activeBatchFileCount: 0,
       errorMessage: null,
       lockedBy: null,
       lastHeartbeatAt: now,
@@ -385,6 +421,8 @@ export async function requeueAnalysis(sessionId: string, workerId: string, nextR
     .update(analyses)
     .set({
       status: "pending",
+      processedFileCount: 0,
+      activeBatchFileCount: 0,
       lockedBy: null,
       lastHeartbeatAt: null,
       nextRetryAt,
@@ -403,6 +441,8 @@ export async function failAnalysis(sessionId: string, workerId: string, errorMes
     .update(analyses)
     .set({
       status: "error",
+      processedFileCount: 0,
+      activeBatchFileCount: 0,
       errorMessage: encryptField(errorMessage),
       lockedBy: null,
       lastHeartbeatAt: now,
@@ -419,6 +459,8 @@ export async function resetAnalysisForRetry(sessionId: string) {
     .update(analyses)
     .set({
       status: "pending",
+      processedFileCount: 0,
+      activeBatchFileCount: 0,
       errorMessage: null,
       lockedBy: null,
       lastHeartbeatAt: null,

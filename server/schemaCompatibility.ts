@@ -9,10 +9,41 @@ type ColumnSpec = {
   ddl: string;
 };
 
+const userProfileColumns: ColumnSpec[] = [
+  {
+    columnName: "profile_image_key",
+    ddl: `ALTER TABLE "user_profiles" ADD COLUMN IF NOT EXISTS "profile_image_key" text`,
+  },
+  {
+    columnName: "business_name",
+    ddl: `ALTER TABLE "user_profiles" ADD COLUMN IF NOT EXISTS "business_name" text`,
+  },
+  {
+    columnName: "business_tax_id",
+    ddl: `ALTER TABLE "user_profiles" ADD COLUMN IF NOT EXISTS "business_tax_id" text`,
+  },
+  {
+    columnName: "business_email_domains",
+    ddl: `ALTER TABLE "user_profiles" ADD COLUMN IF NOT EXISTS "business_email_domains" text`,
+  },
+  {
+    columnName: "onboarding_completed",
+    ddl: `ALTER TABLE "user_profiles" ADD COLUMN IF NOT EXISTS "onboarding_completed" boolean DEFAULT false NOT NULL`,
+  },
+];
+
 const analysisQueueColumns: ColumnSpec[] = [
   {
     columnName: "attempt_count",
     ddl: `ALTER TABLE "analyses" ADD COLUMN IF NOT EXISTS "attempt_count" integer DEFAULT 0 NOT NULL`,
+  },
+  {
+    columnName: "processed_file_count",
+    ddl: `ALTER TABLE "analyses" ADD COLUMN IF NOT EXISTS "processed_file_count" integer DEFAULT 0 NOT NULL`,
+  },
+  {
+    columnName: "active_batch_file_count",
+    ddl: `ALTER TABLE "analyses" ADD COLUMN IF NOT EXISTS "active_batch_file_count" integer DEFAULT 0 NOT NULL`,
   },
   {
     columnName: "locked_by",
@@ -107,6 +138,28 @@ export async function ensureInsuranceCategoryCompatibility(db: SchemaCompatibili
   console.log("[Migrate] Migration 0002 applied");
 }
 
+export async function ensureUserProfileCompatibility(db: SchemaCompatibilityDb) {
+  const hasUserProfilesTable = await hasTable(db, "user_profiles");
+  if (!hasUserProfilesTable) return;
+
+  const missingColumns: ColumnSpec[] = [];
+  for (const column of userProfileColumns) {
+    if (!(await hasColumn(db, "user_profiles", column.columnName))) {
+      missingColumns.push(column);
+    }
+  }
+
+  if (missingColumns.length === 0) {
+    return;
+  }
+
+  console.log("[Migrate] Ensuring user_profiles schema compatibility...");
+  for (const column of missingColumns) {
+    await db.execute(sql.raw(column.ddl));
+  }
+  console.log("[Migrate] user_profiles schema compatibility ensured");
+}
+
 export async function ensureAnalysisQueueCompatibility(db: SchemaCompatibilityDb) {
   const hasAnalysesTable = await hasTable(db, "analyses");
   if (!hasAnalysesTable) return;
@@ -138,5 +191,6 @@ export async function ensureAnalysisQueueCompatibility(db: SchemaCompatibilityDb
 
 export async function ensureLegacySchemaCompatibility(db: SchemaCompatibilityDb) {
   await ensureInsuranceCategoryCompatibility(db);
+  await ensureUserProfileCompatibility(db);
   await ensureAnalysisQueueCompatibility(db);
 }
