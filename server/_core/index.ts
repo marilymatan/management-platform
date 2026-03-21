@@ -19,6 +19,11 @@ import { registerPolicyUploadRoute } from "../policyUploadRoute";
 import { registerSecurityMiddleware } from "../security";
 import { ENV } from "./env";
 import { verifyFileSignature } from "../storage";
+import {
+  ensureLegacySchemaCompatibility,
+  hasExistingCoreSchema,
+  shouldSyncMigrationTracking,
+} from "../schemaCompatibility";
 
 async function runMigrations() {
   if (!process.env.DATABASE_URL) {
@@ -37,18 +42,7 @@ async function runMigrations() {
       )
     `);
 
-    const colCheck = await db.execute(sql`
-      SELECT count(*)::int as cnt FROM information_schema.columns
-      WHERE table_name = 'analyses' AND column_name = 'insurance_category'
-    `);
-    const hasInsuranceCategory = ((colCheck.rows[0] as any)?.cnt ?? 0) > 0;
-
-    if (!hasInsuranceCategory) {
-      console.log("[Migrate] Applying missing migration 0002 (insurance_category)...");
-      await db.execute(sql`DO $$ BEGIN CREATE TYPE "public"."insurance_category_type" AS ENUM('health', 'life', 'car', 'home'); EXCEPTION WHEN duplicate_object THEN NULL; END $$`);
-      await db.execute(sql`ALTER TABLE "analyses" ADD COLUMN "insurance_category" "insurance_category_type"`);
-      console.log("[Migrate] Migration 0002 applied");
-    }
+    await ensureLegacySchemaCompatibility(db);
 
     const journalPath = path.resolve(process.cwd(), "drizzle/meta/_journal.json");
     const migrationJournal = JSON.parse(fs.readFileSync(journalPath, "utf8")) as {
@@ -68,7 +62,9 @@ async function runMigrations() {
     );
     const trackedCount = ((tracked.rows[0] as any)?.cnt ?? 0);
 
-    if (trackedCount < allMigrations.length) {
+    const existingCoreSchema = await hasExistingCoreSchema(db);
+
+    if (shouldSyncMigrationTracking(trackedCount, existingCoreSchema)) {
       await db.execute(sql`TRUNCATE "drizzle"."__drizzle_migrations"`);
       for (const m of allMigrations) {
         await db.execute(
