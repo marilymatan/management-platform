@@ -3,7 +3,9 @@ import {
   ensureAnalysisQueueCompatibility,
   ensureInsuranceArtifactsCompatibility,
   ensureInsuranceCategoryCompatibility,
+  ensureSavingsHubCompatibility,
   ensureUserProfileCompatibility,
+  getAppliedMigrationTags,
   shouldSyncMigrationTracking,
   type SchemaCompatibilityDb,
 } from "./schemaCompatibility";
@@ -177,11 +179,52 @@ describe("schemaCompatibility", () => {
     ).toBe(true);
   });
 
-  it("adds missing user profile columns when the schema is behind", async () => {
+  it("creates savings hub tables and indexes when the schema is behind", async () => {
     const db = createDb();
     db.execute
       .mockResolvedValueOnce(countResult(1))
       .mockResolvedValueOnce(countResult(0))
+      .mockResolvedValueOnce(countResult(0))
+      .mockResolvedValueOnce(countResult(0))
+      .mockResolvedValueOnce(countResult(0))
+      .mockResolvedValueOnce(countResult(0))
+      .mockResolvedValueOnce(countResult(0))
+      .mockResolvedValueOnce(countResult(0))
+      .mockResolvedValueOnce(countResult(0))
+      .mockResolvedValueOnce(countResult(0))
+      .mockResolvedValueOnce(countResult(0))
+      .mockResolvedValueOnce(countResult(0))
+      .mockResolvedValueOnce(countResult(0))
+      .mockResolvedValue({ rows: [] });
+
+    await ensureSavingsHubCompatibility(db);
+
+    const statements = db.execute.mock.calls.map(([query]) => queryText(query));
+    expect(
+      statements.some((statement) => statement.includes('CREATE TABLE IF NOT EXISTS "action_items"')),
+    ).toBe(true);
+    expect(
+      statements.some((statement) => statement.includes('CREATE TABLE IF NOT EXISTS "monthly_reports"')),
+    ).toBe(true);
+    expect(
+      statements.some((statement) => statement.includes('CREATE TABLE IF NOT EXISTS "savings_opportunities"')),
+    ).toBe(true);
+    expect(
+      statements.some((statement) =>
+        statement.includes('ALTER TABLE "user_profiles" ADD COLUMN IF NOT EXISTS "onboarding_completed" boolean DEFAULT false NOT NULL'),
+      ),
+    ).toBe(true);
+    expect(
+      statements.some((statement) =>
+        statement.includes('CREATE UNIQUE INDEX IF NOT EXISTS "savings_opportunities_user_key_uniq" ON "savings_opportunities"'),
+      ),
+    ).toBe(true);
+  });
+
+  it("adds missing user profile columns when the schema is behind", async () => {
+    const db = createDb();
+    db.execute
+      .mockResolvedValueOnce(countResult(1))
       .mockResolvedValueOnce(countResult(0))
       .mockResolvedValueOnce(countResult(0))
       .mockResolvedValueOnce(countResult(0))
@@ -203,15 +246,11 @@ describe("schemaCompatibility", () => {
     expect(statements).toContain(
       'ALTER TABLE "user_profiles" ADD COLUMN IF NOT EXISTS "business_email_domains" text',
     );
-    expect(statements).toContain(
-      'ALTER TABLE "user_profiles" ADD COLUMN IF NOT EXISTS "onboarding_completed" boolean DEFAULT false NOT NULL',
-    );
   });
 
   it("skips user profile schema DDL when the required columns already exist", async () => {
     const db = createDb();
     db.execute
-      .mockResolvedValueOnce(countResult(1))
       .mockResolvedValueOnce(countResult(1))
       .mockResolvedValueOnce(countResult(1))
       .mockResolvedValueOnce(countResult(1))
@@ -224,5 +263,38 @@ describe("schemaCompatibility", () => {
     expect(
       statements.some((statement) => statement.includes('ALTER TABLE "user_profiles" ADD COLUMN IF NOT EXISTS')),
     ).toBe(false);
+  });
+
+  it("syncs only migrations whose schema is already present", async () => {
+    const db = createDb();
+    db.execute
+      .mockResolvedValueOnce(countResult(1))
+      .mockResolvedValueOnce(countResult(1))
+      .mockResolvedValueOnce(countResult(1))
+      .mockResolvedValueOnce(countResult(1))
+      .mockResolvedValueOnce(countResult(1))
+      .mockResolvedValueOnce(countResult(1))
+      .mockResolvedValueOnce(countResult(1))
+      .mockResolvedValueOnce(countResult(1))
+      .mockResolvedValueOnce(countResult(1))
+      .mockResolvedValueOnce(countResult(1))
+      .mockResolvedValueOnce(countResult(1))
+      .mockResolvedValueOnce(countResult(1))
+      .mockResolvedValueOnce(countResult(1))
+      .mockResolvedValueOnce(countResult(1))
+      .mockResolvedValueOnce(countResult(1))
+      .mockResolvedValueOnce(countResult(0))
+      .mockResolvedValueOnce(countResult(1));
+
+    const applied = await getAppliedMigrationTags(db, [
+      "0011_hesitant_emma_frost",
+      "0012_previous_proemial_gods",
+      "0013_whole_darwin",
+    ]);
+
+    expect([...applied]).toEqual([
+      "0011_hesitant_emma_frost",
+      "0012_previous_proemial_gods",
+    ]);
   });
 });

@@ -249,6 +249,7 @@ export default function Settings() {
       const result = await updateMutation.mutateAsync(data);
       if (result.profile) {
         utils.profile.get.setData(undefined, result.profile);
+        form.reset(toFormValues(result.profile));
       }
       await utils.profile.get.invalidate();
       toast.success("הפרופיל עודכן בהצלחה");

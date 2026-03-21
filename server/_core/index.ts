@@ -21,6 +21,7 @@ import { ENV } from "./env";
 import { verifyFileSignature } from "../storage";
 import {
   ensureLegacySchemaCompatibility,
+  getAppliedMigrationTags,
   hasExistingCoreSchema,
   shouldSyncMigrationTracking,
 } from "../schemaCompatibility";
@@ -65,13 +66,20 @@ async function runMigrations() {
     const existingCoreSchema = await hasExistingCoreSchema(db);
 
     if (shouldSyncMigrationTracking(trackedCount, existingCoreSchema)) {
+      const appliedMigrationTags = await getAppliedMigrationTags(
+        db,
+        migrationJournal.entries.map((entry) => entry.tag),
+      );
+      const syncedMigrations = allMigrations.filter((_, index) =>
+        appliedMigrationTags.has(migrationJournal.entries[index].tag),
+      );
       await db.execute(sql`TRUNCATE "drizzle"."__drizzle_migrations"`);
-      for (const m of allMigrations) {
+      for (const m of syncedMigrations) {
         await db.execute(
           sql`INSERT INTO "drizzle"."__drizzle_migrations" ("hash", "created_at") VALUES (${m.hash}, ${m.when})`
         );
       }
-      console.log("[Migrate] Synced migration tracking (" + allMigrations.length + " migrations)");
+      console.log("[Migrate] Synced migration tracking (" + syncedMigrations.length + " migrations)");
     }
 
     const migrationsFolder = path.resolve(process.cwd(), "drizzle");

@@ -21,10 +21,6 @@ function getPool(): pg.Pool {
   return _pool!;
 }
 
-export function getSharedPool(): pg.Pool {
-  return getPool();
-}
-
 export async function getDb() {
   if (!_db && process.env.DATABASE_URL) {
     try {
@@ -1454,8 +1450,3 @@ export async function upsertCategorySummaryCache(
     });
 }
 
-export async function invalidateCategorySummaryCacheForUser(userId: number) {
-  const db = await getDb();
-  if (!db) return;
-  await db.delete(categorySummaryCache).where(eq(categorySummaryCache.userId, userId));
-}
