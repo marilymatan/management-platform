@@ -190,6 +190,11 @@
     50% { opacity: 0.5; transform: scale(1.4); }
   }
 
+  @keyframes queue-progress {
+    0% { transform: translateX(140%); }
+    100% { transform: translateX(-260%); }
+  }
+
   .animate-fade-in-up {
     animation: fade-in-up 0.4s ease-out both;
   }
@@ -202,9 +207,14 @@
     animation: orbit-pulse-strong 2s ease-in-out infinite;
   }
 
+  .animate-queue-progress {
+    animation: queue-progress 1.4s linear infinite;
+  }
+
   @media (prefers-reduced-motion: reduce) {
     .animate-orbit-pulse,
-    .animate-orbit-pulse-strong {
+    .animate-orbit-pulse-strong,
+    .animate-queue-progress {
       animation: none;
     }
   }
