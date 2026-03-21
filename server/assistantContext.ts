@@ -9,12 +9,6 @@ type AssistantChip = {
   tone: AssistantTone;
 };
 
-type AssistantHighlight = {
-  title: string;
-  description: string;
-  tone: AssistantTone;
-};
-
 type AssistantAnalysis = {
   createdAt?: string | Date | null;
   status?: string | null;
@@ -112,7 +106,6 @@ type RelevantDocument = {
 export type AssistantHomeContext = {
   greeting: string;
   chips: AssistantChip[];
-  highlights: AssistantHighlight[];
   suggestedPrompts: string[];
 };
 
@@ -1056,7 +1049,6 @@ export function buildAssistantHomeContext(params: {
   const pendingInvoices = params.invoices.filter((invoice) => invoice.status === "pending" || invoice.status === "overdue");
   const documentCount = getDocumentCount(params.analyses, params.invoices, params.documentClassifications);
   const renewalDiscoveries = params.insuranceDiscoveries.filter((discovery) => discovery.artifactType === "renewal_notice");
-  const premiumDiscoveries = params.insuranceDiscoveries.filter((discovery) => discovery.artifactType === "premium_notice");
   const policyDocumentsFromMail = params.insuranceDiscoveries.filter((discovery) => discovery.artifactType === "policy_document");
   const upcomingRenewals = completedAnalyses
     .map((analysis) => {
@@ -1073,7 +1065,6 @@ export function buildAssistantHomeContext(params: {
     .sort((a, b) => a.daysLeft - b.daysLeft);
 
   const chips: AssistantChip[] = [];
-  const highlights: AssistantHighlight[] = [];
   const prompts: string[] = [];
   const familyMembersCount = params.familyMembers.length;
   const childrenCount =
@@ -1083,11 +1074,6 @@ export function buildAssistantHomeContext(params: {
   if (!params.gmailConnections.length) {
     chips.push({ label: "Gmail עדיין לא מחובר", tone: "warning" });
     prompts.push("איך מחברים את Gmail כדי שלומי יזהה הוצאות והכנסות?");
-    highlights.push({
-      title: "חיבור Gmail יפתח את לומי",
-      description: "ברגע שתחבר את Gmail, לומי יוכל לזהות תשלומים, הכנסות ומסמכים כספיים אוטומטית.",
-      tone: "warning",
-    });
   }
 
   if (params.insuranceDiscoveries.length > 0) {
@@ -1112,28 +1098,10 @@ export function buildAssistantHomeContext(params: {
       tone: "info",
     });
     prompts.push("יש לי חידושי ביטוח קרובים או פערים בכיסוי?");
-    highlights.push({
-      title: "יש פוליסה שדורשת תשומת לב",
-      description: `${upcomingRenewals[0].title} מתקרבת לחידוש בעוד ${upcomingRenewals[0].daysLeft} ימים.`,
-      tone: "info",
-    });
   }
 
   if (renewalDiscoveries.length > 0) {
-    highlights.push({
-      title: "זוהה חידוש ביטוחי מהמייל",
-      description: `${renewalDiscoveries[0].provider || "גוף ביטוחי"} שלח מייל חידוש שכדאי לעבור עליו.`,
-      tone: "info",
-    });
     prompts.push("יש חידוש ביטוחי מהמייל שכדאי לטפל בו עכשיו?");
-  }
-
-  if (premiumDiscoveries.length > 0 && completedAnalyses.length === 0) {
-    highlights.push({
-      title: "המייל כבר חושף שיש ביטוחים פעילים",
-      description: `זוהו ${premiumDiscoveries.length} עדכוני פרמיה ביטוחיים, גם אם עדיין לא נטענו פוליסות מלאות לתיק.`,
-      tone: "warning",
-    });
   }
 
   if (policyDocumentsFromMail.length > 0) {
@@ -1143,11 +1111,6 @@ export function buildAssistantHomeContext(params: {
   if (familyMembersCount > 0) {
     chips.push({
       label: `${familyMembersCount + 1} בני בית מנוהלים`,
-      tone: "success",
-    });
-    highlights.push({
-      title: "מודל המשפחה כבר פעיל",
-      description: `יש כרגע ${familyMembersCount + 1} בני בית שמזינים הקשר לשאלות על משפחה, ביטוחים ומסמכים.`,
       tone: "success",
     });
   }
@@ -1175,11 +1138,6 @@ export function buildAssistantHomeContext(params: {
       tone: currentMonth.netTotal >= 0 ? "success" : "warning",
     });
     prompts.push("איך נראות ההוצאות וההכנסות שלי החודש?");
-    highlights.push({
-      title: `תמונת מצב ל-${monthLabel}`,
-      description: `הוצאות ${formatIls(currentMonth.expenseTotal)} מול הכנסות ${formatIls(currentMonth.incomeTotal)}. הנטו כרגע הוא ${currentMonth.netTotal >= 0 ? "חיובי" : "שלילי"}.`,
-      tone: currentMonth.netTotal >= 0 ? "success" : "warning",
-    });
   }
 
   if (!params.profile?.incomeRange || !params.profile?.employmentStatus) {
@@ -1190,20 +1148,11 @@ export function buildAssistantHomeContext(params: {
     prompts.push("איך מתחילים להעלות ולנתח ביטוחים בלומי?");
   }
 
-  if (!highlights.length) {
-    highlights.push({
-      title: "לומי מוכן להתחיל",
-      description: "אפשר לשאול על כסף, משפחה, מסמכים וביטוחים, ולקבל תשובות שמבוססות על הנתונים שלך.",
-      tone: "info",
-    });
-  }
-
   const greetingName = params.userName?.split(" ")[0] || "";
 
   return {
     greeting: `${greetingName ? `שלום ${greetingName}, ` : ""}אני כאן כדי לעזור לך להבין מה קורה בבית, בכסף, במסמכים ובביטוחים. אפשר לשאול אותי כל דבר או לבחור אחת מהשאלות המומלצות.`,
     chips: chips.slice(0, 5),
-    highlights: highlights.slice(0, 3),
     suggestedPrompts: Array.from(new Set(prompts)).slice(0, 5),
   };
 }

@@ -3,8 +3,6 @@ import { useLocation } from "wouter";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { toast } from "sonner";
 import { AnalysisQueueProgressCard } from "@/components/AnalysisQueueProgressCard";
-import { GmailPolicyDiscovery } from "@/components/GmailPolicyDiscovery";
-import { LumiAssistantCard } from "@/components/LumiAssistantCard";
 import { OnboardingWizard } from "@/components/OnboardingWizard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -393,7 +391,7 @@ export default function LumiDashboard() {
                 <Button
                   size="sm"
                   className="gap-1.5 bg-white text-primary hover:bg-white/90"
-                  onClick={() => document.getElementById("dashboard-lumi-chat")?.scrollIntoView({ behavior: "smooth", block: "start" })}
+                  onClick={() => setLocation("/chat")}
                 >
                   <Sparkles className="size-4" />
                   שאל את לומי
@@ -516,10 +514,63 @@ export default function LumiDashboard() {
         </Card>
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.65fr)] gap-4">
-        <div id="dashboard-lumi-chat">
-          <LumiAssistantCard height="680px" />
-        </div>
+      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(320px,0.72fr)] gap-4">
+        <Card data-testid="home-alerts-preview">
+          <CardContent className="pt-5 pb-5 space-y-4">
+            <div className="flex items-center justify-between gap-3">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <Bell className="size-4 text-primary" />
+                  <h2 className="text-sm font-semibold">התראות חמות</h2>
+                </div>
+                <p className="text-xs text-muted-foreground">כל מה שלומי מצא מוצג עכשיו גם במסך התראות ייעודי.</p>
+              </div>
+              <Badge variant="outline">{allAlertsCount}</Badge>
+            </div>
+
+            {latestAlerts.length > 0 ? (
+              <div className="space-y-2">
+                {latestAlerts.map((alert) => {
+                  const icon = getAlertPreviewIcon(alert);
+                  return (
+                    <button
+                      key={alert.id}
+                      type="button"
+                      onClick={() => openAlert(alert)}
+                      className="w-full rounded-xl border border-border/70 bg-background p-3 text-start transition-colors hover:bg-muted/30"
+                    >
+                      <div className="flex items-start gap-3">
+                        <div className={`flex size-9 shrink-0 items-center justify-center rounded-xl ${icon.className}`}>
+                          {icon.icon}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <p className="text-sm font-medium truncate">{alert.title}</p>
+                            <Badge variant="secondary">{alert.badgeLabel}</Badge>
+                          </div>
+                          <p className="mt-1 text-xs text-muted-foreground leading-relaxed">{alert.description}</p>
+                        </div>
+                        <ArrowLeft className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="rounded-xl border border-dashed p-5 text-center">
+                <p className="text-sm font-medium">עדיין אין התראות פתוחות</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  כשתעלה פוליסות או תסרוק Gmail, הממצאים הכי חשובים יופיעו כאן.
+                </p>
+              </div>
+            )}
+
+            <Button variant="outline" className="w-full gap-2" onClick={() => setLocation("/alerts")}>
+              <Bell className="size-4" />
+              לכל ההתראות
+            </Button>
+          </CardContent>
+        </Card>
 
         <div className="space-y-4">
           {inFlightPolicies.length > 0 && (
@@ -529,63 +580,6 @@ export default function LumiDashboard() {
               actionLabel="לסטטוס הסריקות"
             />
           )}
-
-          <Card data-testid="home-alerts-preview">
-            <CardContent className="pt-5 pb-5 space-y-4">
-              <div className="flex items-center justify-between gap-3">
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <Bell className="size-4 text-primary" />
-                    <h2 className="text-sm font-semibold">התראות חמות</h2>
-                  </div>
-                  <p className="text-xs text-muted-foreground">כל מה שלומי מצא מוצג עכשיו גם במסך התראות ייעודי.</p>
-                </div>
-                <Badge variant="outline">{allAlertsCount}</Badge>
-              </div>
-
-              {latestAlerts.length > 0 ? (
-                <div className="space-y-2">
-                  {latestAlerts.map((alert) => {
-                    const icon = getAlertPreviewIcon(alert);
-                    return (
-                      <button
-                        key={alert.id}
-                        type="button"
-                        onClick={() => openAlert(alert)}
-                        className="w-full rounded-xl border border-border/70 bg-background p-3 text-start transition-colors hover:bg-muted/30"
-                      >
-                        <div className="flex items-start gap-3">
-                          <div className={`flex size-9 shrink-0 items-center justify-center rounded-xl ${icon.className}`}>
-                            {icon.icon}
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <p className="text-sm font-medium truncate">{alert.title}</p>
-                              <Badge variant="secondary">{alert.badgeLabel}</Badge>
-                            </div>
-                            <p className="mt-1 text-xs text-muted-foreground leading-relaxed">{alert.description}</p>
-                          </div>
-                          <ArrowLeft className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              ) : (
-                <div className="rounded-xl border border-dashed p-5 text-center">
-                  <p className="text-sm font-medium">עדיין אין התראות פתוחות</p>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    כשתעלה פוליסות או תסרוק Gmail, הממצאים הכי חשובים יופיעו כאן.
-                  </p>
-                </div>
-              )}
-
-              <Button variant="outline" className="w-full gap-2" onClick={() => setLocation("/alerts")}>
-                <Bell className="size-4" />
-                לכל ההתראות
-              </Button>
-            </CardContent>
-          </Card>
 
           <Card>
             <CardContent className="pt-5 pb-5 space-y-4">
@@ -615,12 +609,6 @@ export default function LumiDashboard() {
           </Card>
         </div>
       </div>
-
-      <GmailPolicyDiscovery
-        returnTo="/"
-        title="גילוי פוליסות אוטומטי"
-        description="מסמכי פוליסה עם PDF שזוהו ב-Gmail ומוכנים לייבוא לניתוח. כל ממצא משמעותי חדש יופיע גם במסך ההתראות."
-      />
 
       <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(320px,0.85fr)] gap-4">
         <Card>
