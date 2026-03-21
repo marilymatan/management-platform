@@ -46,3 +46,7 @@ Only skip the RTL wrapper if the user explicitly asks for an all-LTR layout for 
 ## Limitation
 
 Chat panel CSS is controlled by Cursor; this rule improves direction and bidi in markdown/HTML where supported. IDE-wide RTL may still need an extension.
+
+## Composer 2 and similar models
+
+Some chat models (notably **Composer 2**) render Markdown+HTML inconsistently: `<div dir="rtl">` may show stray closing tags, break list/heading layout, or scramble mixed Hebrew/English with bold and inline code. If the reply looks wrong in that model, **do not** wrap the whole answer in HTML. Instead: put **RLM** (`‏`, U+200F) at the start of each Hebrew paragraph or list item, keep fenced code blocks **outside** any wrapper, and use **LRM/RLM** around short English tokens when order breaks. The full-`<div>` wrapper remains the default for models that render it correctly.

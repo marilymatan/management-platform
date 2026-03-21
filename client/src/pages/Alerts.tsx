@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { toast } from "sonner";
 import { format } from "date-fns";
 import { he } from "date-fns/locale";
 import { useLocation } from "wouter";
@@ -106,9 +107,23 @@ function SummaryCard({
 export default function Alerts() {
   const { user } = useAuth({ redirectOnUnauthenticated: true });
   const [, setLocation] = useLocation();
+  const utils = trpc.useUtils();
 
   const { data: analyses } = trpc.policy.getUserAnalyses.useQuery(undefined, {
     enabled: !!user,
+  });
+  const clearInFlightQueue = trpc.policy.clearInFlightQueue.useMutation({
+    onSuccess: (data) => {
+      toast.success(
+        data.deletedCount > 0
+          ? `נמחקו ${data.deletedCount} סריקות מהתור`
+          : "לא היו סריקות ממתינות בתור",
+      );
+      void utils.policy.getUserAnalyses.invalidate();
+    },
+    onError: (err) => {
+      toast.error(err.message || "לא ניתן לנקות את התור");
+    },
   });
   const { data: profileData } = trpc.profile.get.useQuery(undefined, {
     enabled: !!user,
@@ -240,6 +255,8 @@ export default function Alerts() {
           analyses={inFlightPolicies}
           onOpenStatus={() => setLocation("/insurance")}
           actionLabel="לסטטוס הסריקות"
+          onClearQueue={() => clearInFlightQueue.mutate()}
+          clearQueuePending={clearInFlightQueue.isPending}
         />
       )}
 

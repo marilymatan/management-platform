@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { toast } from "sonner";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
@@ -124,8 +125,22 @@ function getCategorySummaryText(summary: InsuranceHubCategorySummary) {
 export default function Insurance() {
   const { user } = useAuth({ redirectOnUnauthenticated: true });
   const [, setLocation] = useLocation();
+  const utils = trpc.useUtils();
   const { data: analyses, isLoading } = trpc.policy.getUserAnalyses.useQuery(undefined, {
     enabled: !!user,
+  });
+  const clearInFlightQueue = trpc.policy.clearInFlightQueue.useMutation({
+    onSuccess: (data) => {
+      toast.success(
+        data.deletedCount > 0
+          ? `נמחקו ${data.deletedCount} סריקות מהתור`
+          : "לא היו סריקות ממתינות בתור",
+      );
+      void utils.policy.getUserAnalyses.invalidate();
+    },
+    onError: (err) => {
+      toast.error(err.message || "לא ניתן לנקות את התור");
+    },
   });
   const profileQuery = trpc.profile.get.useQuery(undefined, {
     enabled: !!user,
@@ -276,6 +291,8 @@ export default function Insurance() {
         <AnalysisQueueProgressCard
           analyses={inFlightAnalyses}
           onOpenStatus={() => setLocation(`/insurance/${inFlightAnalyses[0].sessionId}`)}
+          onClearQueue={() => clearInFlightQueue.mutate()}
+          clearQueuePending={clearInFlightQueue.isPending}
         />
       )}
 

@@ -18,6 +18,7 @@ import {
   ArrowLeft,
   Bell,
   FileText,
+  Loader2,
   Mail,
   PiggyBank,
   Plus,
@@ -45,16 +46,20 @@ function HealthScoreRing({ score }: { score: number }) {
   const color = score >= 75 ? "var(--success)" : score >= 50 ? "var(--warning)" : "var(--destructive)";
 
   return (
-    <div className="relative mx-auto size-24">
-      <svg className="size-24 -rotate-90" viewBox="0 0 100 100">
-        <circle cx="50" cy="50" r={radius} fill="none" stroke="currentColor" strokeWidth="8" className="text-white/15" />
+    <div className="relative mx-auto flex size-32 items-center justify-center md:size-36">
+      <div
+        className="pointer-events-none absolute inset-2 rounded-full bg-[radial-gradient(circle_at_50%_32%,color-mix(in_oklch,var(--primary-foreground)_14%,transparent),transparent_62%)] md:inset-3"
+        aria-hidden
+      />
+      <svg className="relative size-32 -rotate-90 md:size-36" viewBox="0 0 100 100">
+        <circle cx="50" cy="50" r={radius} fill="none" stroke="currentColor" strokeWidth="7" className="text-white/18" />
         <circle
           cx="50"
           cy="50"
           r={radius}
           fill="none"
           stroke={color}
-          strokeWidth="8"
+          strokeWidth="7"
           strokeLinecap="round"
           strokeDasharray={circumference}
           strokeDashoffset={offset}
@@ -62,8 +67,8 @@ function HealthScoreRing({ score }: { score: number }) {
         />
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center">
-        <span className="text-2xl font-bold">{score}</span>
-        <span className="text-[10px] text-white/70">מתוך 100</span>
+        <span className="text-3xl font-bold tabular-nums tracking-tight text-white md:text-4xl">{score}</span>
+        <span className="mt-0.5 text-[11px] font-medium text-white/75">מתוך 100</span>
       </div>
     </div>
   );
@@ -120,6 +125,19 @@ export default function LumiDashboard() {
   });
   const { data: savingsReport } = trpc.savings.getReport.useQuery(undefined, {
     enabled: !!user,
+  });
+  const clearInFlightQueue = trpc.policy.clearInFlightQueue.useMutation({
+    onSuccess: (data) => {
+      toast.success(
+        data.deletedCount > 0
+          ? `נמחקו ${data.deletedCount} סריקות מהתור`
+          : "לא היו סריקות ממתינות בתור",
+      );
+      void utils.policy.getUserAnalyses.invalidate();
+    },
+    onError: (err) => {
+      toast.error(err.message || "לא ניתן לנקות את התור");
+    },
   });
 
   const familyMembers = (familyMembersData ?? []) as FamilyMemberLike[];
@@ -353,90 +371,120 @@ export default function LumiDashboard() {
 
   return (
     <div className="page-container space-y-6" data-testid="insurance-command-center">
-      <div className="animate-fade-in-up relative overflow-hidden rounded-2xl border border-border/60 bg-gradient-to-bl from-primary via-primary/90 to-chart-1 text-primary-foreground shadow-sm">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_0%,rgba(255,255,255,0.18),transparent_45%)]" />
-        <div className="absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-black/10 to-transparent" />
-        <div className="relative p-6">
-          <div className="flex items-start justify-between gap-6 flex-wrap">
-            <div className="max-w-3xl space-y-4">
-              <div className="inline-flex items-center gap-2 rounded-full bg-white/10 px-4 py-1.5 text-xs font-medium backdrop-blur-sm">
-                <Sparkles className="size-4" />
-                הבית של לומי
+      <div className="animate-fade-in-up relative overflow-hidden rounded-3xl border border-white/10 bg-gradient-to-bl from-primary via-primary/92 to-chart-1 text-primary-foreground shadow-[0_24px_48px_-12px_color-mix(in_oklch,var(--primary)_28%,transparent)]">
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_90%_60%_at_85%_-10%,color-mix(in_oklch,var(--primary-foreground)_22%,transparent),transparent_55%)]" />
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_0%_100%,color-mix(in_oklch,var(--chart-4)_35%,transparent),transparent_50%)] opacity-80" />
+        <div className="absolute inset-x-0 bottom-0 h-32 bg-gradient-to-t from-black/15 to-transparent" />
+        <div className="relative px-6 py-8 md:px-10 md:py-10">
+          <div className="grid items-start gap-10 lg:grid-cols-[minmax(0,1fr)_minmax(260px,300px)] lg:gap-12">
+            <div className="flex min-w-0 flex-col gap-8">
+              <div className="space-y-6">
+                <div className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/12 px-4 py-2 text-xs font-semibold shadow-[inset_0_1px_0_0_color-mix(in_oklch,var(--primary-foreground)_12%,transparent)] backdrop-blur-md">
+                  <Sparkles className="size-4 shrink-0 text-primary-foreground/95" aria-hidden />
+                  הבית של לומי
+                </div>
+                <div className="space-y-4">
+                  <h1 className="text-balance text-3xl font-bold leading-tight tracking-tight md:text-4xl">
+                    שלום, {firstName}. כאן כל מה שלומי יודע על הבית.
+                  </h1>
+                  <p className="max-w-2xl text-base leading-relaxed text-primary-foreground/78 md:text-[1.05rem]">
+                    דף הבית החדש שם את הכוח של לומי במרכז: לשאול שאלות על כל הפוליסות, המסמכים, המשפחה והמיילים, ולקבל ישר את ההתראות הכי חשובות.
+                  </p>
+                </div>
               </div>
-              <div className="space-y-3">
-                <h1 className="text-2xl md:text-3xl font-bold tracking-tight">שלום, {firstName}. כאן כל מה שלומי יודע על הבית.</h1>
-                <p className="max-w-2xl text-sm leading-relaxed text-primary-foreground/80">
-                  דף הבית החדש שם את הכוח של לומי במרכז: לשאול שאלות על כל הפוליסות, המסמכים, המשפחה והמיילים, ולקבל ישר את ההתראות הכי חשובות.
-                </p>
-              </div>
-              <div className="flex items-center gap-2 flex-wrap">
-                <Badge variant="secondary" className="border-white/15 bg-white/15 text-white">
-                  {coverageSnapshot.householdSize} נפשות בתמונה
-                </Badge>
-                <Badge variant="secondary" className="border-white/15 bg-white/15 text-white">
-                  {allAlertsCount} התראות פתוחות
-                </Badge>
-                <Badge variant="secondary" className="border-white/15 bg-white/15 text-white">
-                  {gmailConnected ? "Gmail מחובר" : "Gmail עדיין לא מחובר"}
-                </Badge>
+              <div className="flex flex-wrap gap-3">
+                <div className="inline-flex min-h-10 items-center gap-2 rounded-2xl border border-white/18 bg-white/10 px-3.5 py-2 text-xs font-medium shadow-sm backdrop-blur-md">
+                  <Users className="size-3.5 shrink-0 opacity-90" aria-hidden />
+                  <span className="tabular-nums">{coverageSnapshot.householdSize} נפשות בתמונה</span>
+                </div>
+                <div className="inline-flex min-h-10 items-center gap-2 rounded-2xl border border-white/18 bg-white/10 px-3.5 py-2 text-xs font-medium shadow-sm backdrop-blur-md">
+                  <Bell className="size-3.5 shrink-0 opacity-90" aria-hidden />
+                  <span className="tabular-nums">{allAlertsCount} התראות פתוחות</span>
+                </div>
+                <div className="inline-flex min-h-10 items-center gap-2 rounded-2xl border border-white/18 bg-white/10 px-3.5 py-2 text-xs font-medium shadow-sm backdrop-blur-md">
+                  <Mail className="size-3.5 shrink-0 opacity-90" aria-hidden />
+                  <span>{gmailConnected ? "Gmail מחובר" : "Gmail עדיין לא מחובר"}</span>
+                </div>
                 {inFlightPolicies.length > 0 && (
-                  <Badge variant="secondary" className="border-white/15 bg-white/15 text-white">
-                    {inFlightSummary?.totalFiles
-                      ? `${inFlightSummary.visibleFiles}/${inFlightSummary.totalFiles} בעיבוד`
-                      : `${inFlightPolicies.length} סריקות ברקע`}
-                  </Badge>
+                  <div className="inline-flex min-h-10 items-center gap-2 rounded-2xl border border-white/18 bg-white/10 px-3.5 py-2 text-xs font-medium shadow-sm backdrop-blur-md">
+                    <Loader2 className="size-3.5 shrink-0 opacity-90 animate-spin" aria-hidden />
+                    <span className="tabular-nums">
+                      {inFlightSummary?.totalFiles
+                        ? `${inFlightSummary.visibleFiles}/${inFlightSummary.totalFiles} בעיבוד`
+                        : `${inFlightPolicies.length} סריקות ברקע`}
+                    </span>
+                  </div>
                 )}
               </div>
-              <div className="flex items-center gap-2 flex-wrap">
+              <div className="flex flex-wrap items-center gap-3">
                 <Button
-                  size="sm"
-                  className="gap-1.5 bg-white text-primary hover:bg-white/90"
+                  size="lg"
+                  className="h-11 min-w-[9.5rem] rounded-full border-0 bg-primary-foreground px-6 text-primary shadow-lg shadow-black/15 transition-transform hover:scale-[1.02] hover:bg-primary-foreground/95 motion-reduce:hover:scale-100 active:scale-[0.99] motion-reduce:active:scale-100"
                   onClick={() => setLocation("/chat")}
+                  data-testid="dashboard-hero-ask-lumi"
                 >
                   <Sparkles className="size-4" />
                   שאל את לומי
                 </Button>
                 <Button
-                  size="sm"
+                  size="lg"
                   variant="secondary"
-                  className="gap-1.5 border border-white/20 bg-white/15 text-white hover:bg-white/25"
+                  className="h-11 rounded-full border border-white/28 bg-white/12 px-5 text-primary-foreground shadow-sm backdrop-blur-md transition-all hover:border-white/40 hover:bg-white/20"
                   onClick={() => setLocation("/alerts")}
+                  data-testid="dashboard-hero-open-alerts"
                 >
                   <Bell className="size-4" />
                   פתח התראות
                 </Button>
                 <Button
-                  size="sm"
+                  size="lg"
                   variant="secondary"
-                  className="gap-1.5 border border-white/20 bg-white/15 text-white hover:bg-white/25"
+                  className="h-11 rounded-full border border-white/28 bg-white/12 px-5 text-primary-foreground shadow-sm backdrop-blur-md transition-all hover:border-white/40 hover:bg-white/20"
                   onClick={() => setLocation("/insurance/new")}
+                  data-testid="dashboard-hero-new-scan"
                 >
                   <Plus className="size-4" />
                   סריקה חדשה
                 </Button>
               </div>
               {gmailConnected && (
-                <div className="rounded-xl border border-white/15 bg-white/10 px-4 py-3 backdrop-blur-sm" data-testid="dashboard-gmail-connection">
-                  <p className="text-[11px] uppercase tracking-wide text-white/55">חשבון Gmail מחובר</p>
-                  <p className="mt-1 text-sm font-semibold break-all">{gmailConnectionSummary.label}</p>
-                  <p className="mt-1 text-xs text-white/70">{gmailConnectionSummary.detail}</p>
+                <div
+                  className="flex flex-col gap-3 rounded-2xl border border-white/22 bg-white/10 p-4 shadow-inner backdrop-blur-md sm:flex-row sm:items-center sm:gap-4 sm:p-5"
+                  data-testid="dashboard-gmail-connection"
+                >
+                  <div className="flex size-11 shrink-0 items-center justify-center rounded-xl border border-white/15 bg-white/12">
+                    <Mail className="size-5 text-primary-foreground/95" aria-hidden />
+                  </div>
+                  <div className="min-w-0 flex-1 space-y-1">
+                    <p className="text-[11px] font-semibold uppercase tracking-wider text-white/60">חשבון Gmail מחובר</p>
+                    <p className="text-sm font-semibold leading-snug break-all text-white">{gmailConnectionSummary.label}</p>
+                    <p className="text-xs leading-relaxed text-white/72">{gmailConnectionSummary.detail}</p>
+                  </div>
                 </div>
               )}
             </div>
 
-            <div className="w-full max-w-[260px] rounded-2xl border border-white/15 bg-white/10 p-5 backdrop-blur-sm">
-              <p className="text-xs text-white/70">ציון תיק ביטוחי</p>
-              <div className="mt-4">
+            <div className="w-full max-w-[300px] justify-self-center rounded-3xl border border-white/22 bg-white/14 p-6 shadow-[inset_0_1px_0_0_color-mix(in_oklch,var(--primary-foreground)_14%,transparent)] backdrop-blur-xl sm:p-7 lg:max-w-none lg:justify-self-stretch">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold text-white/90">ציון תיק ביטוחי</p>
+                  <p className="mt-1 text-xs text-white/65">מבט מהיר על מצב הכיסוי</p>
+                </div>
+                <div className="rounded-lg border border-white/15 bg-white/10 px-2 py-1 text-[10px] font-semibold tabular-nums text-white/85">
+                  ‎0–100‎
+                </div>
+              </div>
+              <div className="mt-2">
                 <HealthScoreRing score={insuranceScore} />
               </div>
-              <div className="mt-4 grid grid-cols-2 gap-3">
-                <div className="rounded-xl border border-white/10 bg-white/8 p-3 text-center">
-                  <p className="text-[11px] text-white/60">כיסויים</p>
-                  <p className="mt-1 text-lg font-bold">{activePolicies.length}</p>
+              <div className="mt-6 grid grid-cols-2 gap-3">
+                <div className="rounded-2xl border border-white/14 bg-white/8 p-3.5 text-center shadow-sm">
+                  <p className="text-[11px] font-medium text-white/65">כיסויים</p>
+                  <p className="mt-1.5 text-xl font-bold tabular-nums tracking-tight">{activePolicies.length}</p>
                 </div>
-                <div className="rounded-xl border border-white/10 bg-white/8 p-3 text-center">
-                  <p className="text-[11px] text-white/60">דחופות</p>
-                  <p className="mt-1 text-lg font-bold">{alertSnapshot.urgentCount}</p>
+                <div className="rounded-2xl border border-white/14 bg-white/8 p-3.5 text-center shadow-sm">
+                  <p className="text-[11px] font-medium text-white/65">דחופות</p>
+                  <p className="mt-1.5 text-xl font-bold tabular-nums tracking-tight">{alertSnapshot.urgentCount}</p>
                 </div>
               </div>
             </div>
@@ -578,6 +626,8 @@ export default function LumiDashboard() {
               analyses={inFlightPolicies}
               onOpenStatus={() => setLocation("/insurance")}
               actionLabel="לסטטוס הסריקות"
+              onClearQueue={() => clearInFlightQueue.mutate()}
+              clearQueuePending={clearInFlightQueue.isPending}
             />
           )}
 
