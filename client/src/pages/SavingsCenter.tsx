@@ -184,7 +184,7 @@ export default function SavingsCenter() {
     return null;
   }
 
-  if (reportQuery.error || actionsQuery.error) {
+  if (reportQuery.error && !reportData) {
     return (
       <div className="page-container">
         <Card data-testid="savings-center-error">
@@ -270,6 +270,10 @@ export default function SavingsCenter() {
             {monitoringQuery.data?.summary ? (
               <div className="rounded-xl border bg-muted/30 px-4 py-3 text-sm text-muted-foreground">
                 {monitoringQuery.data.summary}
+              </div>
+            ) : actionsQuery.error ? (
+              <div className="rounded-xl border border-border bg-muted/20 px-4 py-3 text-sm text-muted-foreground">
+                לא הצלחנו לרענן כרגע את רשימת הפעולות, אז לומי מציגה כאן את נתוני הגיבוי שכבר הופקו בדוח החיסכון.
               </div>
             ) : monitoringQuery.error ? (
               <div className="rounded-xl border border-border bg-muted/20 px-4 py-3 text-sm text-muted-foreground">

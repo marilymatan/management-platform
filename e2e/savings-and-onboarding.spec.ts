@@ -16,6 +16,22 @@ function createTrpcSuccessResponse(data: unknown) {
   };
 }
 
+function createTrpcErrorResponse(message: string, path: string) {
+  return {
+    error: {
+      json: {
+        message,
+        code: -32603,
+        data: {
+          code: "INTERNAL_SERVER_ERROR",
+          httpStatus: 500,
+          path,
+        },
+      },
+    },
+  };
+}
+
 async function mockSavingsCenter(page: Page) {
   await page.route("**/api/trpc/**", async (route) => {
     const url = new URL(route.request().url());
@@ -168,6 +184,78 @@ async function mockSavingsCenterWithoutOpenSignals(page: Page) {
   });
 }
 
+async function mockSavingsCenterWithActionsFailure(page: Page) {
+  await page.route("**/api/trpc/**", async (route) => {
+    const url = new URL(route.request().url());
+    const procedureNames = url.pathname.replace("/api/trpc/", "").split(",");
+    const responses = procedureNames.map((procedureName) => {
+      switch (procedureName) {
+        case "auth.me":
+          return createTrpcSuccessResponse(testUser);
+        case "profile.get":
+          return createTrpcSuccessResponse({
+            maritalStatus: "married",
+            numberOfChildren: 2,
+            ownsApartment: true,
+            hasActiveMortgage: true,
+            numberOfVehicles: 1,
+            onboardingCompleted: true,
+          });
+        case "profile.getImageUrl":
+          return createTrpcSuccessResponse(null);
+        case "savings.getReport":
+          return createTrpcSuccessResponse({
+            overview: "זוהו 2 הזדמנויות חיסכון עם פוטנציאל חודשי של ₪120.",
+            totalMonthlySaving: 120,
+            totalAnnualSaving: 1440,
+            savedSoFar: 480,
+            score: 74,
+            totalMonthlySpend: 620,
+            policyCount: 2,
+            categoriesWithData: ["health", "life"],
+            opportunities: [
+              {
+                id: 11,
+                title: "ייתכן כפל כיסוי באמבולטורי",
+                description: "יש חפיפה שנראית בין שתי פוליסות בריאות.",
+                type: "duplicate",
+                priority: "high",
+                monthlySaving: 70,
+                annualSaving: 840,
+                actionSteps: ["לבדוק את שתי הפוליסות", "להחליט אם לצמצם כיסוי כפול"],
+                status: "open",
+              },
+            ],
+            actionItems: [
+              {
+                id: 21,
+                title: "בדוק חידוש בהראל",
+                description: "נשארו 14 ימים לחידוש.",
+                type: "renewal",
+                priority: "high",
+                potentialSaving: 0,
+                instructions: ["לבדוק מחיר מול תנאים קיימים"],
+                status: "pending",
+              },
+            ],
+          });
+        case "actions.list":
+          return createTrpcErrorResponse("actions failed", "actions.list");
+        case "monitoring.getMonthlyReport":
+          return createTrpcSuccessResponse(null);
+        default:
+          return createTrpcSuccessResponse(null);
+      }
+    });
+
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(url.searchParams.get("batch") === "1" ? responses : responses[0]),
+    });
+  });
+}
+
 async function mockOnboarding(page: Page) {
   await page.route("**/api/trpc/**", async (route) => {
     const url = new URL(route.request().url());
@@ -297,6 +385,16 @@ test.describe("Savings and onboarding", () => {
     await page.getByRole("tab", { name: "מעקב פעולות" }).click();
     await expect(page.getByTestId("savings-center-actions-empty-with-policies")).toBeVisible();
     await expect(page.getByText("כרגע אין משימות פתוחות על הביטוחים שזוהו")).toBeVisible();
+  });
+
+  test("keeps the savings center visible when actions refresh fails", async ({ page }) => {
+    await mockSavingsCenterWithActionsFailure(page);
+    await page.goto("/savings");
+
+    await expect(page.getByTestId("savings-center-page")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText("לא הצלחנו לרענן כרגע את רשימת הפעולות, אז לומי מציגה כאן את נתוני הגיבוי שכבר הופקו בדוח החיסכון.")).toBeVisible();
+    await page.getByRole("tab", { name: "מעקב פעולות" }).click();
+    await expect(page.getByText("בדוק חידוש בהראל")).toBeVisible();
   });
 
   test("shows the onboarding wizard for a new user", async ({ page }) => {

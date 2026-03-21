@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   ensureAnalysisQueueCompatibility,
+  ensureInsuranceArtifactsCompatibility,
   ensureInsuranceCategoryCompatibility,
   ensureUserProfileCompatibility,
   shouldSyncMigrationTracking,
@@ -125,6 +126,53 @@ describe("schemaCompatibility", () => {
     expect(
       statements.some((statement) =>
         statement.includes('ALTER TABLE "analyses" ADD COLUMN IF NOT EXISTS "insurance_category" "insurance_category_type"'),
+      ),
+    ).toBe(true);
+  });
+
+  it("creates insurance_artifacts and its indexes when the schema is behind", async () => {
+    const db = createDb();
+    db.execute
+      .mockResolvedValueOnce(countResult(0))
+      .mockResolvedValueOnce(countResult(0))
+      .mockResolvedValueOnce(countResult(0))
+      .mockResolvedValueOnce(countResult(0))
+      .mockResolvedValueOnce(countResult(0))
+      .mockResolvedValueOnce(countResult(0))
+      .mockResolvedValue({ rows: [] });
+
+    await ensureInsuranceArtifactsCompatibility(db);
+
+    const statements = db.execute.mock.calls.map(([query]) => queryText(query));
+    expect(
+      statements.some((statement) => statement.includes('CREATE TYPE "public"."insurance_artifact_type"')),
+    ).toBe(true);
+    expect(
+      statements.some((statement) => statement.includes('CREATE TABLE IF NOT EXISTS "insurance_artifacts"')),
+    ).toBe(true);
+    expect(
+      statements.some((statement) =>
+        statement.includes('CREATE INDEX IF NOT EXISTS "insurance_artifacts_user_id_idx" ON "insurance_artifacts"'),
+      ),
+    ).toBe(true);
+    expect(
+      statements.some((statement) =>
+        statement.includes('CREATE INDEX IF NOT EXISTS "insurance_artifacts_category_idx" ON "insurance_artifacts"'),
+      ),
+    ).toBe(true);
+    expect(
+      statements.some((statement) =>
+        statement.includes('CREATE INDEX IF NOT EXISTS "insurance_artifacts_type_idx" ON "insurance_artifacts"'),
+      ),
+    ).toBe(true);
+    expect(
+      statements.some((statement) =>
+        statement.includes('CREATE INDEX IF NOT EXISTS "insurance_artifacts_document_date_idx" ON "insurance_artifacts"'),
+      ),
+    ).toBe(true);
+    expect(
+      statements.some((statement) =>
+        statement.includes('CREATE UNIQUE INDEX IF NOT EXISTS "insurance_artifacts_user_message_uniq" ON "insurance_artifacts"'),
       ),
     ).toBe(true);
   });

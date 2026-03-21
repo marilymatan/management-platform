@@ -370,13 +370,21 @@ function normalizeHubProfile(profile: any) {
   };
 }
 
-function logInsuranceMapDependencyFailure(
-  source: "profile" | "family members",
+function logHubDependencyFailure(
+  scope: "insuranceMap" | "savingsHub",
+  source:
+    | "profile"
+    | "family members"
+    | "assistant invoices"
+    | "insurance discoveries"
+    | "monthly reports"
+    | "action items"
+    | "savings opportunities",
   userId: number,
   error: unknown,
 ) {
   const message = error instanceof Error ? error.message : String(error);
-  console.warn(`[insuranceMap] Failed to load ${source} for user ${userId}: ${message}`);
+  console.warn(`[${scope}] Failed to load ${source} for user ${userId}: ${message}`);
 }
 
 function serializeFamilyMemberForClient(member: any) {
@@ -705,11 +713,23 @@ async function syncActionItems(
 
 async function buildAndSyncUserHubState(userId: number) {
   const [profile, analyses, familyMembers, invoices, insuranceDiscoveries, existingReports, existingActions] = await Promise.all([
-    getUserProfile(userId),
+    getUserProfile(userId).catch((error) => {
+      logHubDependencyFailure("savingsHub", "profile", userId, error);
+      return null;
+    }),
     getUserAnalyses(userId),
-    getFamilyMembers(userId),
-    getAssistantInvoices(userId),
-    listInsuranceDiscoveries(userId, 50),
+    getFamilyMembers(userId).catch((error) => {
+      logHubDependencyFailure("savingsHub", "family members", userId, error);
+      return [];
+    }),
+    getAssistantInvoices(userId).catch((error) => {
+      logHubDependencyFailure("savingsHub", "assistant invoices", userId, error);
+      return [];
+    }),
+    listInsuranceDiscoveries(userId, 50).catch((error) => {
+      logHubDependencyFailure("savingsHub", "insurance discoveries", userId, error);
+      return [];
+    }),
     (async () => {
       const db = await getDb();
       if (!db) return [];
@@ -718,7 +738,10 @@ async function buildAndSyncUserHubState(userId: number) {
         .from(monthlyReports)
         .where(eq(monthlyReports.userId, userId))
         .orderBy(desc(monthlyReports.month));
-    })(),
+    })().catch((error) => {
+      logHubDependencyFailure("savingsHub", "monthly reports", userId, error);
+      return [];
+    }),
     (async () => {
       const db = await getDb();
       if (!db) return [];
@@ -726,7 +749,10 @@ async function buildAndSyncUserHubState(userId: number) {
         .select()
         .from(actionItems)
         .where(eq(actionItems.userId, userId));
-    })(),
+    })().catch((error) => {
+      logHubDependencyFailure("savingsHub", "action items", userId, error);
+      return [];
+    }),
   ]);
   const normalizedProfile = normalizeHubProfile(profile);
 
@@ -737,7 +763,10 @@ async function buildAndSyncUserHubState(userId: number) {
       .select()
       .from(savingsOpportunities)
       .where(eq(savingsOpportunities.userId, userId));
-  })();
+  })().catch((error) => {
+    logHubDependencyFailure("savingsHub", "savings opportunities", userId, error);
+    return [];
+  });
 
   const opportunityStatusMap = Object.fromEntries(
     existingOpportunityRows.map((row) => [row.opportunityKey, row.status])
@@ -1415,11 +1444,11 @@ export const appRouter = router({
       if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
       const analysesPromise = getUserAnalyses(ctx.user.id);
       const profilePromise = getUserProfile(ctx.user.id).catch((error) => {
-        logInsuranceMapDependencyFailure("profile", ctx.user.id, error);
+        logHubDependencyFailure("insuranceMap", "profile", ctx.user.id, error);
         return null;
       });
       const familyMembersPromise = getFamilyMembers(ctx.user.id).catch((error) => {
-        logInsuranceMapDependencyFailure("family members", ctx.user.id, error);
+        logHubDependencyFailure("insuranceMap", "family members", ctx.user.id, error);
         return [];
       });
       const [analyses, profile, familyMembers] = await Promise.all([

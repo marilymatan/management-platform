@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { actionItems, monthlyReports, savingsOpportunities, smartInvoices } from "../drizzle/schema";
 import { appRouter } from "./routers";
 import type { TrpcContext } from "./_core/context";
 
@@ -6,11 +7,15 @@ const {
   getUserAnalysesMock,
   getUserProfileMock,
   getFamilyMembersMock,
+  getDbMock,
+  getInsuranceDiscoveriesMock,
   auditMock,
 } = vi.hoisted(() => ({
   getUserAnalysesMock: vi.fn(),
   getUserProfileMock: vi.fn(),
   getFamilyMembersMock: vi.fn(),
+  getDbMock: vi.fn(),
+  getInsuranceDiscoveriesMock: vi.fn(),
   auditMock: vi.fn(),
 }));
 
@@ -79,7 +84,7 @@ vi.mock("./db", () => ({
   getCategorySummaryCache: vi.fn().mockResolvedValue(null),
   resetAnalysisForRetry: vi.fn(),
   upsertCategorySummaryCache: vi.fn(),
-  getDb: vi.fn().mockResolvedValue(null),
+  getDb: getDbMock,
 }));
 
 vi.mock("./gmail", () => ({
@@ -89,7 +94,7 @@ vi.mock("./gmail", () => ({
   discoverPolicyPdfs: vi.fn(),
   getAllGmailConnections: vi.fn().mockResolvedValue([]),
   disconnectGmail: vi.fn(),
-  getInsuranceDiscoveries: vi.fn().mockResolvedValue([]),
+  getInsuranceDiscoveries: getInsuranceDiscoveriesMock,
   importPolicyPdfFromGmail: vi.fn(),
   scanGmailForInvoices: vi.fn(),
 }));
@@ -156,15 +161,113 @@ function makeCompletedHealthAnalysis() {
   };
 }
 
+function createTestDb() {
+  const savingsRows: any[] = [];
+  const actionRows: any[] = [];
+  const monthlyRows: any[] = [];
+  const invoiceRows: any[] = [];
+  let savingsId = 1;
+  let actionId = 1;
+  let monthlyId = 1;
+  let invoiceId = 1;
+
+  const getRows = (table: unknown) => {
+    if (table === savingsOpportunities) return savingsRows;
+    if (table === actionItems) return actionRows;
+    if (table === monthlyReports) return monthlyRows;
+    if (table === smartInvoices) return invoiceRows;
+    return [];
+  };
+
+  const getNextId = (table: unknown) => {
+    if (table === savingsOpportunities) return savingsId++;
+    if (table === actionItems) return actionId++;
+    if (table === monthlyReports) return monthlyId++;
+    return invoiceId++;
+  };
+
+  const createSelectQuery = (rows: any[]) => {
+    let limitCount: number | null = null;
+    const query = {
+      where() {
+        return query;
+      },
+      orderBy() {
+        return query;
+      },
+      limit(count: number) {
+        limitCount = count;
+        return query;
+      },
+      then(resolve: (value: any[]) => unknown, reject?: (reason: unknown) => unknown) {
+        const result = limitCount === null ? [...rows] : rows.slice(0, limitCount);
+        return Promise.resolve(result).then(resolve, reject);
+      },
+    };
+    return query;
+  };
+
+  return {
+    select() {
+      return {
+        from(table: unknown) {
+          return createSelectQuery(getRows(table));
+        },
+      };
+    },
+    insert(table: unknown) {
+      return {
+        values(payload: Record<string, unknown>) {
+          getRows(table).push({
+            id: getNextId(table),
+            createdAt: new Date(),
+            ...payload,
+          });
+          return Promise.resolve();
+        },
+      };
+    },
+    update(table: unknown) {
+      return {
+        set(payload: Record<string, unknown>) {
+          return {
+            where() {
+              const rows = getRows(table);
+              const nextRows = rows.map((row) => ({
+                ...row,
+                ...payload,
+              }));
+              rows.splice(0, rows.length, ...nextRows);
+              return Promise.resolve();
+            },
+          };
+        },
+      };
+    },
+    delete(table: unknown) {
+      return {
+        where() {
+          getRows(table).splice(0);
+          return Promise.resolve();
+        },
+      };
+    },
+  };
+}
+
 beforeEach(() => {
   getUserAnalysesMock.mockReset();
   getUserProfileMock.mockReset();
   getFamilyMembersMock.mockReset();
+  getDbMock.mockReset();
+  getInsuranceDiscoveriesMock.mockReset();
   auditMock.mockReset();
 
   getUserAnalysesMock.mockResolvedValue([makeCompletedHealthAnalysis()]);
   getUserProfileMock.mockResolvedValue(null);
   getFamilyMembersMock.mockResolvedValue([]);
+  getDbMock.mockResolvedValue(createTestDb());
+  getInsuranceDiscoveriesMock.mockResolvedValue([]);
 });
 
 describe("insuranceMap.get", () => {
@@ -191,5 +294,24 @@ describe("insuranceMap.get", () => {
     const caller = appRouter.createCaller(makeAuthCtx());
 
     await expect(caller.insuranceMap.get()).rejects.toThrow("analyses unavailable");
+  });
+});
+
+describe("savings.getReport", () => {
+  it("returns a report even when optional hub dependencies fail", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    getUserProfileMock.mockRejectedValue(new Error("profile decrypt failed"));
+    getFamilyMembersMock.mockRejectedValue(new Error("family decrypt failed"));
+    getInsuranceDiscoveriesMock.mockRejectedValue(new Error("discoveries unavailable"));
+
+    const caller = appRouter.createCaller(makeAuthCtx());
+    const result = await caller.savings.getReport();
+
+    expect(result.policyCount).toBe(1);
+    expect(result.categoriesWithData).toContain("health");
+    expect(Array.isArray(result.opportunities)).toBe(true);
+    expect(warnSpy).toHaveBeenCalledTimes(3);
+
+    warnSpy.mockRestore();
   });
 });
