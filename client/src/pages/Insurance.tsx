@@ -6,86 +6,120 @@ import { AnalysisQueueProgressCard } from "@/components/AnalysisQueueProgressCar
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Separator } from "@/components/ui/separator";
 import {
   Shield,
   Plus,
-  FileText,
   Heart,
   Car,
   Home,
   User,
   ArrowLeft,
-  Sparkles,
   CircleAlert,
   Clock3,
   MessageSquare,
   ShieldCheck,
   Wallet,
+  Layers3,
+  type LucideIcon,
 } from "lucide-react";
 import type { InsuranceCategory } from "@shared/insurance";
 import {
   buildInsuranceOverview,
   formatInsuranceCurrency,
   insuranceCategoryLabels,
+  type InsuranceHubCategorySummary,
 } from "@/lib/insuranceOverview";
 
 const CATEGORY_CONFIG: Record<
   InsuranceCategory,
   {
     label: string;
-    icon: React.ReactNode;
-    gradient: string;
-    iconGradient: string;
-    iconShadow: string;
-    hoverBorder: string;
-    description: string;
+    icon: LucideIcon;
+    accentText: string;
+    accentSurface: string;
+    accentBorder: string;
+    accentMuted: string;
   }
 > = {
   health: {
     label: insuranceCategoryLabels.health,
-    icon: <Heart className="size-5" />,
-    gradient: "from-rose-100/80 via-pink-50/40 to-transparent",
-    iconGradient: "from-rose-500 to-pink-600",
-    iconShadow: "shadow-rose-500/30",
-    hoverBorder: "hover:border-rose-200",
-    description: "רפואה משלימה, אשפוז, שיניים ותרופות",
+    icon: Heart,
+    accentText: "text-chart-5",
+    accentSurface: "bg-chart-5/10",
+    accentBorder: "border-chart-5/20",
+    accentMuted: "bg-chart-5/5",
   },
   life: {
     label: insuranceCategoryLabels.life,
-    icon: <User className="size-5" />,
-    gradient: "from-blue-100/80 via-indigo-50/40 to-transparent",
-    iconGradient: "from-blue-500 to-indigo-600",
-    iconShadow: "shadow-blue-500/30",
-    hoverBorder: "hover:border-blue-200",
-    description: "חיים, ריסק, אובדן כושר עבודה והגנה למשפחה",
+    icon: User,
+    accentText: "text-chart-1",
+    accentSurface: "bg-chart-1/10",
+    accentBorder: "border-chart-1/20",
+    accentMuted: "bg-chart-1/5",
   },
   car: {
     label: insuranceCategoryLabels.car,
-    icon: <Car className="size-5" />,
-    gradient: "from-amber-100/80 via-orange-50/40 to-transparent",
-    iconGradient: "from-amber-500 to-orange-500",
-    iconShadow: "shadow-amber-500/30",
-    hoverBorder: "hover:border-amber-200",
-    description: "מקיף, צד ג׳, חובה ובדיקת חידושים",
+    icon: Car,
+    accentText: "text-chart-4",
+    accentSurface: "bg-chart-4/10",
+    accentBorder: "border-chart-4/20",
+    accentMuted: "bg-chart-4/5",
   },
   home: {
     label: insuranceCategoryLabels.home,
-    icon: <Home className="size-5" />,
-    gradient: "from-emerald-100/80 via-teal-50/40 to-transparent",
-    iconGradient: "from-emerald-500 to-teal-600",
-    iconShadow: "shadow-emerald-500/30",
-    hoverBorder: "hover:border-emerald-200",
-    description: "מבנה, תכולה, רעידת אדמה וצנרת",
+    icon: Home,
+    accentText: "text-chart-3",
+    accentSurface: "bg-chart-3/10",
+    accentBorder: "border-chart-3/20",
+    accentMuted: "bg-chart-3/5",
   },
 };
 
 const CATEGORIES: InsuranceCategory[] = ["health", "life", "car", "home"];
 
-const insightToneStyles = {
-  warning: "border-amber-200 bg-amber-50/70",
-  info: "border-blue-200 bg-blue-50/70",
-  success: "border-emerald-200 bg-emerald-50/70",
-} as const;
+function getCategoryStatus(summary: InsuranceHubCategorySummary) {
+  if (summary.hasData) {
+    return {
+      label: "יש פוליסות",
+      variant: "secondary" as const,
+    };
+  }
+
+  if (summary.relevant) {
+    return {
+      label: "כדאי להשלים",
+      variant: "default" as const,
+    };
+  }
+
+  return {
+    label: "לא דחוף כרגע",
+    variant: "outline" as const,
+  };
+}
+
+function getCategorySummaryText(summary: InsuranceHubCategorySummary) {
+  if (summary.hasData) {
+    if (summary.nextRenewalDays !== null) {
+      return `החידוש הקרוב בעוד ${summary.nextRenewalDays} ימים.`;
+    }
+
+    if (summary.monthlyPremium > 0) {
+      return `פרמיה חודשית כוללת ${formatInsuranceCurrency(summary.monthlyPremium)}.`;
+    }
+
+    return summary.scans === 1
+      ? "פוליסה פעילה אחת בקטגוריה הזו."
+      : `${summary.scans} פוליסות פעילות בקטגוריה הזו.`;
+  }
+
+  if (summary.relevant) {
+    return "עדיין אין פוליסה מזוהה בקטגוריה הזו.";
+  }
+
+  return "הקטגוריה זמינה כאן להשלמה בהמשך אם תצטרך.";
+}
 
 export default function Insurance() {
   const { user } = useAuth({ redirectOnUnauthenticated: true });
@@ -104,108 +138,139 @@ export default function Insurance() {
   const inFlightAnalyses = analyses?.filter(
     (analysis) => analysis.status === "pending" || analysis.status === "processing"
   ) ?? [];
+  const categoriesWithData = useMemo(
+    () => CATEGORIES.filter((category) => overview.categorySummaries[category].hasData),
+    [overview.categorySummaries]
+  );
+  const relevantMissingCategories = useMemo(
+    () =>
+      CATEGORIES.filter((category) => {
+        const summary = overview.categorySummaries[category];
+        return summary.relevant && !summary.hasData;
+      }),
+    [overview.categorySummaries]
+  );
 
-  if (!user) return null;
+  if (!user) {
+    return null;
+  }
 
-  const statCards = [
+  const nextRenewalDays = overview.renewals[0]?.daysUntilRenewal ?? null;
+  const overviewText =
+    overview.totalPolicies === 1
+      ? `זוהתה כרגע פוליסה אחת בקטגוריה אחת${overview.totalMonthlyPremium > 0 ? `, עם פרמיה חודשית כוללת של ${formatInsuranceCurrency(overview.totalMonthlyPremium)}` : ""}.`
+      : `זוהו כרגע ${overview.totalPolicies} פוליסות ב-${categoriesWithData.length} קטגוריות${overview.totalMonthlyPremium > 0 ? `, עם פרמיה חודשית כוללת של ${formatInsuranceCurrency(overview.totalMonthlyPremium)}` : ""}.`;
+  const overviewCards: Array<{
+    key: string;
+    label: string;
+    value: string;
+    detail: string;
+    icon: LucideIcon;
+  }> = [
     {
       key: "policies",
       label: "פוליסות פעילות",
-      value: overview.totalPolicies,
-      icon: <ShieldCheck className="size-5" />,
-      gradient: "from-blue-500 to-indigo-600",
-      shadow: "shadow-blue-500/20",
-    },
-    {
-      key: "files",
-      label: "קבצים שנסרקו",
-      value: overview.totalFiles,
-      icon: <FileText className="size-5" />,
-      gradient: "from-violet-500 to-purple-600",
-      shadow: "shadow-violet-500/20",
+      value: `${overview.totalPolicies}`,
+      detail:
+        categoriesWithData.length === 1
+          ? "קטגוריה אחת עם מידע"
+          : `${categoriesWithData.length} קטגוריות עם מידע`,
+      icon: ShieldCheck,
     },
     {
       key: "premium",
-      label: "פרמיה חודשית",
-      value: formatInsuranceCurrency(overview.totalMonthlyPremium),
-      icon: <Wallet className="size-5" />,
-      gradient: "from-emerald-500 to-teal-600",
-      shadow: "shadow-emerald-500/20",
+      label: "פרמיה חודשית כוללת",
+      value: overview.totalMonthlyPremium > 0 ? formatInsuranceCurrency(overview.totalMonthlyPremium) : "—",
+      detail:
+        overview.duplicateGroups > 0
+          ? `${overview.duplicateGroups} קבוצות של כפילויות זוהו`
+          : "לא זוהו כרגע כפילויות בולטות",
+      icon: Wallet,
+    },
+    {
+      key: "categories",
+      label: "קטגוריות עם מידע",
+      value: `${categoriesWithData.length}/${CATEGORIES.length}`,
+      detail:
+        relevantMissingCategories.length > 0
+          ? relevantMissingCategories.length === 1
+            ? "יש קטגוריה רלוונטית אחת שחסרה"
+            : `${relevantMissingCategories.length} קטגוריות רלוונטיות עדיין חסרות`
+          : "כל הקטגוריות הרלוונטיות כבר מופיעות",
+      icon: Layers3,
     },
     {
       key: "renewals",
-      label: "חידושים קרובים",
-      value: overview.renewals.length,
-      icon: <Clock3 className="size-5" />,
-      gradient: "from-amber-500 to-orange-500",
-      shadow: "shadow-amber-500/20",
+      label: "חידושים ב-90 יום",
+      value: `${overview.renewals.length}`,
+      detail:
+        nextRenewalDays !== null
+          ? `החידוש הקרוב ביותר בעוד ${nextRenewalDays} ימים`
+          : "אין כרגע חידושים קרובים",
+      icon: Clock3,
     },
   ];
+  const attentionItems = [
+    overview.renewals.length > 0
+      ? {
+          id: "renewals",
+          title: "חידושים מתקרבים",
+          description:
+            nextRenewalDays !== null
+              ? `${overview.renewals.length} פוליסות מגיעות לחידוש ב-90 הימים הקרובים. הקרובה ביותר בעוד ${nextRenewalDays} ימים.`
+              : `${overview.renewals.length} פוליסות מגיעות לחידוש ב-90 הימים הקרובים.`,
+        }
+      : null,
+    overview.duplicateGroups > 0
+      ? {
+          id: "duplicates",
+          title: "כפילויות שכדאי לבדוק",
+          description: `זוהו ${overview.duplicateGroups} קבוצות של כיסויים כפולים בין הפוליסות.`,
+        }
+      : null,
+    relevantMissingCategories.length > 0
+      ? {
+          id: "missing-categories",
+          title: "קטגוריות שחסר להשלים",
+          description: `עדיין חסר מידע ב${relevantMissingCategories.map((category) => insuranceCategoryLabels[category]).join(", ")}.`,
+        }
+      : null,
+  ].filter((item): item is { id: string; title: string; description: string } => item !== null);
 
   return (
-    <div className="page-container space-y-6" data-testid="insurance-page">
-      <div className="animate-fade-in-up relative overflow-hidden rounded-2xl bg-gradient-to-bl from-[#101a34] via-[#1c2f57] to-[#2348a2] text-white">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_-10%,rgba(255,255,255,0.18),transparent_55%)]" />
-        <div className="relative p-6">
-          <div className="flex items-start justify-between gap-4 flex-wrap">
-            <div className="flex items-center gap-4">
-              <div className="size-12 rounded-2xl bg-white/15 backdrop-blur-sm flex items-center justify-center ring-1 ring-white/20">
-                <Shield className="size-6" />
-              </div>
-              <div>
-                <h1 className="text-2xl font-bold tracking-tight">ביטוחים</h1>
-                <p className="text-sm text-white/75 mt-0.5">
-                  תמונת כיסוי מלאה, חידושים קרובים ופערים שכדאי לסגור לפי מצב הבית
-                </p>
-              </div>
+    <div className="page-container space-y-6" data-testid="insurance-page" aria-busy={isLoading}>
+      <header className="space-y-4">
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div className="space-y-3">
+            <div className="inline-flex items-center gap-2 rounded-full bg-primary/10 px-3 py-1 text-xs font-medium text-primary">
+              <Shield className="size-4" aria-hidden="true" />
+              תיק הביטוחים
             </div>
-            <div className="flex items-center gap-2 flex-wrap">
-              <Button
-                variant="secondary"
-                className="bg-white text-slate-900 hover:bg-white/90 gap-2 shadow-lg"
-                onClick={() => setLocation("/assistant")}
-              >
-                <MessageSquare className="size-4" />
-                שאל את לומי
-              </Button>
-              <Button
-                data-testid="new-scan-button"
-                onClick={() => setLocation("/insurance/new")}
-                size="lg"
-                className="gap-2 bg-white/15 hover:bg-white/25 text-white border border-white/20 shadow-lg rounded-xl text-sm font-semibold px-6"
-              >
-                <Plus className="size-5" />
-                סריקה חדשה
-              </Button>
+            <div className="space-y-1">
+              <h1 className="text-2xl font-bold tracking-tight">חלוקה ברורה של הפוליסות במקום אחד</h1>
+              <p className="max-w-3xl text-sm leading-relaxed text-muted-foreground">
+                המסך הזה מתמקד במה שחשוב באמת: חלוקת הפוליסות בין הקטגוריות והמידע האגרגטיבי של כל התיק.
+              </p>
             </div>
+          </div>
+
+          <div className="flex items-center gap-2 flex-wrap">
+            <Button
+              data-testid="new-scan-button"
+              onClick={() => setLocation("/insurance/new")}
+              size="lg"
+              className="gap-2"
+            >
+              <Plus className="size-4" aria-hidden="true" />
+              סריקה חדשה
+            </Button>
+            <Button variant="outline" onClick={() => setLocation("/assistant")} className="gap-2">
+              <MessageSquare className="size-4" aria-hidden="true" />
+              שאל את לומי
+            </Button>
           </div>
         </div>
-      </div>
-
-      <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
-        {statCards.map((stat, index) => (
-          <div
-            key={stat.key}
-            data-testid={`stat-card-${stat.key}`}
-            className={`relative overflow-hidden rounded-2xl border border-border/50 bg-card p-5 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-lg animate-fade-in-up stagger-${index + 1}`}
-          >
-            <div className={`absolute top-0 inset-x-0 h-1 bg-gradient-to-l ${stat.gradient}`} />
-            <div className="flex items-center gap-4">
-              <div
-                className={`size-11 rounded-xl bg-gradient-to-br ${stat.gradient} flex items-center justify-center text-white shadow-md ${stat.shadow}`}
-              >
-                {stat.icon}
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground font-medium">{stat.label}</p>
-                <p className="text-3xl font-bold tracking-tight mt-0.5" style={{ fontVariantNumeric: "tabular-nums" }}>
-                  {stat.value}
-                </p>
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
+      </header>
 
       {inFlightAnalyses.length > 0 && (
         <AnalysisQueueProgressCard
@@ -214,246 +279,285 @@ export default function Insurance() {
         />
       )}
 
-      {overview.insights.length > 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 animate-fade-in-up stagger-5" data-testid="insurance-insights">
-          {overview.insights.map((insight) => (
-            <Card key={insight.id} className={insightToneStyles[insight.tone]}>
-              <CardContent className="p-5 space-y-2">
-                <div className="flex items-center gap-2">
-                  <CircleAlert className="size-4" />
-                  <p className="text-sm font-semibold">{insight.title}</p>
-                </div>
-                <p className="text-sm text-muted-foreground leading-relaxed">{insight.description}</p>
-                {insight.category && (
-                  <Badge variant="outline">{insuranceCategoryLabels[insight.category]}</Badge>
-                )}
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      )}
-
       {isLoading ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-          {[1, 2, 3, 4].map((item) => (
-            <div key={item} className="rounded-2xl border border-border/40 bg-card p-7 animate-pulse">
-              <div className="flex items-center gap-4">
-                <div className="size-12 rounded-2xl bg-muted" />
-                <div className="flex-1 space-y-3">
-                  <div className="h-5 bg-muted rounded-lg w-2/5" />
-                  <div className="h-3 bg-muted rounded-lg w-3/5" />
+        <div className="space-y-4">
+          <div className="animate-pulse rounded-2xl border border-border bg-card p-6">
+            <div className="space-y-3">
+              <div className="h-4 w-32 rounded bg-muted" />
+              <div className="h-7 w-60 rounded bg-muted" />
+              <div className="h-4 w-full max-w-2xl rounded bg-muted" />
+            </div>
+            <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              {[1, 2, 3, 4].map((item) => (
+                <div key={item} className="rounded-2xl border border-border bg-background p-4">
+                  <div className="h-4 w-20 rounded bg-muted" />
+                  <div className="mt-3 h-8 w-28 rounded bg-muted" />
+                  <div className="mt-3 h-4 w-full rounded bg-muted" />
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            {[1, 2, 3, 4].map((item) => (
+              <div key={item} className="animate-pulse rounded-2xl border border-border bg-card p-5">
+                <div className="flex items-start gap-3">
+                  <div className="size-11 rounded-2xl bg-muted" />
+                  <div className="flex-1 space-y-2">
+                    <div className="h-5 w-32 rounded bg-muted" />
+                    <div className="h-4 w-full rounded bg-muted" />
+                  </div>
+                </div>
+                <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  {[1, 2, 3, 4].map((metric) => (
+                    <div key={metric} className="rounded-xl border border-border bg-background p-3">
+                      <div className="h-3 w-14 rounded bg-muted" />
+                      <div className="mt-2 h-5 w-16 rounded bg-muted" />
+                    </div>
+                  ))}
                 </div>
               </div>
-              <div className="mt-6 h-20 rounded-xl bg-muted" />
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
       ) : overview.totalPolicies > 0 ? (
-        <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_340px] gap-6">
-          <div className="space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-              {CATEGORIES.map((category, index) => {
-                const config = CATEGORY_CONFIG[category];
-                const stats = overview.categorySummaries[category];
-                return (
-                  <div
-                    key={category}
-                    role="button"
-                    tabIndex={0}
-                    aria-label={config.label}
-                    data-testid={`category-card-${category}`}
-                    className={`group relative overflow-hidden rounded-2xl border bg-card transition-all duration-300 hover:-translate-y-1 hover:shadow-xl ${config.hoverBorder} cursor-pointer animate-fade-in-up stagger-${index + 2}`}
-                    onClick={() => setLocation(`/insurance/category/${category}`)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" || event.key === " ") {
-                        event.preventDefault();
-                        setLocation(`/insurance/category/${category}`);
-                      }
-                    }}
-                  >
-                    <div className={`absolute inset-0 bg-gradient-to-bl ${config.gradient} pointer-events-none`} />
-                    <div className="relative p-6">
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="flex items-center gap-4">
-                          <div
-                            className={`size-12 rounded-2xl bg-gradient-to-br ${config.iconGradient} flex items-center justify-center text-white shadow-lg ${config.iconShadow}`}
-                          >
-                            {config.icon}
+        <>
+          <section aria-labelledby="insurance-overview-heading">
+            <Card data-testid="insurance-overview-card" className="border-border/60">
+              <CardContent className="p-6 space-y-6">
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2 text-sm font-medium text-primary">
+                    <ShieldCheck className="size-4" aria-hidden="true" />
+                    תמונת מצב מרוכזת
+                  </div>
+                  <div className="space-y-1">
+                    <h2 id="insurance-overview-heading" className="text-xl font-semibold tracking-tight">
+                      מה יש כרגע בתיק
+                    </h2>
+                    <p className="text-sm leading-relaxed text-muted-foreground">{overviewText}</p>
+                  </div>
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                  {overviewCards.map((card) => {
+                    const Icon = card.icon;
+                    return (
+                      <div key={card.key} className="rounded-2xl border border-border bg-background p-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="space-y-1">
+                            <p className="text-xs font-medium text-muted-foreground">{card.label}</p>
+                            <p className="text-2xl font-bold tracking-tight [font-variant-numeric:tabular-nums]">
+                              {card.value}
+                            </p>
                           </div>
-                          <div>
-                            <h3 className="text-lg font-bold text-foreground">{config.label}</h3>
-                            <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{config.description}</p>
+                          <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                            <Icon className="size-5" aria-hidden="true" />
                           </div>
                         </div>
-                        <ArrowLeft className="size-5 text-muted-foreground/30 group-hover:text-foreground/60 group-hover:-translate-x-1 transition-all duration-300 mt-1.5" />
+                        <p className="mt-3 text-sm leading-relaxed text-muted-foreground">{card.detail}</p>
                       </div>
+                    );
+                  })}
+                </div>
 
-                      <div className="mt-5 flex items-center gap-2 flex-wrap">
-                        {stats.relevant && (
-                          <Badge variant={stats.hasData ? "secondary" : "default"}>
-                            {stats.hasData ? "רלוונטי ומטופל" : "כדאי להשלים"}
+                <Separator />
+
+                <div className="grid gap-4 lg:grid-cols-2">
+                  <div className="space-y-3">
+                    <h3 className="text-sm font-semibold">קטגוריות שכבר מזוהות</h3>
+                    {categoriesWithData.length > 0 ? (
+                      <div className="flex flex-wrap gap-2">
+                        {categoriesWithData.map((category) => (
+                          <Badge key={category} variant="secondary" className="rounded-full">
+                            {insuranceCategoryLabels[category]}
                           </Badge>
-                        )}
-                        {stats.renewals > 0 && <Badge variant="outline">{stats.renewals} חידושים קרובים</Badge>}
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-sm text-muted-foreground">
+                        עדיין לא זוהתה קטגוריה עם פוליסות פעילות.
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="space-y-3">
+                    <h3 className="text-sm font-semibold">קטגוריות שכדאי להשלים</h3>
+                    {relevantMissingCategories.length > 0 ? (
+                      <div className="flex flex-wrap gap-2">
+                        {relevantMissingCategories.map((category) => (
+                          <Badge key={category} className="rounded-full">
+                            {insuranceCategoryLabels[category]}
+                          </Badge>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-sm text-muted-foreground">
+                        כל הקטגוריות הרלוונטיות כבר מופיעות בתיק.
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </section>
+
+          <section className="space-y-4" aria-labelledby="insurance-categories-heading">
+            <div className="flex items-end justify-between gap-4 flex-wrap">
+              <div className="space-y-1">
+                <h2 id="insurance-categories-heading" className="text-xl font-semibold tracking-tight">
+                  חלוקת הפוליסות לפי קטגוריה
+                </h2>
+                <p className="text-sm leading-relaxed text-muted-foreground">
+                  כל כרטיס מרכז את מספר הפוליסות, הפרמיה החודשית, החידושים והכפילויות בכל שכבה.
+                </p>
+              </div>
+              <Badge variant="outline" className="rounded-full">
+                {categoriesWithData.length} מתוך {CATEGORIES.length} קטגוריות עם מידע
+              </Badge>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2" data-testid="insurance-category-grid">
+              {CATEGORIES.map((category) => {
+                const config = CATEGORY_CONFIG[category];
+                const Icon = config.icon;
+                const stats = overview.categorySummaries[category];
+                const duplicateCount = overview.completedPolicies
+                  .filter((policy) => policy.category === category)
+                  .reduce((sum, policy) => sum + policy.duplicateCount, 0);
+                const status = getCategoryStatus(stats);
+                const descriptionId = `category-summary-${category}`;
+                const metrics = [
+                  { label: "פוליסות", value: `${stats.scans}` },
+                  {
+                    label: "פרמיה חודשית",
+                    value: stats.monthlyPremium > 0 ? formatInsuranceCurrency(stats.monthlyPremium) : "—",
+                  },
+                  {
+                    label: "חידוש קרוב",
+                    value: stats.nextRenewalDays !== null ? `${stats.nextRenewalDays} ימים` : "—",
+                  },
+                  {
+                    label: "כפילויות",
+                    value: duplicateCount > 0 ? `${duplicateCount}` : "—",
+                  },
+                ];
+
+                return (
+                  <button
+                    key={category}
+                    type="button"
+                    data-testid={`category-card-${category}`}
+                    aria-describedby={descriptionId}
+                    className={`w-full rounded-2xl border border-border bg-card p-5 text-start transition-all hover:-translate-y-0.5 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${config.accentBorder} ${config.accentMuted}`}
+                    onClick={() => setLocation(`/insurance/category/${category}`)}
+                  >
+                    <div className="flex items-start gap-3">
+                      <div
+                        className={`mt-0.5 flex size-11 shrink-0 items-center justify-center rounded-2xl ${config.accentSurface} ${config.accentText}`}
+                      >
+                        <Icon className="size-5" aria-hidden="true" />
                       </div>
 
-                      <div className="grid grid-cols-3 gap-3 mt-5 pt-5 border-t border-border/40">
-                        <div>
-                          <p className="text-[11px] text-muted-foreground">פוליסות</p>
-                          <p className="text-lg font-bold" style={{ fontVariantNumeric: "tabular-nums" }}>
-                            {stats.scans}
-                          </p>
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h3 className="text-lg font-semibold text-foreground">{config.label}</h3>
+                          <Badge variant={status.variant} className="rounded-full">
+                            {status.label}
+                          </Badge>
+                          {stats.renewals > 0 ? (
+                            <Badge variant="outline" className="rounded-full">
+                              {stats.renewals} חידושים קרובים
+                            </Badge>
+                          ) : null}
                         </div>
-                        <div>
-                          <p className="text-[11px] text-muted-foreground">PDF</p>
-                          <p className="text-lg font-bold" style={{ fontVariantNumeric: "tabular-nums" }}>
-                            {stats.pdfs}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-[11px] text-muted-foreground">חודשי</p>
-                          <p className="text-lg font-bold">
-                            {stats.monthlyPremium > 0 ? formatInsuranceCurrency(stats.monthlyPremium) : "—"}
-                          </p>
-                        </div>
-                      </div>
-
-                      <div className="mt-4 rounded-xl border border-border/50 bg-background/70 p-3">
-                        <p className="text-xs text-muted-foreground">מה בולט כרגע</p>
-                        <p className="text-sm font-medium mt-1">{stats.highlight}</p>
+                        <p id={descriptionId} className="text-sm leading-relaxed text-muted-foreground">
+                          {getCategorySummaryText(stats)}
+                        </p>
                       </div>
                     </div>
-                  </div>
+
+                    <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                      {metrics.map((metric) => (
+                        <div key={metric.label} className="rounded-xl border border-border bg-background p-3">
+                          <p className="text-xs font-medium text-muted-foreground">{metric.label}</p>
+                          <p className="mt-1 text-base font-semibold [font-variant-numeric:tabular-nums]">
+                            {metric.value}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="mt-4 inline-flex items-center gap-1 text-sm font-medium text-foreground">
+                      <span>לפתיחת הקטגוריה</span>
+                      <ArrowLeft className="size-4" aria-hidden="true" />
+                    </div>
+                  </button>
                 );
               })}
             </div>
+          </section>
 
-            <Card className="animate-fade-in-up stagger-6">
-              <CardContent className="p-6 space-y-4">
-                <div className="flex items-center justify-between gap-3 flex-wrap">
+          {attentionItems.length > 0 ? (
+            <section aria-labelledby="insurance-attention-heading">
+              <Card data-testid="insurance-attention-card" className="border-border/60">
+                <CardContent className="p-6 space-y-4">
                   <div className="flex items-center gap-2">
-                    <Sparkles className="size-4 text-amber-500" />
-                    <h3 className="text-sm font-semibold">פוליסות שדורשות מבט עכשיו</h3>
+                    <CircleAlert className="size-4 text-primary" aria-hidden="true" />
+                    <h2 id="insurance-attention-heading" className="text-base font-semibold">
+                      מה כדאי לבדוק בתיק
+                    </h2>
                   </div>
-                  <Button size="sm" variant="outline" onClick={() => setLocation("/assistant")} className="gap-1.5">
-                    <MessageSquare className="size-4" />
-                    שאל את לומי
-                  </Button>
-                </div>
-                <div className="space-y-3">
-                  {overview.prioritizedPolicies.map((policy) => (
-                    <div key={policy.sessionId} className="rounded-xl border border-border/60 bg-muted/15 p-4">
-                      <div className="flex items-start justify-between gap-3 flex-wrap">
-                        <div className="space-y-1">
-                          <p className="text-sm font-semibold">{policy.policyName}</p>
-                          <p className="text-xs text-muted-foreground">{policy.insurerName}</p>
-                        </div>
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <Badge variant="outline">{insuranceCategoryLabels[policy.category]}</Badge>
-                          <Badge variant="secondary">{policy.premiumLabel}</Badge>
-                          {policy.daysUntilRenewal !== null && policy.daysUntilRenewal >= 0 && (
-                            <Badge variant={policy.daysUntilRenewal <= 45 ? "default" : "secondary"}>
-                              {policy.daysUntilRenewal <= 45
-                                ? `חידוש בעוד ${policy.daysUntilRenewal} ימים`
-                                : `תוקף בעוד ${policy.daysUntilRenewal} ימים`}
-                            </Badge>
-                          )}
-                        </div>
-                      </div>
-                      <p className="text-sm text-muted-foreground mt-3 leading-relaxed">{policy.summary}</p>
-                      <div className="flex items-center gap-3 mt-3 text-xs text-muted-foreground">
-                        <span>{policy.coverageCount} כיסויים</span>
-                        <span>{policy.filesCount} קבצים</span>
-                        {policy.duplicateCount > 0 && <span>{policy.duplicateCount} כפילויות</span>}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          </div>
 
-          <div className="space-y-4 animate-fade-in-up stagger-7">
-            <Card>
-              <CardContent className="p-5 space-y-4">
-                <div className="flex items-center gap-2">
-                  <Clock3 className="size-4 text-primary" />
-                  <h3 className="text-sm font-semibold">מה דורש תשומת לב</h3>
-                </div>
-                <div className="space-y-2">
-                  {overview.renewals.slice(0, 3).map((policy) => (
-                    <div key={policy.sessionId} className="rounded-xl border border-border/60 bg-muted/10 p-3">
-                      <p className="text-sm font-medium">{policy.policyName}</p>
-                      <p className="text-xs text-muted-foreground mt-1">
-                        {policy.daysUntilRenewal} ימים לחידוש · {policy.insurerName}
-                      </p>
-                    </div>
-                  ))}
-                  {overview.renewals.length === 0 && (
-                    <p className="text-sm text-muted-foreground">
-                      כרגע לא זוהו חידושים קרובים ב־90 הימים הקרובים.
-                    </p>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardContent className="p-5 space-y-3">
-                <div className="flex items-center gap-2">
-                  <CircleAlert className="size-4 text-amber-500" />
-                  <h3 className="text-sm font-semibold">פערי כיסוי למשק הבית</h3>
-                </div>
-                {overview.coverageGaps.length > 0 ? (
-                  <div className="space-y-2">
-                    {overview.coverageGaps.map((gap) => (
-                      <div key={gap.id} className="rounded-xl border border-border/60 bg-muted/10 p-3">
-                        <p className="text-sm font-medium">{gap.title}</p>
-                        <p className="text-xs text-muted-foreground mt-1">{gap.description}</p>
-                      </div>
+                  <ul className="grid gap-3 md:grid-cols-3">
+                    {attentionItems.map((item) => (
+                      <li key={item.id} className="rounded-xl border border-border bg-background p-4">
+                        <p className="text-sm font-semibold text-foreground">{item.title}</p>
+                        <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+                          {item.description}
+                        </p>
+                      </li>
                     ))}
-                  </div>
-                ) : (
-                  <p className="text-sm text-muted-foreground">
-                    אין כרגע פערי כיסוי בולטים לפי הפרופיל שהוזן.
-                  </p>
-                )}
-              </CardContent>
-            </Card>
-          </div>
-        </div>
+                  </ul>
+                </CardContent>
+              </Card>
+            </section>
+          ) : null}
+        </>
       ) : (
-        <div className="animate-fade-in-up stagger-6" data-testid="empty-state">
-          <div className="rounded-2xl border-2 border-dashed border-border/50 bg-gradient-to-b from-muted/30 to-transparent py-20 px-8 text-center">
-            <div className="size-20 rounded-3xl bg-gradient-to-br from-primary/10 to-primary/5 flex items-center justify-center mx-auto mb-6 shadow-inner">
-              <Sparkles className="size-9 text-primary/40" />
+        <Card className="border-dashed" data-testid="empty-state">
+          <CardContent className="py-16 text-center space-y-6">
+            <div className="mx-auto flex size-20 items-center justify-center rounded-3xl bg-primary/10 text-primary">
+              <Shield className="size-8" aria-hidden="true" />
             </div>
-            <h3 className="text-lg font-bold text-foreground mb-2">אין ביטוחים עדיין</h3>
-            <p className="text-sm text-muted-foreground mb-8 max-w-sm mx-auto leading-relaxed">
-              העלה את הפוליסה הראשונה שלך כדי לקבל תמונת כיסוי, חידושים ותובנות מותאמות לבית.
-            </p>
+
+            <div className="space-y-2">
+              <h2 className="text-xl font-semibold tracking-tight">עדיין אין פוליסות בתיק</h2>
+              <p className="mx-auto max-w-md text-sm leading-relaxed text-muted-foreground">
+                אחרי הסריקה הראשונה תופיע כאן חלוקה ברורה לפי קטגוריות וסיכום אגרגטיבי של כל התיק.
+              </p>
+            </div>
+
             <div className="flex items-center justify-center gap-3 flex-wrap">
               <Button
                 data-testid="empty-state-scan-button"
                 onClick={() => setLocation("/insurance/new")}
                 size="lg"
-                className="gap-2 shadow-lg shadow-primary/25 rounded-xl px-8"
+                className="gap-2"
               >
-                <Plus className="size-5" />
+                <Plus className="size-4" aria-hidden="true" />
                 סריקה ראשונה
               </Button>
               <Button
                 variant="outline"
                 size="lg"
-                className="gap-2 rounded-xl px-8"
+                className="gap-2"
                 onClick={() => setLocation("/assistant")}
               >
-                <MessageSquare className="size-5" />
+                <MessageSquare className="size-4" aria-hidden="true" />
                 שאל את לומי מה כדאי להעלות
               </Button>
             </div>
-          </div>
-        </div>
+          </CardContent>
+        </Card>
       )}
     </div>
   );
