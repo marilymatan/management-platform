@@ -114,10 +114,25 @@ export async function getUserByOpenId(openId: string) {
 interface CreateAnalysisInput {
   sessionId: string;
   userId?: number | null;
-  files: Array<{ name: string; size: number; fileKey?: string; url?: string }>;
+  files: Array<{ name: string; size: number; fileKey?: string; url?: string; mimeType?: string }>;
   status?: "pending" | "processing" | "completed" | "error";
   insuranceCategory?: "health" | "life" | "car" | "home" | null;
 }
+
+type AnalysisStatus = "pending" | "processing" | "completed" | "error";
+
+type AnalysisStatusUpdate = {
+  extractedText?: string | null;
+  analysisResult?: PolicyAnalysis | null;
+  errorMessage?: string | null;
+  insuranceCategory?: string | null;
+  attemptCount?: number;
+  lockedBy?: string | null;
+  lastHeartbeatAt?: Date | null;
+  startedAt?: Date | null;
+  completedAt?: Date | null;
+  nextRetryAt?: Date | null;
+};
 
 function decryptAnalysisData(row: any): any {
   if (!row) return row;
@@ -161,8 +176,8 @@ export async function getAnalysisBySessionId(sessionId: string) {
 
 export async function updateAnalysisStatus(
   sessionId: string,
-  status: "pending" | "processing" | "completed" | "error",
-  data?: { extractedText?: string; analysisResult?: PolicyAnalysis; errorMessage?: string; insuranceCategory?: string }
+  status: AnalysisStatus,
+  data?: AnalysisStatusUpdate
 ) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -171,18 +186,161 @@ export async function updateAnalysisStatus(
     updatedAt: new Date(),
   };
   if (data?.extractedText !== undefined) {
-    updateData.extractedText = encryptField(data.extractedText);
+    updateData.extractedText = data.extractedText == null ? null : encryptField(data.extractedText);
   }
   if (data?.analysisResult !== undefined) {
-    updateData.analysisResult = encryptJson(data.analysisResult);
+    updateData.analysisResult = data.analysisResult == null ? null : encryptJson(data.analysisResult);
   }
   if (data?.errorMessage !== undefined) {
-    updateData.errorMessage = encryptField(data.errorMessage);
+    updateData.errorMessage = data.errorMessage == null ? null : encryptField(data.errorMessage);
   }
   if (data?.insuranceCategory !== undefined) {
-    (updateData as any).insuranceCategory = data.insuranceCategory;
+    updateData.insuranceCategory = data.insuranceCategory as InsertAnalysis["insuranceCategory"];
+  }
+  if (data?.attemptCount !== undefined) {
+    updateData.attemptCount = data.attemptCount;
+  }
+  if (data?.lockedBy !== undefined) {
+    updateData.lockedBy = data.lockedBy;
+  }
+  if (data?.lastHeartbeatAt !== undefined) {
+    updateData.lastHeartbeatAt = data.lastHeartbeatAt;
+  }
+  if (data?.startedAt !== undefined) {
+    updateData.startedAt = data.startedAt;
+  }
+  if (data?.completedAt !== undefined) {
+    updateData.completedAt = data.completedAt;
+  }
+  if (data?.nextRetryAt !== undefined) {
+    updateData.nextRetryAt = data.nextRetryAt;
   }
   await db.update(analyses).set(updateData).where(eq(analyses.sessionId, sessionId));
+}
+
+export async function claimNextPendingAnalysis(workerId: string, staleBefore: Date) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const now = new Date();
+  const result = await db.execute(sql`
+    WITH candidate AS (
+      SELECT ${analyses.id}
+      FROM ${analyses}
+      WHERE (
+        ${analyses.status} = 'pending'
+        AND (${analyses.nextRetryAt} IS NULL OR ${analyses.nextRetryAt} <= ${now})
+      ) OR (
+        ${analyses.status} = 'processing'
+        AND (${analyses.lastHeartbeatAt} IS NULL OR ${analyses.lastHeartbeatAt} <= ${staleBefore})
+      )
+      ORDER BY ${analyses.createdAt} ASC
+      LIMIT 1
+      FOR UPDATE SKIP LOCKED
+    )
+    UPDATE ${analyses}
+    SET
+      ${analyses.status} = 'processing',
+      ${analyses.attemptCount} = ${analyses.attemptCount} + 1,
+      ${analyses.lockedBy} = ${workerId},
+      ${analyses.lastHeartbeatAt} = ${now},
+      ${analyses.startedAt} = COALESCE(${analyses.startedAt}, ${now}),
+      ${analyses.completedAt} = NULL,
+      ${analyses.nextRetryAt} = NULL,
+      ${analyses.errorMessage} = NULL,
+      ${analyses.updatedAt} = ${now}
+    FROM candidate
+    WHERE ${analyses.id} = candidate.id
+    RETURNING *
+  `);
+  const row = result.rows[0];
+  return row ? decryptAnalysisData(row) : null;
+}
+
+export async function heartbeatAnalysis(sessionId: string, workerId: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db
+    .update(analyses)
+    .set({
+      lastHeartbeatAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(and(eq(analyses.sessionId, sessionId), eq(analyses.lockedBy, workerId), eq(analyses.status, "processing")));
+}
+
+export async function completeAnalysis(sessionId: string, workerId: string, data: {
+  analysisResult: PolicyAnalysis;
+  insuranceCategory?: string | null;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const now = new Date();
+  await db
+    .update(analyses)
+    .set({
+      status: "completed",
+      analysisResult: encryptJson(data.analysisResult),
+      insuranceCategory: (data.insuranceCategory ?? null) as InsertAnalysis["insuranceCategory"],
+      errorMessage: null,
+      lockedBy: null,
+      lastHeartbeatAt: now,
+      completedAt: now,
+      nextRetryAt: null,
+      updatedAt: now,
+    })
+    .where(and(eq(analyses.sessionId, sessionId), eq(analyses.lockedBy, workerId)));
+}
+
+export async function requeueAnalysis(sessionId: string, workerId: string, nextRetryAt: Date) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const now = new Date();
+  await db
+    .update(analyses)
+    .set({
+      status: "pending",
+      lockedBy: null,
+      lastHeartbeatAt: null,
+      nextRetryAt,
+      errorMessage: null,
+      completedAt: null,
+      updatedAt: now,
+    })
+    .where(and(eq(analyses.sessionId, sessionId), eq(analyses.lockedBy, workerId)));
+}
+
+export async function failAnalysis(sessionId: string, workerId: string, errorMessage: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const now = new Date();
+  await db
+    .update(analyses)
+    .set({
+      status: "error",
+      errorMessage: encryptField(errorMessage),
+      lockedBy: null,
+      lastHeartbeatAt: now,
+      nextRetryAt: null,
+      updatedAt: now,
+    })
+    .where(and(eq(analyses.sessionId, sessionId), eq(analyses.lockedBy, workerId)));
+}
+
+export async function resetAnalysisForRetry(sessionId: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db
+    .update(analyses)
+    .set({
+      status: "pending",
+      errorMessage: null,
+      lockedBy: null,
+      lastHeartbeatAt: null,
+      nextRetryAt: null,
+      completedAt: null,
+      updatedAt: new Date(),
+    })
+    .where(eq(analyses.sessionId, sessionId));
 }
 
 export async function addChatMessage(data: InsertChatMessage) {

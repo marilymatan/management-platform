@@ -3,6 +3,11 @@ import { exchangeCodeForTokens, saveGmailConnection, verifyGmailScopes } from ".
 import { verifyOAuthState } from "./routers";
 import { ENV } from "./_core/env";
 
+function withStatusParam(path: string, key: string, value: string) {
+  const separator = path.includes("?") ? "&" : "?";
+  return `${path}${separator}${key}=${encodeURIComponent(value)}`;
+}
+
 export function registerGmailCallbackRoute(app: Express) {
   app.get("/api/gmail/callback", async (req: Request, res: Response) => {
     const code = typeof req.query.code === "string" ? req.query.code : null;
@@ -11,22 +16,26 @@ export function registerGmailCallbackRoute(app: Express) {
 
     if (error) {
       console.error("[Gmail OAuth] User denied access or error:", error);
-      return res.redirect(302, "/expenses?gmail_error=" + encodeURIComponent(error));
+      return res.redirect(302, withStatusParam("/expenses", "gmail_error", error));
     }
 
     if (!code || !state) {
       console.error("[Gmail OAuth] Missing code or state");
-      return res.redirect(302, "/expenses?gmail_error=missing_params");
+      return res.redirect(302, withStatusParam("/expenses", "gmail_error", "missing_params"));
     }
 
     let userId: number;
+    let returnTo = "/expenses";
     try {
       const payload = verifyOAuthState(state);
       userId = payload.userId as number;
+      if (typeof payload.returnTo === "string" && payload.returnTo.startsWith("/") && !payload.returnTo.startsWith("//")) {
+        returnTo = payload.returnTo;
+      }
       if (!userId || typeof userId !== "number") throw new Error("Invalid userId in state");
     } catch (err) {
       console.error("[Gmail OAuth] Invalid or expired state parameter");
-      return res.redirect(302, "/expenses?gmail_error=invalid_state");
+      return res.redirect(302, withStatusParam("/expenses", "gmail_error", "invalid_state"));
     }
 
     const redirectUri = `${ENV.appUrl}/api/gmail/callback`;
@@ -42,17 +51,16 @@ export function registerGmailCallbackRoute(app: Express) {
         console.error(`[Gmail OAuth] User did not grant gmail.readonly scope for userId=${userId}`);
         return res.redirect(
           302,
-          "/expenses?gmail_error=" +
-            encodeURIComponent("יש לאשר הרשאת קריאת מיילים כדי לסרוק חשבוניות. אנא נסה שוב ואשר את כל ההרשאות.")
+          withStatusParam(returnTo, "gmail_error", "יש לאשר הרשאת קריאת מיילים כדי לסרוק חשבוניות. אנא נסה שוב ואשר את כל ההרשאות.")
         );
       }
 
       await saveGmailConnection(userId, accessToken, refreshToken, email, expiresAt);
       console.log(`[Gmail OAuth] Connected Gmail for userId=${userId}, email=${email}`);
-      return res.redirect(302, "/expenses?gmail_connected=1");
+      return res.redirect(302, withStatusParam(returnTo, "gmail_connected", "1"));
     } catch (err) {
       console.error("[Gmail OAuth] Token exchange failed:", err);
-      return res.redirect(302, "/expenses?gmail_error=connection_failed");
+      return res.redirect(302, withStatusParam(returnTo, "gmail_error", "connection_failed"));
     }
   });
 }

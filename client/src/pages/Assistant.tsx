@@ -8,9 +8,9 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
   Sparkles,
+  LayoutDashboard,
   Users,
   Shield,
-  Wallet,
   FolderOpen,
   Loader2,
   ArrowLeft,
@@ -25,7 +25,7 @@ const toneClasses = {
 
 const systemMessage: Message = {
   role: "system",
-  content: "אתה לומי, עוזר אישי חכם למשק הבית.",
+  content: "אתה לומי, עוזר אישי חכם לביטוחים, למשפחה, למסמכים ולחיובים של משק הבית.",
 };
 
 export default function Assistant() {
@@ -76,9 +76,9 @@ export default function Assistant() {
   }, [homeContextQuery.data, historyQuery.data]);
 
   const quickLinks = useMemo(() => ([
-    { label: "המשפחה שלי", path: "/family", icon: Users },
+    { label: "בית", path: "/", icon: LayoutDashboard },
     { label: "ביטוחים", path: "/insurance", icon: Shield },
-    { label: "הוצאות/הכנסות", path: "/money", icon: Wallet },
+    { label: "המשפחה שלי", path: "/family", icon: Users },
     { label: "מסמכים", path: "/documents", icon: FolderOpen },
   ]), []);
 
@@ -116,7 +116,7 @@ export default function Assistant() {
             <div>
               <h1 className="text-2xl font-bold tracking-tight">לומי</h1>
               <p className="text-sm text-muted-foreground mt-0.5">
-                שאל אותי כל דבר על הבית, הכסף, המסמכים והביטוחים שלך
+                שאל אותי כל דבר על הביטוחים, הילדים, המסמכים והחיובים של הבית
               </p>
             </div>
           </div>
@@ -142,7 +142,7 @@ export default function Assistant() {
             isLoading={chatMutation.isPending}
             placeholder="שאל/י את לומי שאלה..."
             height="720px"
-            emptyStateMessage="שאל/י את לומי כל שאלה על החיים השוטפים של הבית"
+            emptyStateMessage="שאל/י את לומי כל שאלה על התיק הביטוחי, המשפחה והמסמכים של הבית"
             suggestedPrompts={homeContextQuery.data?.suggestedPrompts ?? []}
             className="border-border/60 shadow-sm"
           />

@@ -3,6 +3,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Route, Switch, useLocation } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
+import { PendingScanNotifications } from "./components/PendingScanNotifications";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { AppShell } from "./components/AppShell";
@@ -10,6 +11,7 @@ import NotFound from "./pages/NotFound";
 
 const Assistant = lazy(() => import("./pages/Assistant"));
 const LumiDashboard = lazy(() => import("./pages/LumiDashboard"));
+const FamilyInsuranceMap = lazy(() => import("./pages/FamilyInsuranceMap"));
 const Family = lazy(() => import("./pages/Family"));
 const Insurance = lazy(() => import("./pages/Insurance"));
 const InsuranceCategoryPage = lazy(() => import("./pages/InsuranceCategoryPage"));
@@ -17,19 +19,23 @@ const Home = lazy(() => import("./pages/Home"));
 const Expenses = lazy(() => import("./pages/SmartInvoices"));
 const Reminders = lazy(() => import("./pages/Reminders"));
 const Documents = lazy(() => import("./pages/Documents"));
+const SavingsCenter = lazy(() => import("./pages/SavingsCenter"));
 const Settings = lazy(() => import("./pages/Settings"));
 const AdminDashboard = lazy(() => import("./pages/AdminDashboard"));
 const Login = lazy(() => import("./pages/Login"));
 
 const KNOWN_ROUTE_PATTERNS = [
   /^\/$/,
+  /^\/chat$/,
   /^\/assistant$/,
   /^\/family$/,
+  /^\/insurance-map$/,
   /^\/dashboard$/,
   /^\/insurance$/,
   /^\/insurance\/category\/[^/]+$/,
   /^\/insurance\/new$/,
   /^\/insurance\/[^/]+$/,
+  /^\/savings$/,
   /^\/money$/,
   /^\/expenses$/,
   /^\/reminders$/,
@@ -86,10 +92,13 @@ function Router() {
     <AppShell>
       <Suspense fallback={<RouteLoading />}>
         <Switch>
-          <Route path="/" component={Assistant} />
-          <Route path="/assistant" component={Assistant} />
-          <Route path="/family" component={Family} />
+          <Route path="/" component={LumiDashboard} />
           <Route path="/dashboard" component={LumiDashboard} />
+          <Route path="/chat" component={Assistant} />
+          <Route path="/assistant" component={Assistant} />
+          <Route path="/insurance-map" component={FamilyInsuranceMap} />
+          <Route path="/family" component={Family} />
+          <Route path="/savings" component={SavingsCenter} />
           <Route path="/insurance" component={Insurance} />
           <Route path="/insurance/category/:category" component={InsuranceCategoryPage} />
           <Route path="/insurance/new" component={Home} />
@@ -114,6 +123,7 @@ function App() {
       <ThemeProvider defaultTheme="light">
         <TooltipProvider>
           <Toaster />
+          <PendingScanNotifications />
           <Router />
         </TooltipProvider>
       </ThemeProvider>

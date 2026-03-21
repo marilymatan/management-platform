@@ -7,14 +7,17 @@
 
 import { google } from "googleapis";
 import crypto from "crypto";
-import { getDb, getUserProfile } from "./db";
-import { gmailConnections, smartInvoices, categoryMappings } from "../drizzle/schema";
-import { eq, and } from "drizzle-orm";
+import { nanoid } from "nanoid";
+import { createAnalysis, getDb, getUserProfile } from "./db";
+import { gmailConnections, smartInvoices, categoryMappings, insuranceArtifacts } from "../drizzle/schema";
+import { eq, and, desc } from "drizzle-orm";
 import { invokeLLM } from "./_core/llm";
 import { convert as htmlToText } from "html-to-text";
-import { storagePut, storageRead, sanitizeFilename } from "./storage";
-import { encryptField, decryptField, encryptJson } from "./encryption";
+import { generateSignedFileUrl, storagePut, storageRead, sanitizeFilename } from "./storage";
+import { decryptJson, encryptField, decryptField, encryptJson } from "./encryption";
 import { ENV } from "./_core/env";
+import { extractInsuranceDiscoveryData, inferInsuranceArtifactType, inferInsuranceCategoryFromText, looksLikeInsuranceMessage } from "./gmailInsuranceDiscovery";
+import { policyAnalysisWorker } from "./policyAnalysisWorker";
 
 // ─── OAuth2 client factory ────────────────────────────────────────────────────
 
@@ -466,7 +469,7 @@ async function fetchRecentEmails(
 
   // Build query: last N days, only relevant emails
   const after = Math.floor((Date.now() - daysBack * 24 * 60 * 60 * 1000) / 1000);
-  const query = `after:${after} (חשבונית OR חשבון OR קבלה OR invoice OR bill OR payment OR חיוב OR לתשלום OR receipt OR זיכוי OR "credit note" OR הקבלה OR has:attachment filename:pdf)`;
+  const query = `after:${after} (חשבונית OR חשבון OR קבלה OR invoice OR bill OR payment OR חיוב OR לתשלום OR receipt OR זיכוי OR "credit note" OR הקבלה OR ביטוח OR פוליסה OR פרמיה OR חידוש OR כיסוי OR insurance OR policy OR premium OR renewal OR claim OR has:attachment filename:pdf)`;
 
   const listRes = await gmail.users.messages.list({
     userId: "me",
@@ -596,19 +599,8 @@ async function downloadAndUploadPdfAttachment(
   filename: string
 ): Promise<string | null> {
   try {
-    const auth = await getAuthenticatedClient(connectionId);
-    const gmail = google.gmail({ version: "v1", auth });
-
-    const attachRes = await gmail.users.messages.attachments.get({
-      userId: "me",
-      messageId,
-      id: attachmentId,
-    });
-
-    const data = attachRes.data.data;
-    if (!data) return null;
-
-    const pdfBuffer = Buffer.from(data, "base64");
+    const pdfBuffer = await downloadPdfAttachmentBuffer(connectionId, messageId, attachmentId);
+    if (!pdfBuffer) return null;
 
     if (pdfBuffer.length > 10 * 1024 * 1024) {
       console.log(`[Gmail] Skipping large PDF (${pdfBuffer.length} bytes): ${filename}`);
@@ -624,6 +616,28 @@ async function downloadAndUploadPdfAttachment(
     return url;
   } catch (err) {
     console.error(`[Gmail] Failed to download PDF attachment:`, err);
+    return null;
+  }
+}
+
+async function downloadPdfAttachmentBuffer(
+  connectionId: number,
+  messageId: string,
+  attachmentId: string
+): Promise<Buffer | null> {
+  try {
+    const auth = await getAuthenticatedClient(connectionId);
+    const gmail = google.gmail({ version: "v1", auth });
+    const attachRes = await gmail.users.messages.attachments.get({
+      userId: "me",
+      messageId,
+      id: attachmentId,
+    });
+    const data = attachRes.data.data;
+    if (!data) return null;
+    return Buffer.from(data, "base64");
+  } catch (err) {
+    console.error(`[Gmail] Failed to fetch PDF attachment buffer:`, err);
     return null;
   }
 }
@@ -890,6 +904,8 @@ export interface ScanResult {
   scanned: number;
   found: number;
   saved: number;
+  discoveriesFound: number;
+  discoveriesSaved: number;
   invoices: Array<{
     provider: string;
     amount: number | null;
@@ -898,6 +914,15 @@ export interface ScanResult {
     date: string | null;
     subject: string;
     description: string;
+  }>;
+  discoveries: Array<{
+    provider: string;
+    insuranceCategory: string | null;
+    artifactType: string;
+    summary: string;
+    actionHint: string;
+    policyNumber: string | null;
+    monthlyPremium: number | null;
   }>;
 }
 
@@ -916,7 +941,10 @@ export async function scanGmailForInvoices(
   let totalScanned = 0;
   let found = 0;
   let saved = 0;
+  let discoveriesFound = 0;
+  let discoveriesSaved = 0;
   const invoices: ScanResult["invoices"] = [];
+  const discoveries: ScanResult["discoveries"] = [];
 
   for (const conn of connections) {
     let connSaved = 0;
@@ -925,7 +953,7 @@ export async function scanGmailForInvoices(
     totalScanned += emails.length;
 
     for (const email of emails) {
-      const existing = await db
+      const [existingInvoice] = await db
         .select({ id: smartInvoices.id })
         .from(smartInvoices)
         .where(
@@ -936,16 +964,39 @@ export async function scanGmailForInvoices(
         )
         .limit(1);
 
-      if (existing.length > 0) continue;
-
-      if (!isInvoiceEmail(email.subject, email.body)) continue;
-
       const detectedProvider = detectProvider(email.subject, email.from, email.body);
+      const [existingArtifact] = await db
+        .select({ id: insuranceArtifacts.id })
+        .from(insuranceArtifacts)
+        .where(
+          and(
+            eq(insuranceArtifacts.userId, userId),
+            eq(insuranceArtifacts.gmailMessageId, email.messageId)
+          )
+        )
+        .limit(1);
 
-      found++;
+      const shouldProcessInvoice = !existingInvoice && isInvoiceEmail(email.subject, email.body);
+      const shouldProcessDiscovery = !existingArtifact && looksLikeInsuranceMessage({
+        subject: email.subject,
+        from: email.from,
+        body: email.body,
+        attachmentFilename: email.pdfAttachments[0]?.filename ?? null,
+        detectedProvider,
+      });
+
+      if (!shouldProcessInvoice && !shouldProcessDiscovery) continue;
+
+      if (shouldProcessInvoice) {
+        found++;
+      }
+      if (shouldProcessDiscovery) {
+        discoveriesFound++;
+      }
 
       let pdfText: string | null = null;
       let pdfUrl: string | null = null;
+      let pdfFileKey: string | null = null;
 
       console.log(`[Gmail] Email "${email.subject}" from "${email.from}" — ${email.pdfAttachments.length} PDF attachment(s)`);
 
@@ -962,90 +1013,154 @@ export async function scanGmailForInvoices(
         );
 
         if (pdfUrl) {
-          const fileKey = pdfUrl.replace(/^\/api\/files\//, "");
-          pdfText = await extractTextFromPdf(pdfUrl, fileKey);
+          pdfFileKey = pdfUrl.replace(/^\/api\/files\//, "");
+          pdfText = await extractTextFromPdf(pdfUrl, pdfFileKey);
           console.log(`[Gmail] Extracted ${pdfText.length} chars from PDF: ${firstPdf.filename}`);
         } else {
           console.log(`[Gmail] PDF download failed for: ${firstPdf.filename}`);
         }
       }
 
-      const extracted = await extractInvoiceData(
-        email.subject,
-        email.from,
-        email.body,
-        pdfText,
-        detectedProvider,
-        businessContext
-      );
+      if (shouldProcessInvoice) {
+        const extracted = await extractInvoiceData(
+          email.subject,
+          email.from,
+          email.body,
+          pdfText,
+          detectedProvider,
+          businessContext
+        );
 
-      const flowDirection = extracted?.flowDirection ?? inferFlowDirectionFallback(email.from, businessContext);
-      const llmProvider = extracted?.provider && extracted.provider !== "לא ידוע" ? extracted.provider : null;
-      const provider = llmProvider
-        ?? (flowDirection === "income" && extracted?.recipientName && !matchesBusinessIdentity(extracted.recipientName, businessContext) ? extracted.recipientName : null)
-        ?? detectedProvider?.name
-        ?? extractSenderName(email.from)
-        ?? "צד לא ידוע";
-      const category = extracted?.category ?? detectedProvider?.category ?? "אחר";
-      const description = extracted?.description ?? email.subject;
+        const flowDirection = extracted?.flowDirection ?? inferFlowDirectionFallback(email.from, businessContext);
+        const llmProvider = extracted?.provider && extracted.provider !== "לא ידוע" ? extracted.provider : null;
+        const provider = llmProvider
+          ?? (flowDirection === "income" && extracted?.recipientName && !matchesBusinessIdentity(extracted.recipientName, businessContext) ? extracted.recipientName : null)
+          ?? detectedProvider?.name
+          ?? extractSenderName(email.from)
+          ?? "צד לא ידוע";
+        const category = extracted?.category ?? detectedProvider?.category ?? "אחר";
+        const description = extracted?.description ?? email.subject;
 
-      let customCategory: string | null = null;
-      const normalizedProvider = provider.trim().toLowerCase();
-      const [mapping] = await db
-        .select({ customCategory: categoryMappings.customCategory })
-        .from(categoryMappings)
-        .where(
-          and(
-            eq(categoryMappings.userId, userId),
-            eq(categoryMappings.providerPattern, normalizedProvider)
+        let customCategory: string | null = null;
+        const normalizedProvider = provider.trim().toLowerCase();
+        const [mapping] = await db
+          .select({ customCategory: categoryMappings.customCategory })
+          .from(categoryMappings)
+          .where(
+            and(
+              eq(categoryMappings.userId, userId),
+              eq(categoryMappings.providerPattern, normalizedProvider)
+            )
           )
-        )
-        .limit(1);
-      if (mapping) {
-        customCategory = mapping.customCategory;
-        console.log(`[Gmail] Applied category mapping for "${provider}": "${customCategory}"`);
+          .limit(1);
+        if (mapping) {
+          customCategory = mapping.customCategory;
+          console.log(`[Gmail] Applied category mapping for "${provider}": "${customCategory}"`);
+        }
+
+        const extractedDataObj = {
+          ...(extracted ?? {}),
+          pdfUrl: pdfUrl ?? undefined,
+          pdfFilename: email.pdfAttachments[0]?.filename ?? undefined,
+          fromEmail: email.from,
+          flowDirection,
+        };
+
+        console.log(`[Gmail] Saving invoice: provider=${provider}, category=${category}, flow=${flowDirection}, customCategory=${customCategory ?? "none"}, amount=${extracted?.amount ?? "null"}, pdfUrl=${pdfUrl ? "YES" : "NO"}, pdfText=${pdfText ? `${pdfText.length} chars` : "NO"}`);
+
+        await db.insert(smartInvoices).values({
+          userId,
+          gmailConnectionId: conn.id,
+          sourceEmail: conn.email ?? null,
+          gmailMessageId: email.messageId,
+          provider,
+          category: category as "תקשורת" | "חשמל" | "מים" | "ארנונה" | "ביטוח" | "בנק" | "רכב" | "אחר",
+          customCategory,
+          amount: extracted?.amount?.toString() ?? null,
+          invoiceDate: extracted?.invoiceDate ? new Date(extracted.invoiceDate) : email.date,
+          dueDate: extracted?.dueDate ? new Date(extracted.dueDate) : null,
+          status: (extracted?.status ?? "unknown") as "pending" | "paid" | "overdue" | "unknown",
+          flowDirection,
+          subject: encryptField(email.subject),
+          rawText: encryptField(email.body.slice(0, 2000)),
+          extractedData: encryptJson(extractedDataObj) as any,
+          parsed: extracted !== null,
+        });
+
+        saved++;
+        connSaved++;
+        invoices.push({
+          provider,
+          amount: extracted?.amount ?? null,
+          category,
+          flowDirection,
+          date: extracted?.invoiceDate ?? null,
+          subject: email.subject,
+          description,
+        });
       }
 
-      const extractedDataObj = {
-        ...(extracted ?? {}),
-        pdfUrl: pdfUrl ?? undefined,
-        pdfFilename: email.pdfAttachments[0]?.filename ?? undefined,
-        fromEmail: email.from,
-        flowDirection,
-      };
+      if (shouldProcessDiscovery) {
+        const discovery = await extractInsuranceDiscoveryData({
+          subject: email.subject,
+          from: email.from,
+          body: email.body,
+          pdfText,
+          detectedProvider,
+          attachmentFilename: email.pdfAttachments[0]?.filename ?? null,
+        });
+        const renewalDate = discovery.renewalDate ? new Date(discovery.renewalDate) : null;
+        const documentDate =
+          renewalDate && !Number.isNaN(renewalDate.getTime())
+            ? renewalDate
+            : email.date;
+        const discoveryPayload = {
+          provider: discovery.provider,
+          insuranceCategory: discovery.insuranceCategory,
+          artifactType: discovery.artifactType,
+          confidence: discovery.confidence,
+          summary: discovery.summary,
+          actionHint: discovery.actionHint,
+          policyNumber: discovery.policyNumber,
+          monthlyPremium: discovery.monthlyPremium,
+          renewalDate: discovery.renewalDate,
+          policyType: discovery.policyType,
+          fromEmail: email.from,
+          attachmentFilename: email.pdfAttachments[0]?.filename ?? null,
+          attachmentFileKey: pdfFileKey,
+        };
 
-      console.log(`[Gmail] Saving invoice: provider=${provider}, category=${category}, flow=${flowDirection}, customCategory=${customCategory ?? "none"}, amount=${extracted?.amount ?? "null"}, pdfUrl=${pdfUrl ? "YES" : "NO"}, pdfText=${pdfText ? `${pdfText.length} chars` : "NO"}`);
+        await db.insert(insuranceArtifacts).values({
+          userId,
+          gmailConnectionId: conn.id,
+          sourceEmail: conn.email ?? null,
+          gmailMessageId: email.messageId,
+          provider: discovery.provider,
+          insuranceCategory: discovery.insuranceCategory,
+          artifactType: discovery.artifactType,
+          confidence: discovery.confidence.toFixed(3),
+          premiumAmount: discovery.monthlyPremium?.toString() ?? null,
+          policyNumber: discovery.policyNumber ? encryptField(discovery.policyNumber) : null,
+          documentDate,
+          subject: encryptField(email.subject),
+          summary: encryptField(discovery.summary),
+          actionHint: encryptField(discovery.actionHint),
+          attachmentFilename: email.pdfAttachments[0]?.filename ?? null,
+          attachmentFileKey: pdfFileKey,
+          extractedData: encryptJson(discoveryPayload),
+        });
 
-      await db.insert(smartInvoices).values({
-        userId,
-        gmailConnectionId: conn.id,
-        sourceEmail: conn.email ?? null,
-        gmailMessageId: email.messageId,
-        provider,
-        category: category as "תקשורת" | "חשמל" | "מים" | "ארנונה" | "ביטוח" | "בנק" | "רכב" | "אחר",
-        customCategory,
-        amount: extracted?.amount?.toString() ?? null,
-        invoiceDate: extracted?.invoiceDate ? new Date(extracted.invoiceDate) : email.date,
-        dueDate: extracted?.dueDate ? new Date(extracted.dueDate) : null,
-        status: (extracted?.status ?? "unknown") as "pending" | "paid" | "overdue" | "unknown",
-        flowDirection,
-        subject: encryptField(email.subject),
-        rawText: encryptField(email.body.slice(0, 2000)),
-        extractedData: encryptJson(extractedDataObj) as any,
-        parsed: extracted !== null,
-      });
-
-      saved++;
-      connSaved++;
-      invoices.push({
-        provider,
-        amount: extracted?.amount ?? null,
-        category,
-        flowDirection,
-        date: extracted?.invoiceDate ?? null,
-        subject: email.subject,
-        description,
-      });
+        discoveriesSaved++;
+        discoveries.push({
+          provider: discovery.provider,
+          insuranceCategory: discovery.insuranceCategory,
+          artifactType: discovery.artifactType,
+          summary: discovery.summary,
+          actionHint: discovery.actionHint,
+          policyNumber: discovery.policyNumber,
+          monthlyPremium: discovery.monthlyPremium,
+        });
+      }
     }
 
     await db
@@ -1054,5 +1169,177 @@ export async function scanGmailForInvoices(
       .where(eq(gmailConnections.id, conn.id));
   }
 
-  return { scanned: totalScanned, found, saved, invoices };
+  return {
+    scanned: totalScanned,
+    found,
+    saved,
+    discoveriesFound,
+    discoveriesSaved,
+    invoices,
+    discoveries,
+  };
+}
+
+export interface DiscoveredPolicyPdf {
+  connectionId: number;
+  gmailMessageId: string;
+  subject: string;
+  from: string;
+  date: Date;
+  attachmentName: string;
+  attachmentId: string;
+  provider: string | null;
+  insuranceCategory: string | null;
+  artifactType: string;
+  alreadyKnown: boolean;
+}
+
+export async function discoverPolicyPdfs(
+  userId: number,
+  daysBack: number = 90
+): Promise<DiscoveredPolicyPdf[]> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const connections = await getAllGmailConnections(userId);
+  if (connections.length === 0) return [];
+
+  const discovered: DiscoveredPolicyPdf[] = [];
+
+  for (const conn of connections) {
+    const emails = await fetchRecentEmails(conn.id, daysBack);
+
+    for (const email of emails) {
+      if (email.pdfAttachments.length === 0) continue;
+
+      const detectedProvider = detectProvider(email.subject, email.from, email.body);
+      const shouldInclude =
+        detectedProvider?.category === "ביטוח"
+        || looksLikeInsuranceMessage({
+          subject: email.subject,
+          from: email.from,
+          body: email.body,
+          attachmentFilename: email.pdfAttachments[0]?.filename ?? null,
+          detectedProvider,
+        });
+
+      if (!shouldInclude) continue;
+
+      const [existingArtifact] = await db
+        .select({ id: insuranceArtifacts.id })
+        .from(insuranceArtifacts)
+        .where(
+          and(
+            eq(insuranceArtifacts.userId, userId),
+            eq(insuranceArtifacts.gmailMessageId, email.messageId)
+          )
+        )
+        .limit(1);
+
+      email.pdfAttachments.forEach((attachment) => {
+        const fallbackText = `${email.subject} ${email.body} ${attachment.filename}`;
+        discovered.push({
+          connectionId: conn.id,
+          gmailMessageId: email.messageId,
+          subject: email.subject,
+          from: email.from,
+          date: email.date,
+          attachmentName: attachment.filename,
+          attachmentId: attachment.attachmentId,
+          provider: detectedProvider?.name ?? extractSenderName(email.from),
+          insuranceCategory: inferInsuranceCategoryFromText(fallbackText),
+          artifactType: inferInsuranceArtifactType(fallbackText, true),
+          alreadyKnown: Boolean(existingArtifact),
+        });
+      });
+    }
+  }
+
+  return discovered
+    .sort((a, b) => b.date.getTime() - a.date.getTime())
+    .slice(0, 40);
+}
+
+export async function importPolicyPdfFromGmail(params: {
+  userId: number;
+  connectionId: number;
+  gmailMessageId: string;
+  attachmentId: string;
+  filename: string;
+  insuranceCategory?: "health" | "life" | "car" | "home" | null;
+}) {
+  const connection = await getGmailConnectionById(params.connectionId);
+  if (!connection || connection.userId !== params.userId) {
+    throw new Error("Gmail connection not found");
+  }
+
+  const pdfBuffer = await downloadPdfAttachmentBuffer(
+    params.connectionId,
+    params.gmailMessageId,
+    params.attachmentId
+  );
+  if (!pdfBuffer) {
+    throw new Error("לא הצלחנו להוריד את המסמך מה-Gmail");
+  }
+  if (pdfBuffer.length > 20 * 1024 * 1024) {
+    throw new Error("קובץ ה-PDF חורג ממגבלת 20MB");
+  }
+
+  const sessionId = nanoid(16);
+  const safeFilename = sanitizeFilename(params.filename || "policy.pdf");
+  const normalizedFilename = safeFilename.toLowerCase().endsWith(".pdf") ? safeFilename : `${safeFilename}.pdf`;
+  const fileKey = `policies/${sessionId}/${nanoid(24)}-${normalizedFilename}`;
+
+  await storagePut(fileKey, pdfBuffer, "application/pdf");
+  await createAnalysis({
+    sessionId,
+    userId: params.userId,
+    files: [
+      {
+        name: normalizedFilename,
+        size: pdfBuffer.length,
+        fileKey,
+        mimeType: "application/pdf",
+      },
+    ],
+    status: "pending",
+    insuranceCategory: params.insuranceCategory ?? null,
+  });
+
+  policyAnalysisWorker.nudge();
+
+  return {
+    sessionId,
+    fileKey,
+    name: normalizedFilename,
+    size: pdfBuffer.length,
+  };
+}
+
+export async function getInsuranceDiscoveries(userId: number, limit: number = 20) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const rows = await db
+    .select()
+    .from(insuranceArtifacts)
+    .where(eq(insuranceArtifacts.userId, userId))
+    .orderBy(desc(insuranceArtifacts.documentDate), desc(insuranceArtifacts.createdAt))
+    .limit(limit);
+
+  return rows.map((row) => {
+    const extractedData = row.extractedData ? decryptJson<Record<string, unknown>>(row.extractedData) : null;
+
+    return {
+      ...row,
+      confidence: Number(row.confidence ?? 0),
+      premiumAmount: row.premiumAmount != null ? Number(row.premiumAmount) : null,
+      policyNumber: row.policyNumber ? decryptField(row.policyNumber) : null,
+      subject: row.subject ? decryptField(row.subject) : null,
+      summary: row.summary ? decryptField(row.summary) : null,
+      actionHint: row.actionHint ? decryptField(row.actionHint) : null,
+      attachmentUrl: row.attachmentFileKey ? generateSignedFileUrl(row.attachmentFileKey) : null,
+      extractedData,
+    };
+  });
 }

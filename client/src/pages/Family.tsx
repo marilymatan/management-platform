@@ -3,7 +3,9 @@ import { format } from "date-fns";
 import { he } from "date-fns/locale";
 import { useLocation } from "wouter";
 import { useAuth } from "@/_core/hooks/useAuth";
+import { FamilyCoverageGrid } from "@/components/family/FamilyCoverageGrid";
 import { trpc } from "@/lib/trpc";
+import { buildFamilyCoverageSnapshot } from "@/lib/familyCoverage";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -278,6 +280,10 @@ export default function Family() {
     () => members.filter((member) => member.insuranceNotes),
     [members]
   );
+  const coverageSnapshot = useMemo(
+    () => buildFamilyCoverageSnapshot(analysesQuery.data as Parameters<typeof buildFamilyCoverageSnapshot>[0], profile, members),
+    [analysesQuery.data, members, profile]
+  );
   const legacyDraftCount =
     (profile?.maritalStatus === "married" ? 1 : 0) + (profile?.numberOfChildren ?? 0);
   const suggestedPrompts = useMemo(() => {
@@ -289,7 +295,7 @@ export default function Family() {
       childMembers.length > 0
         ? "יש משהו שחסר לילדים שלי בביטוחים או במסמכים?"
         : "איזה בני בית כדאי להוסיף עכשיו כדי שלומי יעזור טוב יותר?",
-      "איך הביטוחים שלי נראים מול המצב המשפחתי העדכני?",
+      "איך נראית מפת הכיסוי המשפחתית שלי כרגע?",
     ];
   }, [members, childMembers.length]);
 
@@ -553,6 +559,16 @@ export default function Family() {
               </CardContent>
             </Card>
           </div>
+
+          <FamilyCoverageGrid
+            rows={coverageSnapshot.rows}
+            householdSize={coverageSnapshot.householdSize}
+            categoriesWithData={coverageSnapshot.categoriesWithData}
+            missingCount={coverageSnapshot.missingCount}
+            reviewCount={coverageSnapshot.reviewCount}
+            onOpenInsurance={() => setLocation("/insurance")}
+            onOpenAssistant={() => setLocation("/assistant")}
+          />
 
           <div className="animate-fade-in-up stagger-5 space-y-3">
             <div className="flex items-center justify-between gap-3 flex-wrap">

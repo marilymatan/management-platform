@@ -2,7 +2,7 @@ import { useCallback, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-import { Upload, FileText, X, Loader2, CheckCircle2, AlertCircle } from "lucide-react";
+import { Upload, FileText, X, Loader2, CheckCircle2, AlertCircle, Camera } from "lucide-react";
 import type { UploadedFile, FileStatus } from "@shared/insurance";
 
 interface FileUploadProps {
@@ -11,7 +11,7 @@ interface FileUploadProps {
   onRemoveFile: (id: string) => void;
   onAnalyze: () => void;
   isUploading: boolean;
-  isAnalyzing: boolean;
+  isProcessing: boolean;
   hasResults: boolean;
 }
 
@@ -27,9 +27,9 @@ function getStatusIcon(status: FileStatus) {
       return <FileText className="size-5 text-muted-foreground" />;
     case "uploading":
       return <Loader2 className="size-5 text-primary animate-spin" />;
-    case "uploaded":
+    case "queued":
       return <CheckCircle2 className="size-5 text-success" />;
-    case "analyzing":
+    case "processing":
       return <Loader2 className="size-5 text-primary animate-spin" />;
     case "done":
       return <CheckCircle2 className="size-5 text-success" />;
@@ -42,8 +42,8 @@ function getStatusText(status: FileStatus): string {
   switch (status) {
     case "pending": return "ממתין";
     case "uploading": return "מעלה...";
-    case "uploaded": return "הועלה";
-    case "analyzing": return "סורק...";
+    case "queued": return "בתור לעיבוד";
+    case "processing": return "בעיבוד";
     case "done": return "הושלם";
     case "error": return "שגיאה";
   }
@@ -55,10 +55,14 @@ export function FileUpload({
   onRemoveFile,
   onAnalyze,
   isUploading,
-  isAnalyzing,
+  isProcessing,
   hasResults,
 }: FileUploadProps) {
   const [isDragOver, setIsDragOver] = useState(false);
+
+  function isSupportedFile(file: File) {
+    return file.type === "application/pdf" || file.type.startsWith("image/");
+  }
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -77,7 +81,7 @@ export function FileUpload({
     e.stopPropagation();
     setIsDragOver(false);
     const droppedFiles = Array.from(e.dataTransfer.files).filter(
-      f => f.type === "application/pdf"
+      (file) => isSupportedFile(file)
     );
     if (droppedFiles.length > 0) {
       onFilesSelected(droppedFiles);
@@ -92,7 +96,7 @@ export function FileUpload({
     e.target.value = "";
   }, [onFilesSelected]);
 
-  const canAnalyze = files.length > 0 && !isUploading && !isAnalyzing && !hasResults;
+  const canAnalyze = files.length > 0 && !isUploading && !isProcessing && !hasResults;
 
   return (
     <div className="space-y-4">
@@ -105,15 +109,24 @@ export function FileUpload({
           isDragOver
             ? "border-primary bg-primary/5 scale-[1.01] shadow-lg"
             : "border-border hover:border-primary/40 hover:bg-muted/20 hover:shadow-sm",
-          (isUploading || isAnalyzing) && "pointer-events-none opacity-60"
+          isUploading && "pointer-events-none opacity-60"
         )}
+        data-testid="policy-upload-dropzone"
         onClick={() => document.getElementById("file-input")?.click()}
       >
         <input
           id="file-input"
           type="file"
-          accept=".pdf"
+          accept=".pdf,image/*"
           multiple
+          onChange={handleFileInput}
+          className="hidden"
+        />
+        <input
+          id="camera-input"
+          type="file"
+          accept="image/*"
+          capture="environment"
           onChange={handleFileInput}
           className="hidden"
         />
@@ -126,13 +139,24 @@ export function FileUpload({
           </div>
           <div>
             <p className="text-base font-semibold text-foreground">
-              גרור קבצי PDF לכאן
+              גרור קובץ PDF או צילום מסמך לכאן
             </p>
             <p className="text-sm text-muted-foreground mt-1">
-              או לחץ לבחירת קבצים · קבצי PDF של פוליסות ביטוח
+              או לחץ לבחירת קבצים · אפשר גם לצלם מסמך ישירות מהנייד
             </p>
           </div>
         </div>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <Button variant="outline" onClick={() => document.getElementById("file-input")?.click()} className="gap-2">
+          <Upload className="size-4" />
+          בחר קובץ PDF או תמונה
+        </Button>
+        <Button variant="outline" onClick={() => document.getElementById("camera-input")?.click()} className="gap-2">
+          <Camera className="size-4" />
+          צלם מסמך עכשיו
+        </Button>
       </div>
 
       {files.length > 0 && (
@@ -153,7 +177,7 @@ export function FileUpload({
                     <p className="text-[11px] text-destructive mt-0.5">{file.error}</p>
                   )}
                 </div>
-                {file.status === "pending" && !isUploading && !isAnalyzing && (
+                {file.status === "pending" && !isUploading && !isProcessing && (
                   <button
                     onClick={(e) => { e.stopPropagation(); onRemoveFile(file.id); }}
                     className="p-1.5 rounded-lg hover:bg-muted transition-colors"
@@ -173,15 +197,16 @@ export function FileUpload({
           disabled={!canAnalyze}
           size="lg"
           className="w-full text-base font-semibold gap-2 h-12 shadow-md"
+          data-testid="policy-upload-submit"
         >
           {isUploading ? (
             <><Loader2 className="size-5 animate-spin" /> מעלה קבצים...</>
-          ) : isAnalyzing ? (
-            <><Loader2 className="size-5 animate-spin" /> סורק פוליסות...</>
+          ) : isProcessing ? (
+            <><Loader2 className="size-5 animate-spin" /> שולח לעיבוד...</>
           ) : hasResults ? (
             <><CheckCircle2 className="size-5" /> הסריקה הושלמה</>
           ) : (
-            <><Upload className="size-5" /> העלה וסרוק פוליסות</>
+            <><Upload className="size-5" /> העלה פוליסות לעיבוד</>
           )}
         </Button>
       )}

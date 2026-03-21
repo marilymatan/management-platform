@@ -15,6 +15,11 @@ describe("analysisCleanup", () => {
     ).toEqual(["policies/session-1/a.pdf", "policies/session-1/b.pdf"]);
   });
 
+  it("returns an empty list when there are no stored file references", () => {
+    expect(getAnalysisFileKeys(undefined)).toEqual([]);
+    expect(getAnalysisFileKeys([{ fileKey: null }, { fileKey: "   " }])).toEqual([]);
+  });
+
   it("deletes stored files and linked analysis records", async () => {
     const deleteStoredFile = vi.fn().mockResolvedValue(undefined);
     const where = vi.fn().mockResolvedValue(undefined);

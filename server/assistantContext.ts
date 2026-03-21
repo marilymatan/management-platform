@@ -37,6 +37,22 @@ type AssistantInvoice = {
   extractedData?: unknown;
 };
 
+type AssistantInsuranceDiscovery = {
+  provider?: string | null;
+  insuranceCategory?: InsuranceCategory | string | null;
+  artifactType?: string | null;
+  confidence?: number | string | null;
+  premiumAmount?: number | string | null;
+  policyNumber?: string | null;
+  documentDate?: string | Date | null;
+  subject?: string | null;
+  summary?: string | null;
+  actionHint?: string | null;
+  attachmentFilename?: string | null;
+  attachmentUrl?: string | null;
+  extractedData?: unknown;
+};
+
 type AssistantFamilyMember = {
   relation?: string | null;
   fullName?: string | null;
@@ -77,6 +93,11 @@ type RelevantPolicy = {
 
 type RelevantInvoice = {
   invoice: AssistantInvoice;
+  score: number;
+};
+
+type RelevantInsuranceDiscovery = {
+  discovery: AssistantInsuranceDiscovery;
   score: number;
 };
 
@@ -174,9 +195,12 @@ const GENERIC_TERMS = new Set([
 const INSURANCE_KEYWORDS = [
   "ביטוח",
   "פוליסה",
+  "חידוש",
+  "חידושים",
+  "פרמיה",
+  "פרמיות",
   "כיסוי",
   "כיסויים",
-  "פרמיה",
   "השתתפות",
   "אכשרה",
   "החזר",
@@ -190,6 +214,8 @@ const INSURANCE_KEYWORDS = [
   "חיים",
   "רכב",
   "דירה",
+  "תביעה",
+  "סוכן",
   "ביטוחים",
 ];
 
@@ -412,6 +438,33 @@ function formatAmount(value: AssistantInvoice["amount"], extractedData?: unknown
   return "לא ידוע";
 }
 
+function formatDiscoveryAmount(value: AssistantInsuranceDiscovery["premiumAmount"]) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return `₪${value.toLocaleString("he-IL", { maximumFractionDigits: 2 })}`;
+  }
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    if (!Number.isNaN(parsed)) {
+      return `₪${parsed.toLocaleString("he-IL", { maximumFractionDigits: 2 })}`;
+    }
+    return value;
+  }
+  return "לא ידוע";
+}
+
+function formatInsuranceDiscoveryType(artifactType?: string | null) {
+  const labels: Record<string, string> = {
+    policy_document: "מסמך פוליסה",
+    renewal_notice: "חידוש",
+    premium_notice: "עדכון פרמיה",
+    coverage_update: "עדכון כיסוי",
+    claim_update: "עדכון תביעה",
+    other: "איתות ביטוחי",
+  };
+  if (!artifactType) return "איתות ביטוחי";
+  return labels[artifactType] ?? artifactType;
+}
+
 function getDocumentCount(
   analyses: AssistantAnalysis[],
   invoices: AssistantInvoice[],
@@ -554,6 +607,20 @@ function buildInvoiceSearchText(invoice: AssistantInvoice) {
   ].filter(Boolean).join(" "));
 }
 
+function buildInsuranceDiscoverySearchText(discovery: AssistantInsuranceDiscovery) {
+  return normalizeText([
+    discovery.provider,
+    discovery.insuranceCategory,
+    discovery.artifactType,
+    discovery.policyNumber,
+    discovery.subject,
+    discovery.summary,
+    discovery.actionHint,
+    discovery.attachmentFilename,
+    discovery.extractedData ? JSON.stringify(discovery.extractedData) : "",
+  ].filter(Boolean).join(" "));
+}
+
 function scoreInvoice(invoice: AssistantInvoice, signals: QuestionSignals) {
   const searchableText = buildInvoiceSearchText(invoice);
   let score = 0;
@@ -567,6 +634,33 @@ function scoreInvoice(invoice: AssistantInvoice, signals: QuestionSignals) {
   if (createdAt) {
     score += createdAt.getTime() / 10_000_000_000_000;
   }
+  return score;
+}
+
+function scoreInsuranceDiscovery(discovery: AssistantInsuranceDiscovery, signals: QuestionSignals) {
+  const searchableText = buildInsuranceDiscoverySearchText(discovery);
+  const discoveryCategory =
+    discovery.insuranceCategory === "health" ||
+    discovery.insuranceCategory === "life" ||
+    discovery.insuranceCategory === "car" ||
+    discovery.insuranceCategory === "home"
+      ? discovery.insuranceCategory
+      : null;
+
+  let score = 0;
+  if (signals.isInsuranceQuestion) score += 18;
+  if (signals.isDocumentQuestion && Boolean(discovery.attachmentFilename || discovery.attachmentUrl)) score += 8;
+  if (signals.isMoneyQuestion && discovery.artifactType === "premium_notice") score += 8;
+  if (signals.isFamilyQuestion && signals.isInsuranceQuestion) score += 6;
+  if (discoveryCategory && signals.matchedCategories.includes(discoveryCategory)) score += 20;
+  if (discovery.artifactType === "renewal_notice" && signals.isInsuranceQuestion) score += 8;
+  score += countTermMatches(searchableText, signals.terms) * 6;
+
+  const createdAt = parseFlexibleDate(discovery.documentDate);
+  if (createdAt) {
+    score += createdAt.getTime() / 10_000_000_000_000;
+  }
+
   return score;
 }
 
@@ -635,6 +729,24 @@ function pickRelevantInvoices(invoices: AssistantInvoice[], signals: QuestionSig
   return scored.filter((entry) => entry.score > 8).slice(0, 5);
 }
 
+function pickRelevantInsuranceDiscoveries(
+  discoveries: AssistantInsuranceDiscovery[],
+  signals: QuestionSignals
+) {
+  const scored = discoveries
+    .map((discovery) => ({
+      discovery,
+      score: scoreInsuranceDiscovery(discovery, signals),
+    }))
+    .sort((a, b) => b.score - a.score);
+
+  if (!signals.isInsuranceQuestion && !signals.isDocumentQuestion && !signals.isMoneyQuestion) {
+    return scored.filter((entry) => entry.score > 12).slice(0, 3);
+  }
+
+  return scored.filter((entry) => entry.score > 8).slice(0, 4);
+}
+
 function pickRelevantDocuments(
   documentClassifications: AssistantDocumentClassification[],
   signals: QuestionSignals
@@ -651,6 +763,27 @@ function pickRelevantDocuments(
   }
 
   return scored.filter((entry) => entry.score > 6).slice(0, 6);
+}
+
+function formatRelevantInsuranceDiscoveriesSection(
+  relevantDiscoveries: RelevantInsuranceDiscovery[]
+) {
+  if (!relevantDiscoveries.length) {
+    return "לא זוהו ממצאי Gmail ביטוחיים שרלוונטיים במיוחד לשאלה הנוכחית.";
+  }
+
+  return relevantDiscoveries.map(({ discovery }) => {
+    const discoveryDate = parseFlexibleDate(discovery.documentDate);
+    return [
+      `- ${discovery.provider || "גוף ביטוחי"} | סוג: ${formatInsuranceDiscoveryType(discovery.artifactType)} | קטגוריה: ${formatOptionalValue(typeof discovery.insuranceCategory === "string" ? discovery.insuranceCategory : null)}`,
+      discovery.policyNumber ? `  מספר פוליסה: ${discovery.policyNumber}` : null,
+      discovery.premiumAmount != null ? `  פרמיה מזוהה: ${formatDiscoveryAmount(discovery.premiumAmount)}` : null,
+      discoveryDate ? `  תאריך מסמך: ${discoveryDate.toISOString().slice(0, 10)}` : null,
+      discovery.summary ? `  סיכום: ${discovery.summary}` : null,
+      discovery.actionHint ? `  פעולה מוצעת: ${discovery.actionHint}` : null,
+      discovery.attachmentFilename ? `  קובץ מצורף: ${discovery.attachmentFilename}` : null,
+    ].filter(Boolean).join("\n");
+  }).join("\n");
 }
 
 function selectRelevantCoverages(policy: AssistantAnalysis, signals: QuestionSignals) {
@@ -821,6 +954,7 @@ function buildHouseholdSnapshot(params: {
   profile: any;
   analyses: AssistantAnalysis[];
   invoices: AssistantInvoice[];
+  insuranceDiscoveries: AssistantInsuranceDiscovery[];
   familyMembers: AssistantFamilyMember[];
   gmailConnections: Array<{ id: number }>;
   documentClassifications: AssistantDocumentClassification[];
@@ -834,6 +968,7 @@ function buildHouseholdSnapshot(params: {
     `- Gmail מחובר: ${params.gmailConnections.length > 0 ? "כן" : "לא"}`,
     `- מספר פוליסות שנותחו: ${completedAnalyses.length}`,
     `- מספר תנועות כספיות: ${params.invoices.length}`,
+    `- ממצאים ביטוחיים מהמייל: ${params.insuranceDiscoveries.length}`,
     `- מספר בני בית מנוהלים: ${params.familyMembers.length + 1}`,
     `- מסמכים זמינים או מסווגים: ${documentCount}`,
     currentMonth
@@ -966,6 +1101,7 @@ export function buildAssistantHomeContext(params: {
   profile: any;
   analyses: AssistantAnalysis[];
   invoices: AssistantInvoice[];
+  insuranceDiscoveries: AssistantInsuranceDiscovery[];
   familyMembers: AssistantFamilyMember[];
   gmailConnections: Array<{ id: number }>;
   documentClassifications: AssistantDocumentClassification[];
@@ -975,6 +1111,9 @@ export function buildAssistantHomeContext(params: {
   const currentMonth = monthlySummary[0] ?? null;
   const pendingInvoices = params.invoices.filter((invoice) => invoice.status === "pending" || invoice.status === "overdue");
   const documentCount = getDocumentCount(params.analyses, params.invoices, params.documentClassifications);
+  const renewalDiscoveries = params.insuranceDiscoveries.filter((discovery) => discovery.artifactType === "renewal_notice");
+  const premiumDiscoveries = params.insuranceDiscoveries.filter((discovery) => discovery.artifactType === "premium_notice");
+  const policyDocumentsFromMail = params.insuranceDiscoveries.filter((discovery) => discovery.artifactType === "policy_document");
   const upcomingRenewals = completedAnalyses
     .map((analysis) => {
       const endDate = parsePolicyDate(analysis.analysisResult?.generalInfo?.endDate);
@@ -1007,6 +1146,14 @@ export function buildAssistantHomeContext(params: {
     });
   }
 
+  if (params.insuranceDiscoveries.length > 0) {
+    chips.push({
+      label: `${params.insuranceDiscoveries.length} גילויי ביטוח מהמייל`,
+      tone: "info",
+    });
+    prompts.push("אילו מסמכי ביטוח או חידושים זוהו לי מהמייל ועדיין צריך לבדוק?");
+  }
+
   if (pendingInvoices.length > 0) {
     chips.push({
       label: `${pendingInvoices.length} תשלומים פתוחים`,
@@ -1026,6 +1173,27 @@ export function buildAssistantHomeContext(params: {
       description: `${upcomingRenewals[0].title} מתקרבת לחידוש בעוד ${upcomingRenewals[0].daysLeft} ימים.`,
       tone: "info",
     });
+  }
+
+  if (renewalDiscoveries.length > 0) {
+    highlights.push({
+      title: "זוהה חידוש ביטוחי מהמייל",
+      description: `${renewalDiscoveries[0].provider || "גוף ביטוחי"} שלח מייל חידוש שכדאי לעבור עליו.`,
+      tone: "info",
+    });
+    prompts.push("יש חידוש ביטוחי מהמייל שכדאי לטפל בו עכשיו?");
+  }
+
+  if (premiumDiscoveries.length > 0 && completedAnalyses.length === 0) {
+    highlights.push({
+      title: "המייל כבר חושף שיש ביטוחים פעילים",
+      description: `זוהו ${premiumDiscoveries.length} עדכוני פרמיה ביטוחיים, גם אם עדיין לא נטענו פוליסות מלאות לתיק.`,
+      tone: "warning",
+    });
+  }
+
+  if (policyDocumentsFromMail.length > 0) {
+    prompts.push("אילו מסמכי פוליסה כבר זוהו לי מהמייל ואיך הם משתלבים בתיק?");
   }
 
   if (familyMembersCount > 0) {
@@ -1101,6 +1269,7 @@ export function buildAssistantSystemPrompt(params: {
   profile: any;
   analyses: AssistantAnalysis[];
   invoices: AssistantInvoice[];
+  insuranceDiscoveries: AssistantInsuranceDiscovery[];
   familyMembers: AssistantFamilyMember[];
   gmailConnections: Array<{ id: number }>;
   documentClassifications: AssistantDocumentClassification[];
@@ -1113,6 +1282,7 @@ export function buildAssistantSystemPrompt(params: {
   const currentMonth = monthlySummary[0] ?? null;
   const relevantPolicies = pickRelevantPolicies(completedAnalyses, signals);
   const relevantInvoices = pickRelevantInvoices(params.invoices, signals);
+  const relevantInsuranceDiscoveries = pickRelevantInsuranceDiscoveries(params.insuranceDiscoveries, signals);
   const relevantDocuments = pickRelevantDocuments(params.documentClassifications, signals);
 
   const metaBase = {
@@ -1147,7 +1317,7 @@ export function buildAssistantSystemPrompt(params: {
 אם אפשר, סיים כל תשובה בהמלצה קצרה לפעולה הבאה.
 אל תמציא נתונים שלא קיימים.
 אל תתן ייעוץ משפטי, ביטוחי או פיננסי מחייב. תסביר, תסכם ותמליץ בזהירות.
-אם השאלה ביטוחית, תעדף את פרטי הפוליסות הרלוונטיות, הכיסויים, המגבלות, ההחרגות ותקופות האכשרה.
+אם השאלה ביטוחית, תעדף את פרטי הפוליסות הרלוונטיות, הכיסויים, המגבלות, ההחרגות, תקופות האכשרה וגם ממצאי Gmail ביטוחיים רלוונטיים.
 אם השאלה משלבת בין תחומים, חבר במפורש בין ביטוחים, כסף, משפחה ומסמכים במקום לענות על כל תחום בנפרד.
 אם נשאלת שאלה על ילד, בן משפחה או מצב אישי, בדוק גם את פרופיל הלקוח וגם את מודל המשפחה לפני המענה.
 
@@ -1184,6 +1354,9 @@ ${currentMonth ? `- הוצאות ${formatMonthLabel(currentMonth.month)}: ${form
 
 תנועות או מסמכים כספיים רלוונטיים:
 ${formatRelevantInvoicesSection(relevantInvoices)}
+
+ממצאים ביטוחיים מהמייל שרלוונטיים לשאלה:
+${formatRelevantInsuranceDiscoveriesSection(relevantInsuranceDiscoveries)}
 
 מסמכים:
 ${documentSummary}

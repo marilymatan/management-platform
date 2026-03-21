@@ -108,7 +108,7 @@ export function inferInsuranceCategory(policyType?: string, coverages?: Coverage
 }
 
 /** Status of a file in the upload queue */
-export type FileStatus = "pending" | "uploading" | "uploaded" | "analyzing" | "done" | "error";
+export type FileStatus = "pending" | "uploading" | "queued" | "processing" | "done" | "error";
 
 /** Uploaded file metadata */
 export interface UploadedFile {
@@ -118,4 +118,5 @@ export interface UploadedFile {
   status: FileStatus;
   url?: string;
   error?: string;
+  _file?: File;
 }

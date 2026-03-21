@@ -102,6 +102,7 @@ export default function Dashboard() {
   };
 
   const completedAnalyses = analyses?.filter(a => a.status === "completed") || [];
+  const inFlightAnalyses = analyses?.filter(a => a.status === "pending" || a.status === "processing") || [];
   const totalCoverages = completedAnalyses.reduce(
     (sum, a) => sum + (a.analysisResult?.coverages?.length || 0), 0
   );
@@ -173,6 +174,22 @@ export default function Dashboard() {
           </Card>
         ))}
       </div>
+
+      {inFlightAnalyses.length > 0 && (
+        <Card className="mb-8 border-primary/20 bg-primary/5 animate-fade-in-up">
+          <CardContent className="py-4 flex items-center justify-between gap-4 flex-wrap">
+            <div>
+              <p className="text-sm font-semibold text-foreground">יש לך {inFlightAnalyses.length} סריקות בעיבוד ברקע</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                אפשר לפתוח כל סריקה כדי לראות סטטוס, לרענן או לנסות שוב במקרה של שגיאה.
+              </p>
+            </div>
+            <Button variant="outline" size="sm" onClick={() => utils.policy.getUserAnalyses.invalidate()}>
+              רענן רשימה
+            </Button>
+          </CardContent>
+        </Card>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8 animate-fade-in-up stagger-5">
         <button
@@ -250,7 +267,13 @@ export default function Dashboard() {
                         {getStatusBadge(analysis.status)}
                       </div>
                       <p className="text-xs text-muted-foreground truncate">
-                        {analysis.analysisResult?.summary || "אין סיכום זמין"}
+                        {analysis.status === "completed"
+                          ? analysis.analysisResult?.summary || "אין סיכום זמין"
+                          : analysis.status === "error"
+                            ? analysis.errorMessage || "הסריקה נכשלה. אפשר לפתוח ולנסות שוב."
+                            : analysis.status === "processing"
+                              ? "לומי מעבד עכשיו את הקבצים ברקע"
+                              : "הקבצים נשמרו וממתינים לעיבוד"}
                       </p>
                     </div>
 
@@ -272,17 +295,17 @@ export default function Dashboard() {
                     </div>
 
                     <div className="flex items-center gap-1.5 shrink-0">
-                      {analysis.status === "completed" && (
-                        <Button
-                          onClick={() => setLocation(`/analysis/${analysis.sessionId}`)}
-                          variant="default"
-                          size="sm"
-                          className="gap-1.5 h-8"
-                        >
-                          <Eye className="size-3.5" />
-                          <span className="hidden sm:inline">צפה</span>
-                        </Button>
-                      )}
+                      <Button
+                        onClick={() => setLocation(`/insurance/${analysis.sessionId}`)}
+                        variant="default"
+                        size="sm"
+                        className="gap-1.5 h-8"
+                      >
+                        <Eye className="size-3.5" />
+                        <span className="hidden sm:inline">
+                          {analysis.status === "completed" ? "צפה" : analysis.status === "error" ? "נסה שוב" : "סטטוס"}
+                        </span>
+                      </Button>
                       <AlertDialog>
                         <AlertDialogTrigger asChild>
                           <Button

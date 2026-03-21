@@ -1,5 +1,7 @@
 import "dotenv/config";
+import crypto from "crypto";
 import express from "express";
+import fs from "fs";
 import type { Request, Response, NextFunction } from "express";
 import { createServer } from "http";
 import path from "path";
@@ -12,6 +14,8 @@ import { registerGmailCallbackRoute } from "../gmailCallback";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
+import { policyAnalysisWorker } from "../policyAnalysisWorker";
+import { registerPolicyUploadRoute } from "../policyUploadRoute";
 import { registerSecurityMiddleware } from "../security";
 import { ENV } from "./env";
 import { verifyFileSignature } from "../storage";
@@ -46,14 +50,18 @@ async function runMigrations() {
       console.log("[Migrate] Migration 0002 applied");
     }
 
-    const allMigrations = [
-      { hash: "d44a864d46ccc0cb528b32ccceb823a3ca15b497c2f01a168b211a7e09f6e3e4", when: 1773946209358 },
-      { hash: "88b794cb33faeae8a30e62f7770479e05520693869d7ad5faf8b0d107ef12503", when: 1773947415674 },
-      { hash: "598c7bc6eb7a745152b6028f1bc6816f0ee304568a5933011d08e42c3413f5de", when: 1773952814543 },
-      { hash: "580f14d6fe5881adc181e598a2e556d5722b30196080cb2c502c65089470b9e3", when: 1773953361210 },
-      { hash: "1f86269cd68cc53cc50f8531b3d1775e1c8b01d3dc14f15efa7623bb4dc931f8", when: 1773954322547 },
-      { hash: "598c769587b4cd5981fa6db3cd80a51367ca5742670281836548f076ddc3c921", when: 1773955965766 },
-    ];
+    const journalPath = path.resolve(process.cwd(), "drizzle/meta/_journal.json");
+    const migrationJournal = JSON.parse(fs.readFileSync(journalPath, "utf8")) as {
+      entries: Array<{ tag: string; when: number }>;
+    };
+    const allMigrations = migrationJournal.entries.map((entry) => {
+      const migrationPath = path.resolve(process.cwd(), "drizzle", `${entry.tag}.sql`);
+      const hash = crypto
+        .createHash("sha256")
+        .update(fs.readFileSync(migrationPath))
+        .digest("hex");
+      return { hash, when: entry.when };
+    });
 
     const tracked = await db.execute(
       sql`SELECT count(*)::int as cnt FROM "drizzle"."__drizzle_migrations"`
@@ -102,6 +110,7 @@ async function startServer() {
 
   registerOAuthRoutes(app);
   registerGmailCallbackRoute(app);
+  registerPolicyUploadRoute(app);
 
   const storagePath = path.resolve(ENV.storagePath || "./data/uploads");
   app.use(
@@ -142,6 +151,8 @@ async function startServer() {
   }
 
   const port = parseInt(process.env.PORT || "3000");
+
+  policyAnalysisWorker.start();
 
   server.listen(port, "0.0.0.0", () => {
     console.log(`[Boot] Server running on http://0.0.0.0:${port}/`);

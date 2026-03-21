@@ -139,6 +139,31 @@ const COUNTERPARTY_ROLE_LABELS: Record<string, string> = {
   unknown: "לא ידוע",
 };
 
+const INSURANCE_DISCOVERY_LABELS: Record<string, string> = {
+  policy_document: "מסמך פוליסה",
+  renewal_notice: "חידוש",
+  premium_notice: "פרמיה",
+  coverage_update: "עדכון כיסוי",
+  claim_update: "תביעה",
+  other: "איתות כללי",
+};
+
+const INSURANCE_DISCOVERY_BADGES: Record<string, string> = {
+  policy_document: "bg-blue-50 text-blue-700 border-blue-200",
+  renewal_notice: "bg-amber-50 text-amber-700 border-amber-200",
+  premium_notice: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  coverage_update: "bg-violet-50 text-violet-700 border-violet-200",
+  claim_update: "bg-rose-50 text-rose-700 border-rose-200",
+  other: "bg-slate-50 text-slate-700 border-slate-200",
+};
+
+const INSURANCE_CATEGORY_LABELS: Record<string, string> = {
+  health: "בריאות",
+  life: "חיים",
+  car: "רכב",
+  home: "דירה",
+};
+
 const HEBREW_MONTHS: Record<string, string> = {
   "01": "ינואר", "02": "פברואר", "03": "מרץ", "04": "אפריל",
   "05": "מאי", "06": "יוני", "07": "יולי", "08": "אוגוסט",
@@ -222,6 +247,23 @@ type Invoice = {
   extractedData?: unknown;
 };
 
+type InsuranceDiscovery = {
+  id: number;
+  provider?: string | null;
+  insuranceCategory?: string | null;
+  artifactType?: string | null;
+  confidence?: number | null;
+  premiumAmount?: number | null;
+  policyNumber?: string | null;
+  documentDate?: string | Date | null;
+  subject?: string | null;
+  summary?: string | null;
+  actionHint?: string | null;
+  attachmentFilename?: string | null;
+  attachmentUrl?: string | null;
+  extractedData?: unknown;
+};
+
 function getEffectiveCategory(inv: Invoice): string {
   return inv.customCategory ?? inv.category ?? "אחר";
 }
@@ -278,6 +320,9 @@ export default function SmartInvoices() {
   const { data: invoices, isLoading: invoicesLoading, error: invoicesError } =
     trpc.gmail.getInvoices.useQuery({ limit: 100 }, { enabled: !!user, retry: 2 });
 
+  const { data: insuranceDiscoveries } =
+    trpc.gmail.getInsuranceDiscoveries.useQuery({ limit: 30 }, { enabled: !!user, retry: 2 });
+
   const { data: monthlySummary } = trpc.gmail.getMonthlySummary.useQuery(undefined, {
     enabled: !!user,
   });
@@ -302,9 +347,10 @@ export default function SmartInvoices() {
     onSuccess: (result) => {
       setIsScanning(false);
       toast.success(
-        `סריקה הושלמה — נסרקו ${result.scanned} מיילים, נמצאו ${result.found} חשבוניות, נשמרו ${result.saved} חדשות.`
+        `סריקה הושלמה — נסרקו ${result.scanned} מיילים, נשמרו ${result.saved} חשבוניות ו-${result.discoveriesSaved} ממצאים ביטוחיים.`
       );
       utils.gmail.getInvoices.invalidate();
+      utils.gmail.getInsuranceDiscoveries.invalidate();
       utils.gmail.getMonthlySummary.invalidate();
       utils.gmail.connectionStatus.invalidate();
     },
@@ -318,9 +364,10 @@ export default function SmartInvoices() {
     onSuccess: (result) => {
       setIsScanning(false);
       toast.success(
-        `סריקה מחדש הושלמה — נסרקו ${result.scanned} מיילים, נמצאו ${result.found} חשבוניות, נשמרו ${result.saved}.`
+        `סריקה מחדש הושלמה — נשמרו ${result.saved} חשבוניות ו-${result.discoveriesSaved} ממצאים ביטוחיים.`
       );
       utils.gmail.getInvoices.invalidate();
+      utils.gmail.getInsuranceDiscoveries.invalidate();
       utils.gmail.getMonthlySummary.invalidate();
       utils.gmail.connectionStatus.invalidate();
     },
@@ -583,6 +630,18 @@ export default function SmartInvoices() {
     return insights.slice(0, 3);
   }, [invoices, monthlySummary, profileData]);
 
+  const discoveryItems = useMemo(
+    () => ((insuranceDiscoveries ?? []) as InsuranceDiscovery[]),
+    [insuranceDiscoveries]
+  );
+
+  const insuranceDiscoverySummary = useMemo(() => ({
+    total: discoveryItems.length,
+    withAttachment: discoveryItems.filter((item) => Boolean(item.attachmentUrl)).length,
+    renewals: discoveryItems.filter((item) => item.artifactType === "renewal_notice").length,
+    premiums: discoveryItems.filter((item) => item.artifactType === "premium_notice").length,
+  }), [discoveryItems]);
+
   return (
     <div className="page-container" data-testid="money-page">
       <div className="relative overflow-hidden rounded-2xl bg-gradient-to-bl from-[#1a2744] via-[#1e3a5f] to-[#2563eb] text-white mb-6 animate-fade-in-up">
@@ -597,7 +656,7 @@ export default function SmartInvoices() {
               </div>
               <div>
                 <h1 className="text-2xl font-bold tracking-tight">הוצאות והכנסות</h1>
-                <p className="text-sm text-white/70 mt-0.5">מסמכים כספיים חכמים, סיווג תזרים וסריקת מיילים</p>
+                <p className="text-sm text-white/70 mt-0.5">מסמכים כספיים חכמים, גילוי ביטוחי וסריקת מיילים</p>
               </div>
             </div>
             <Button
@@ -929,6 +988,145 @@ export default function SmartInvoices() {
                     </Card>
                   ))}
                 </div>
+              </div>
+            )}
+
+            {connectionStatus?.connected && (
+              <div className="animate-fade-in-up stagger-2 space-y-3" data-testid="insurance-discovery-section">
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <div className="flex items-center gap-2">
+                    <ShieldCheck className="size-4 text-emerald-500" />
+                    <h2 className="text-sm font-semibold">ממצאי ביטוח מהמייל</h2>
+                  </div>
+                  <Button variant="outline" size="sm" onClick={() => navigate("/insurance")} className="gap-1.5">
+                    <ShieldCheck className="size-4" />
+                    למרכז הביטוחים
+                  </Button>
+                </div>
+
+                {discoveryItems.length > 0 ? (
+                  <>
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                      <Card>
+                        <CardContent className="pt-5 pb-4">
+                          <p className="text-[11px] text-muted-foreground">ממצאים ביטוחיים</p>
+                          <p className="text-2xl font-bold mt-1">{insuranceDiscoverySummary.total}</p>
+                        </CardContent>
+                      </Card>
+                      <Card>
+                        <CardContent className="pt-5 pb-4">
+                          <p className="text-[11px] text-muted-foreground">עם מסמך מצורף</p>
+                          <p className="text-2xl font-bold mt-1">{insuranceDiscoverySummary.withAttachment}</p>
+                        </CardContent>
+                      </Card>
+                      <Card>
+                        <CardContent className="pt-5 pb-4">
+                          <p className="text-[11px] text-muted-foreground">עדכוני פרמיה</p>
+                          <p className="text-2xl font-bold mt-1">{insuranceDiscoverySummary.premiums}</p>
+                        </CardContent>
+                      </Card>
+                      <Card>
+                        <CardContent className="pt-5 pb-4">
+                          <p className="text-[11px] text-muted-foreground">חידושים קרובים</p>
+                          <p className="text-2xl font-bold mt-1">{insuranceDiscoverySummary.renewals}</p>
+                        </CardContent>
+                      </Card>
+                    </div>
+
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                      {discoveryItems.map((item) => {
+                        const discoveryDate = item.documentDate ? new Date(item.documentDate) : null;
+                        const isValidDate = discoveryDate && !Number.isNaN(discoveryDate.getTime());
+                        return (
+                          <Card key={item.id} className="border-border/70" data-testid={`insurance-discovery-card-${item.id}`}>
+                            <CardContent className="p-4 space-y-3">
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="space-y-1 min-w-0">
+                                  <p className="text-sm font-semibold truncate">{item.provider || "גוף ביטוחי"}</p>
+                                  <p className="text-xs text-muted-foreground leading-relaxed">
+                                    {item.summary || item.subject || "זוהה מסר ביטוחי מהמייל"}
+                                  </p>
+                                </div>
+                                <Badge
+                                  variant="outline"
+                                  className={INSURANCE_DISCOVERY_BADGES[item.artifactType || "other"] ?? INSURANCE_DISCOVERY_BADGES.other}
+                                >
+                                  {INSURANCE_DISCOVERY_LABELS[item.artifactType || "other"] ?? INSURANCE_DISCOVERY_LABELS.other}
+                                </Badge>
+                              </div>
+
+                              <div className="flex items-center gap-2 flex-wrap">
+                                {item.insuranceCategory && (
+                                  <Badge variant="secondary">
+                                    {INSURANCE_CATEGORY_LABELS[item.insuranceCategory] ?? item.insuranceCategory}
+                                  </Badge>
+                                )}
+                                {item.policyNumber && (
+                                  <Badge variant="outline" className="gap-1">
+                                    <Hash className="w-3 h-3" />
+                                    {item.policyNumber}
+                                  </Badge>
+                                )}
+                                {item.premiumAmount != null && (
+                                  <Badge variant="outline">
+                                    ₪{Number(item.premiumAmount).toLocaleString("he-IL")}
+                                  </Badge>
+                                )}
+                                {isValidDate && (
+                                  <Badge variant="outline" className="gap-1">
+                                    <Calendar className="w-3 h-3" />
+                                    {discoveryDate.toLocaleDateString("he-IL")}
+                                  </Badge>
+                                )}
+                              </div>
+
+                              {item.actionHint && (
+                                <div className="rounded-xl bg-muted/30 border border-border/60 px-3 py-2">
+                                  <p className="text-xs text-muted-foreground">{item.actionHint}</p>
+                                </div>
+                              )}
+
+                              <div className="flex items-center justify-between gap-3 flex-wrap">
+                                <p className="text-[11px] text-muted-foreground">
+                                  {item.attachmentFilename ? `קובץ: ${item.attachmentFilename}` : "ללא קובץ מצורף"}
+                                </p>
+                                <div className="flex items-center gap-2">
+                                  {item.attachmentUrl && (
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={() => window.open(item.attachmentUrl || "", "_blank", "noopener,noreferrer")}
+                                      className="gap-1.5"
+                                    >
+                                      <Download className="w-3.5 h-3.5" />
+                                      פתח מסמך
+                                    </Button>
+                                  )}
+                                  <Button variant="ghost" size="sm" onClick={() => navigate("/assistant")} className="gap-1.5">
+                                    <Sparkles className="w-3.5 h-3.5" />
+                                    שאל את לומי
+                                  </Button>
+                                </div>
+                              </div>
+                            </CardContent>
+                          </Card>
+                        );
+                      })}
+                    </div>
+                  </>
+                ) : (
+                  <Card className="border-dashed">
+                    <CardContent className="py-10 text-center">
+                      <div className="size-12 rounded-2xl bg-muted/60 flex items-center justify-center mx-auto mb-3">
+                        <ShieldCheck className="size-6 text-muted-foreground/40" />
+                      </div>
+                      <p className="text-sm font-medium">עדיין לא זוהו ממצאים ביטוחיים מהמייל</p>
+                      <p className="text-xs text-muted-foreground mt-1 max-w-md mx-auto">
+                        סרוק תקופה רחבה יותר או חבר חשבון נוסף כדי שלומי יזהה פוליסות, חידושים, פרמיות וקבצים ביטוחיים.
+                      </p>
+                    </CardContent>
+                  </Card>
+                )}
               </div>
             )}
 

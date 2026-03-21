@@ -100,6 +100,9 @@ export default function Insurance() {
     () => buildInsuranceOverview(analyses as any[] | undefined, profileQuery.data),
     [analyses, profileQuery.data]
   );
+  const inFlightAnalyses = analyses?.filter(
+    (analysis) => analysis.status === "pending" || analysis.status === "processing"
+  ) ?? [];
 
   if (!user) return null;
 
@@ -202,6 +205,25 @@ export default function Insurance() {
           </div>
         ))}
       </div>
+
+      {inFlightAnalyses.length > 0 && (
+        <Card className="border-primary/20 bg-primary/5 animate-fade-in-up">
+          <CardContent className="p-5 flex items-center justify-between gap-4 flex-wrap">
+            <div>
+              <p className="text-sm font-semibold text-foreground">יש כרגע {inFlightAnalyses.length} פוליסות בעיבוד ברקע</p>
+              <p className="text-sm text-muted-foreground mt-1">
+                הנתונים יופיעו אוטומטית במסך הזה ברגע שהסריקות יושלמו.
+              </p>
+            </div>
+            <Button
+              variant="outline"
+              onClick={() => setLocation(`/insurance/${inFlightAnalyses[0].sessionId}`)}
+            >
+              פתח סטטוס
+            </Button>
+          </CardContent>
+        </Card>
+      )}
 
       {overview.insights.length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 animate-fade-in-up stagger-5" data-testid="insurance-insights">

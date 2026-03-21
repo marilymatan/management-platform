@@ -26,9 +26,22 @@ vi.mock("./gmail", async (importOriginal) => {
       scanned: 10,
       found: 3,
       saved: 2,
+      discoveriesFound: 2,
+      discoveriesSaved: 2,
       invoices: [
         { provider: "בזק", amount: 199.9, category: "תקשורת", flowDirection: "expense", date: "2026-03-01", subject: "חשבונית בזק", description: "חשבון חודשי לשירותי אינטרנט ותקשורת" },
         { provider: "חברת החשמל", amount: 450, category: "חשמל", flowDirection: "expense", date: "2026-03-05", subject: "חשבון חשמל", description: "חשבון חשמל חודשי" },
+      ],
+      discoveries: [
+        {
+          provider: "הראל",
+          insuranceCategory: "health",
+          artifactType: "premium_notice",
+          summary: "זוהה עדכון פרמיה לביטוח בריאות",
+          actionHint: "כדאי לבדוק שהחיוב מתאים לפוליסה",
+          policyNumber: "12345",
+          monthlyPremium: 210,
+        },
       ],
     }),
     verifyGmailScopes: vi.fn().mockResolvedValue(true),
@@ -68,7 +81,10 @@ describe("Gmail integration", () => {
       expect(result).toHaveProperty("scanned");
       expect(result).toHaveProperty("found");
       expect(result).toHaveProperty("saved");
+      expect(result).toHaveProperty("discoveriesFound");
+      expect(result).toHaveProperty("discoveriesSaved");
       expect(result).toHaveProperty("invoices");
+      expect(result).toHaveProperty("discoveries");
       expect(Array.isArray(result.invoices)).toBe(true);
     });
 
@@ -88,6 +104,17 @@ describe("Gmail integration", () => {
       const firstInvoice = result.invoices[0];
       expect(firstInvoice).toHaveProperty("description");
       expect(typeof firstInvoice.description).toBe("string");
+    });
+
+    it("should return insurance discoveries with artifact metadata", async () => {
+      const { scanGmailForInvoices } = await import("./gmail");
+      const result = await scanGmailForInvoices(1, 7);
+      const firstDiscovery = result.discoveries[0];
+      expect(firstDiscovery).toHaveProperty("provider");
+      expect(firstDiscovery).toHaveProperty("insuranceCategory");
+      expect(firstDiscovery).toHaveProperty("artifactType");
+      expect(firstDiscovery).toHaveProperty("summary");
+      expect(firstDiscovery).toHaveProperty("actionHint");
     });
 
     it("should not save more than found", async () => {

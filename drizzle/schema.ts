@@ -13,6 +13,12 @@ export const employmentStatusEnum = pgEnum("employment_status", ["salaried", "se
 export const incomeRangeEnum = pgEnum("income_range", ["below_5k", "5k_10k", "10k_15k", "15k_25k", "25k_40k", "above_40k"]);
 export const genderEnum = pgEnum("gender", ["male", "female", "other"]);
 export const insuranceCategoryEnum = pgEnum("insurance_category_type", ["health", "life", "car", "home"]);
+export const insuranceArtifactTypeEnum = pgEnum("insurance_artifact_type", ["policy_document", "renewal_notice", "premium_notice", "coverage_update", "claim_update", "other"]);
+export const savingsOpportunityTypeEnum = pgEnum("savings_opportunity_type", ["duplicate", "overpriced", "unnecessary", "gap"]);
+export const savingsOpportunityStatusEnum = pgEnum("savings_opportunity_status", ["open", "completed", "dismissed"]);
+export const actionItemTypeEnum = pgEnum("action_item_type", ["savings", "renewal", "gap", "monitoring"]);
+export const actionItemStatusEnum = pgEnum("action_item_status", ["pending", "completed", "dismissed"]);
+export const priorityLevelEnum = pgEnum("priority_level", ["high", "medium", "low"]);
 export const familyMemberRelationEnum = pgEnum("family_member_relation", ["spouse", "child", "parent", "dependent", "other"]);
 export const documentSourceTypeEnum = pgEnum("document_source_type", ["analysis_file", "invoice_pdf"]);
 export const documentManualTypeEnum = pgEnum("document_manual_type", ["insurance", "money", "health", "education", "family", "other"]);
@@ -42,12 +48,19 @@ export const analyses = pgTable("analyses", {
   extractedText: text("extracted_text"),
   analysisResult: text("analysis_result"),
   status: analysisStatusEnum("status").default("pending").notNull(),
+  attemptCount: integer("attempt_count").default(0).notNull(),
+  lockedBy: varchar("locked_by", { length: 128 }),
+  lastHeartbeatAt: timestamp("last_heartbeat_at"),
+  startedAt: timestamp("started_at"),
+  completedAt: timestamp("completed_at"),
+  nextRetryAt: timestamp("next_retry_at"),
   insuranceCategory: insuranceCategoryEnum("insurance_category"),
   errorMessage: text("error_message"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull().$onUpdate(() => new Date()),
 }, (table) => ({
   userIdIdx: index("analyses_user_id_idx").on(table.userId),
+  statusIdx: index("analyses_status_idx").on(table.status, table.nextRetryAt, table.createdAt),
 }));
 
 export type Analysis = typeof analyses.$inferSelect;
@@ -134,6 +147,38 @@ export const smartInvoices = pgTable("smart_invoices", {
 export type SmartInvoice = typeof smartInvoices.$inferSelect;
 export type InsertSmartInvoice = typeof smartInvoices.$inferInsert;
 
+export const insuranceArtifacts = pgTable("insurance_artifacts", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull(),
+  gmailConnectionId: integer("gmail_connection_id"),
+  sourceEmail: varchar("source_email", { length: 320 }),
+  gmailMessageId: varchar("gmail_message_id", { length: 128 }).notNull(),
+  provider: varchar("provider", { length: 128 }),
+  insuranceCategory: insuranceCategoryEnum("insurance_category"),
+  artifactType: insuranceArtifactTypeEnum("artifact_type").default("other").notNull(),
+  confidence: numeric("confidence", { precision: 4, scale: 3 }).default("0").notNull(),
+  premiumAmount: numeric("premium_amount", { precision: 10, scale: 2 }),
+  policyNumber: text("policy_number"),
+  documentDate: timestamp("document_date"),
+  subject: text("subject"),
+  summary: text("summary"),
+  actionHint: text("action_hint"),
+  attachmentFilename: varchar("attachment_filename", { length: 255 }),
+  attachmentFileKey: text("attachment_file_key"),
+  extractedData: text("extracted_data"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull().$onUpdate(() => new Date()),
+}, (table) => ({
+  userIdIdx: index("insurance_artifacts_user_id_idx").on(table.userId),
+  categoryIdx: index("insurance_artifacts_category_idx").on(table.userId, table.insuranceCategory),
+  artifactTypeIdx: index("insurance_artifacts_type_idx").on(table.userId, table.artifactType),
+  messageDateIdx: index("insurance_artifacts_document_date_idx").on(table.documentDate, table.createdAt),
+  userMessageUniq: uniqueIndex("insurance_artifacts_user_message_uniq").on(table.userId, table.gmailMessageId),
+}));
+
+export type InsuranceArtifact = typeof insuranceArtifacts.$inferSelect;
+export type InsertInsuranceArtifact = typeof insuranceArtifacts.$inferInsert;
+
 export const categoryMappings = pgTable("category_mappings", {
   id: serial("id").primaryKey(),
   userId: integer("user_id").notNull(),
@@ -189,6 +234,7 @@ export const userProfiles = pgTable("user_profiles", {
   businessTaxId: text("business_tax_id"),
   businessEmailDomains: text("business_email_domains"),
   profileImageKey: text("profile_image_key"),
+  onboardingCompleted: boolean("onboarding_completed").default(false).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull().$onUpdate(() => new Date()),
 }, (table) => ({
@@ -254,3 +300,87 @@ export const categorySummaryCache = pgTable("category_summary_cache", {
 
 export type CategorySummaryCache = typeof categorySummaryCache.$inferSelect;
 export type InsertCategorySummaryCache = typeof categorySummaryCache.$inferInsert;
+
+export const insuranceScoreHistory = pgTable("insurance_score_history", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull(),
+  score: integer("score").notNull(),
+  breakdown: jsonb("breakdown").notNull(),
+  totalMonthlySpend: numeric("total_monthly_spend", { precision: 10, scale: 2 }).default("0").notNull(),
+  potentialSavings: numeric("potential_savings", { precision: 10, scale: 2 }).default("0").notNull(),
+  calculatedAt: timestamp("calculated_at").defaultNow().notNull(),
+}, (table) => ({
+  userIdIdx: index("insurance_score_history_user_id_idx").on(table.userId, table.calculatedAt),
+}));
+
+export type InsuranceScoreHistory = typeof insuranceScoreHistory.$inferSelect;
+export type InsertInsuranceScoreHistory = typeof insuranceScoreHistory.$inferInsert;
+
+export const savingsOpportunities = pgTable("savings_opportunities", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull(),
+  opportunityKey: varchar("opportunity_key", { length: 160 }).notNull(),
+  type: savingsOpportunityTypeEnum("type").notNull(),
+  title: text("title").notNull(),
+  description: text("description").notNull(),
+  monthlySaving: numeric("monthly_saving", { precision: 10, scale: 2 }).default("0").notNull(),
+  annualSaving: numeric("annual_saving", { precision: 10, scale: 2 }).default("0").notNull(),
+  priority: priorityLevelEnum("priority").default("medium").notNull(),
+  actionSteps: jsonb("action_steps").notNull(),
+  relatedSessionIds: jsonb("related_session_ids").notNull(),
+  status: savingsOpportunityStatusEnum("status").default("open").notNull(),
+  dataHash: varchar("data_hash", { length: 128 }).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull().$onUpdate(() => new Date()),
+  completedAt: timestamp("completed_at"),
+}, (table) => ({
+  userIdIdx: index("savings_opportunities_user_id_idx").on(table.userId, table.status),
+  userKeyUniq: uniqueIndex("savings_opportunities_user_key_uniq").on(table.userId, table.opportunityKey),
+}));
+
+export type SavingsOpportunity = typeof savingsOpportunities.$inferSelect;
+export type InsertSavingsOpportunity = typeof savingsOpportunities.$inferInsert;
+
+export const actionItems = pgTable("action_items", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull(),
+  actionKey: varchar("action_key", { length: 160 }).notNull(),
+  savingsOpportunityId: integer("savings_opportunity_id"),
+  type: actionItemTypeEnum("type").notNull(),
+  title: text("title").notNull(),
+  description: text("description").notNull(),
+  instructions: jsonb("instructions").notNull(),
+  potentialSaving: numeric("potential_saving", { precision: 10, scale: 2 }).default("0").notNull(),
+  priority: priorityLevelEnum("priority").default("medium").notNull(),
+  status: actionItemStatusEnum("status").default("pending").notNull(),
+  dueDate: timestamp("due_date"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull().$onUpdate(() => new Date()),
+  completedAt: timestamp("completed_at"),
+}, (table) => ({
+  userIdIdx: index("action_items_user_id_idx").on(table.userId, table.status, table.priority),
+  userKeyUniq: uniqueIndex("action_items_user_key_uniq").on(table.userId, table.actionKey),
+}));
+
+export type ActionItem = typeof actionItems.$inferSelect;
+export type InsertActionItem = typeof actionItems.$inferInsert;
+
+export const monthlyReports = pgTable("monthly_reports", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull(),
+  month: varchar("month", { length: 7 }).notNull(),
+  scoreAtTime: integer("score_at_time").notNull(),
+  scoreChange: integer("score_change").default(0).notNull(),
+  changes: jsonb("changes").notNull(),
+  newActions: jsonb("new_actions").notNull(),
+  summary: text("summary").notNull(),
+  dataHash: varchar("data_hash", { length: 128 }).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull().$onUpdate(() => new Date()),
+}, (table) => ({
+  userIdIdx: index("monthly_reports_user_id_idx").on(table.userId, table.month),
+  userMonthUniq: uniqueIndex("monthly_reports_user_month_uniq").on(table.userId, table.month),
+}));
+
+export type MonthlyReport = typeof monthlyReports.$inferSelect;
+export type InsertMonthlyReport = typeof monthlyReports.$inferInsert;

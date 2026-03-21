@@ -1,14 +1,11 @@
 import fs from "fs";
+import { promises as fsPromises } from "fs";
 import path from "path";
 import crypto from "crypto";
 import { ENV } from "./_core/env";
 
 function getStoragePath(): string {
-  const storagePath = ENV.storagePath || "./data/uploads";
-  if (!fs.existsSync(storagePath)) {
-    fs.mkdirSync(storagePath, { recursive: true });
-  }
-  return storagePath;
+  return ENV.storagePath || "./data/uploads";
 }
 
 function normalizeKey(relKey: string): string {
@@ -65,20 +62,26 @@ export async function storagePut(
   const basePath = getStoragePath();
   const key = normalizeKey(relKey);
   const filePath = ensureWithinStorage(basePath, key);
-
   const dir = path.dirname(filePath);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-
+  await fsPromises.mkdir(dir, { recursive: true });
   const buffer = typeof data === "string"
     ? Buffer.from(data, "utf-8")
     : Buffer.from(data);
-
-  fs.writeFileSync(filePath, buffer);
-
+  await fsPromises.writeFile(filePath, buffer);
   const url = `/api/files/${key}`;
   return { key, url };
+}
+
+export async function createStorageWriteStream(relKey: string) {
+  const basePath = getStoragePath();
+  const key = normalizeKey(relKey);
+  const filePath = ensureWithinStorage(basePath, key);
+  await fsPromises.mkdir(path.dirname(filePath), { recursive: true });
+  return {
+    key,
+    filePath,
+    stream: fs.createWriteStream(filePath),
+  };
 }
 
 export async function storageGet(relKey: string): Promise<{ key: string; url: string }> {
@@ -93,20 +96,23 @@ export async function storageRead(relKey: string): Promise<Buffer | null> {
   const basePath = getStoragePath();
   const key = normalizeKey(relKey);
   const filePath = ensureWithinStorage(basePath, key);
-
-  if (!fs.existsSync(filePath)) {
+  try {
+    await fsPromises.access(filePath);
+  } catch {
     return null;
   }
-
-  return fs.readFileSync(filePath);
+  return fsPromises.readFile(filePath);
 }
 
 export async function storageDelete(relKey: string): Promise<void> {
   const basePath = getStoragePath();
   const key = normalizeKey(relKey);
   const filePath = ensureWithinStorage(basePath, key);
-
-  if (fs.existsSync(filePath)) {
-    fs.unlinkSync(filePath);
+  try {
+    await fsPromises.unlink(filePath);
+  } catch (error: any) {
+    if (error?.code !== "ENOENT") {
+      throw error;
+    }
   }
 }

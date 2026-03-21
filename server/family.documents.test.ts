@@ -17,6 +17,7 @@ vi.mock("./gmail", () => ({
   getAllGmailConnections: vi.fn().mockResolvedValue([]),
   disconnectGmail: vi.fn(),
   scanGmailForInvoices: vi.fn(),
+  getInsuranceDiscoveries: vi.fn().mockResolvedValue([]),
 }));
 
 let mockProfile: any = null;

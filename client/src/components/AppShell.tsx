@@ -9,9 +9,13 @@ import { trpc } from "@/lib/trpc";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   Sparkles,
+  LayoutDashboard,
   MessageSquare,
   Users,
   Shield,
+  Map,
+  PiggyBank,
+  Bell,
   Wallet,
   FolderOpen,
   Settings,
@@ -31,9 +35,13 @@ interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { label: "לומי", icon: <MessageSquare className="size-5" />, path: "/", matchPaths: ["/assistant"] },
-  { label: "המשפחה שלי", icon: <Users className="size-5" />, path: "/family" },
+  { label: "בית", icon: <LayoutDashboard className="size-5" />, path: "/", matchPaths: ["/dashboard"] },
   { label: "ביטוחים", icon: <Shield className="size-5" />, path: "/insurance" },
+  { label: "מפת ביטוח", icon: <Map className="size-5" />, path: "/insurance-map" },
+  { label: "חיסכון ופעולות", icon: <PiggyBank className="size-5" />, path: "/savings" },
+  { label: "המשפחה שלי", icon: <Users className="size-5" />, path: "/family" },
+  { label: "לומי", icon: <MessageSquare className="size-5" />, path: "/chat", matchPaths: ["/assistant"] },
+  { label: "תזכורות", icon: <Bell className="size-5" />, path: "/reminders" },
   { label: "הוצאות/הכנסות", icon: <Wallet className="size-5" />, path: "/money", matchPaths: ["/expenses"] },
   { label: "מסמכים", icon: <FolderOpen className="size-5" />, path: "/documents" },
   { label: "לוח בקרה", icon: <BarChart3 className="size-5" />, path: "/admin", adminOnly: true },
@@ -92,7 +100,7 @@ export function AppShell({ children }: AppShellProps) {
         {!collapsed && (
           <div className="min-w-0 text-right">
             <h1 className="text-base font-bold text-white truncate tracking-wide">Lumi</h1>
-            <p className="text-[11px] text-white/50">העוזר של משק הבית</p>
+            <p className="text-[11px] text-white/50">מנהלת הביטוח המשפחתי</p>
           </div>
         )}
       </button>

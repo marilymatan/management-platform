@@ -8,6 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { FileUpload } from "@/components/FileUpload";
+import { ManualPolicyEntry } from "@/components/ManualPolicyEntry";
 import { CoverageCards } from "@/components/CoverageCards";
 import { FinancialSummary } from "@/components/FinancialSummary";
 import { PolicyChatbot } from "@/components/PolicyChatbot";
@@ -64,15 +65,16 @@ function resolveSelectedFileFilter(result: PolicyAnalysis | null, requestedFileF
 }
 
 export default function Home() {
-  const { user } = useAuth({ redirectOnUnauthenticated: true });
+  useAuth({ redirectOnUnauthenticated: true });
   const [, setLocation] = useLocation();
   const [, params] = useRoute("/insurance/:sessionId");
+  const utils = trpc.useUtils();
 
   const [files, setFiles] = useState<UploadedFile[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [analysisResult, setAnalysisResult] = useState<PolicyAnalysis | null>(null);
   const [isUploading, setIsUploading] = useState(false);
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [intakeMode, setIntakeMode] = useState("upload");
   const [activeTab, setActiveTab] = useState("coverages");
   const [selectedFileFilter, setSelectedFileFilter] = useState<string | null>(null);
   const requestedSessionId = params?.sessionId && params.sessionId !== "new" ? params.sessionId : null;
@@ -80,19 +82,16 @@ export default function Home() {
   const requestedCoverageCategory = getRequestedAnalysisCoverageCategory();
   const isViewingSavedAnalysis = Boolean(requestedSessionId);
 
-  const uploadMutation = trpc.policy.upload.useMutation();
   const analyzeMutation = trpc.policy.analyze.useMutation();
   const getAnalysisQuery = trpc.policy.getAnalysis.useQuery(
     { sessionId: requestedSessionId ?? "" },
     { enabled: !!requestedSessionId, retry: false }
   );
-  const linkToUserMutation = trpc.policy.linkToUser.useMutation();
 
   useEffect(() => {
     if (!requestedSessionId) {
       setFiles([]);
       setIsUploading(false);
-      setIsAnalyzing(false);
       setActiveTab("coverages");
       setSessionId(null);
       setAnalysisResult(null);
@@ -105,19 +104,36 @@ export default function Home() {
     setActiveTab("coverages");
     setFiles([]);
     setIsUploading(false);
-    setIsAnalyzing(false);
   }, [requestedSessionId]);
 
   useEffect(() => {
-    if (!requestedSessionId || !getAnalysisQuery.data?.result) {
+    if (!requestedSessionId) {
       return;
     }
     setSessionId(requestedSessionId);
-    setAnalysisResult(getAnalysisQuery.data.result);
-    if (user && !getAnalysisQuery.data.result.generalInfo?.policyName?.includes("לא צוין")) {
-      linkToUserMutation.mutate({ sessionId: requestedSessionId });
+    if (getAnalysisQuery.data?.status === "completed" && getAnalysisQuery.data.result) {
+      setAnalysisResult(getAnalysisQuery.data.result);
+      void utils.policy.getUserAnalyses.invalidate();
+      return;
     }
-  }, [getAnalysisQuery.data?.result, requestedSessionId, user]);
+    setAnalysisResult(null);
+  }, [getAnalysisQuery.data?.result, getAnalysisQuery.data?.status, requestedSessionId, utils]);
+
+  useEffect(() => {
+    if (!requestedSessionId) {
+      return;
+    }
+    const status = getAnalysisQuery.data?.status;
+    if (status === "completed" || status === "error") {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      void getAnalysisQuery.refetch();
+    }, 3000);
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [getAnalysisQuery.data?.status, getAnalysisQuery.refetch, requestedSessionId]);
 
   useEffect(() => {
     setSelectedFileFilter(resolveSelectedFileFilter(analysisResult, requestedFileFilter));
@@ -145,55 +161,56 @@ export default function Home() {
     setFiles(prev => prev.map(f => ({ ...f, status: "uploading" as const })));
 
     try {
-      const fileData = await Promise.all(
-        files.map(async (f) => {
-          const fileObj = (f as any)._file as File;
-          const arrayBuffer = await fileObj.arrayBuffer();
-          const base64 = btoa(
-            new Uint8Array(arrayBuffer).reduce(
-              (data, byte) => data + String.fromCharCode(byte),
-              ""
-            )
-          );
-          return { name: f.name, size: f.size, base64 };
-        })
-      );
-
-      const result = await uploadMutation.mutateAsync({ files: fileData });
-      setSessionId(result.sessionId);
-      setFiles(prev => prev.map(f => ({ ...f, status: "uploaded" as const })));
-      setIsUploading(false);
-
-      setIsAnalyzing(true);
-      setFiles(prev => prev.map(f => ({ ...f, status: "analyzing" as const })));
-
-      const analysisResponse = await analyzeMutation.mutateAsync({
-        sessionId: result.sessionId,
+      const formData = new FormData();
+      files.forEach((file) => {
+        if (file._file) {
+          formData.append("files", file._file, file.name);
+        }
       });
-
-      setAnalysisResult(analysisResponse.result);
-      setFiles(prev => prev.map(f => ({ ...f, status: "done" as const })));
-      setIsAnalyzing(false);
-
-      if (user) {
-        await linkToUserMutation.mutateAsync({ sessionId: result.sessionId });
+      const response = await fetch("/api/policies/upload", {
+        method: "POST",
+        body: formData,
+        credentials: "include",
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(payload?.message || payload?.error || "שגיאה בהעלאת הקבצים");
       }
-
-      toast.success("הסריקה הושלמה בהצלחה!");
+      const result = payload as { sessionId: string };
+      setSessionId(result.sessionId);
+      setFiles(prev => prev.map(f => ({ ...f, status: "queued" as const })));
+      setIsUploading(false);
+      await utils.policy.getUserAnalyses.invalidate();
+      toast.success("הקבצים הועלו. הסריקה ממשיכה ברקע.");
+      setLocation(`/insurance/${result.sessionId}`);
     } catch (error: any) {
       setIsUploading(false);
-      setIsAnalyzing(false);
       setFiles(prev => prev.map(f => ({ ...f, status: "error" as const, error: error.message })));
-      toast.error("שגיאה בסריקת הפוליסה: " + (error.message || "נסה שוב"));
+      toast.error("שגיאה בהעלאת הפוליסה: " + (error.message || "נסה שוב"));
     }
-  }, [files, uploadMutation, analyzeMutation, user, linkToUserMutation]);
+  }, [files, setLocation, utils.policy.getUserAnalyses]);
+
+  const handleRetryAnalysis = useCallback(async () => {
+    if (!requestedSessionId) {
+      return;
+    }
+    try {
+      await analyzeMutation.mutateAsync({ sessionId: requestedSessionId });
+      await Promise.all([
+        getAnalysisQuery.refetch(),
+        utils.policy.getUserAnalyses.invalidate(),
+      ]);
+      toast.success("הסריקה חזרה לתור העיבוד.");
+    } catch (error: any) {
+      toast.error("לא הצלחנו להחזיר את הסריקה לעיבוד: " + (error.message || "נסה שוב"));
+    }
+  }, [analyzeMutation, getAnalysisQuery.refetch, requestedSessionId, utils.policy.getUserAnalyses]);
 
   const handleReset = useCallback(() => {
     setFiles([]);
     setSessionId(null);
     setAnalysisResult(null);
     setIsUploading(false);
-    setIsAnalyzing(false);
     setActiveTab("coverages");
     setSelectedFileFilter(null);
     setLocation("/insurance/new");
@@ -217,16 +234,23 @@ export default function Home() {
     window.history.replaceState(window.history.state, "", nextPath);
   }, [requestedSessionId]);
 
-  const currentStep = isAnalyzing ? 1 : analysisResult ? 2 : 0;
+  const analysisStatus = getAnalysisQuery.data?.status ?? null;
+  const currentStep = analysisResult ? 2 : 0;
   const isSavedAnalysisLoading =
     isViewingSavedAnalysis &&
     !analysisResult &&
+    !analysisStatus &&
     (getAnalysisQuery.isLoading || getAnalysisQuery.isFetching || (!getAnalysisQuery.data && !getAnalysisQuery.error));
+  const isSavedAnalysisPending =
+    isViewingSavedAnalysis &&
+    !analysisResult &&
+    (analysisStatus === "pending" || analysisStatus === "processing");
   const hasSavedAnalysisError =
     isViewingSavedAnalysis &&
     !analysisResult &&
     !isSavedAnalysisLoading &&
-    Boolean(getAnalysisQuery.error || !getAnalysisQuery.data?.result);
+    !isSavedAnalysisPending &&
+    Boolean(getAnalysisQuery.error || analysisStatus === "error" || !getAnalysisQuery.data);
 
   return (
     <div className="min-h-full">
@@ -245,7 +269,7 @@ export default function Home() {
                   הבן את הפוליסה שלך בקלות
                 </h2>
                 <p className="text-sm md:text-base text-blue-100/80 max-w-lg mx-auto leading-relaxed">
-                  העלה את קובץ ה-PDF של פוליסת הביטוח שלך וקבל סריקה מפורטת של כל הכיסויים, העלויות והתנאים
+                  העלה PDF, צלם מסמך, או הזן פוליסה ידנית כדי לקבל תמונה מהירה של הכיסויים, העלויות והתנאים
                 </p>
               </div>
 
@@ -281,30 +305,41 @@ export default function Home() {
             </div>
 
             <div className="animate-fade-in-up stagger-2">
-              <FileUpload
-                files={files}
-                onFilesSelected={handleFilesSelected}
-                onRemoveFile={handleRemoveFile}
-                onAnalyze={handleAnalyze}
-                isUploading={isUploading}
-                isAnalyzing={isAnalyzing}
-                hasResults={!!analysisResult}
-              />
+              <Tabs value={intakeMode} onValueChange={setIntakeMode} dir="rtl">
+                <TabsList className="grid w-full grid-cols-2 mb-4">
+                  <TabsTrigger value="upload">PDF או צילום</TabsTrigger>
+                  <TabsTrigger value="manual">הזנה ידנית</TabsTrigger>
+                </TabsList>
+                <TabsContent value="upload">
+                  <FileUpload
+                    files={files}
+                    onFilesSelected={handleFilesSelected}
+                    onRemoveFile={handleRemoveFile}
+                    onAnalyze={handleAnalyze}
+                    isUploading={isUploading}
+                    isProcessing={false}
+                    hasResults={!!analysisResult}
+                  />
+                </TabsContent>
+                <TabsContent value="manual">
+                  <ManualPolicyEntry />
+                </TabsContent>
+              </Tabs>
             </div>
 
-            {isAnalyzing && (
+            {isUploading && (
               <Card className="mt-6 border-primary/20 bg-primary/5 animate-fade-in-up">
-                <CardContent className="py-8 text-center">
+                <CardContent className="py-8 text-center" data-testid="policy-uploading-card">
                   <div className="relative size-14 mx-auto mb-4">
                     <div className="absolute inset-0 rounded-full border-2 border-primary/20" />
                     <div className="absolute inset-0 rounded-full border-2 border-primary border-t-transparent animate-spin" />
-                    <Sparkles className="absolute inset-0 m-auto size-6 text-primary" />
+                    <Loader2 className="absolute inset-0 m-auto size-6 text-primary" />
                   </div>
                   <p className="text-sm font-semibold text-foreground">
-                    סורק את הפוליסה...
+                    מעלה את הקבצים...
                   </p>
                   <p className="text-xs text-muted-foreground mt-1.5">
-                    ה-AI קורא וסורק את כל הפרטים — זה עשוי לקחת עד דקה
+                    ברגע שההעלאה תסתיים, העיבוד ימשיך ברקע גם אם תסגור את הדפדפן
                   </p>
                 </CardContent>
               </Card>
@@ -316,7 +351,7 @@ export default function Home() {
       {isSavedAnalysisLoading && (
         <div className="page-container">
           <div className="max-w-2xl mx-auto">
-            <Card className="border-primary/20 bg-primary/5 animate-fade-in-up">
+            <Card className="border-primary/20 bg-primary/5 animate-fade-in-up" data-testid="policy-analysis-loading">
               <CardContent className="py-12 text-center">
                 <div className="relative size-14 mx-auto mb-4">
                   <div className="absolute inset-0 rounded-full border-2 border-primary/20" />
@@ -333,27 +368,74 @@ export default function Home() {
         </div>
       )}
 
+      {isSavedAnalysisPending && (
+        <div className="page-container">
+          <div className="max-w-2xl mx-auto">
+            <Card className="border-primary/20 bg-primary/5 animate-fade-in-up" data-testid="policy-analysis-pending">
+              <CardContent className="py-12 text-center">
+                <div className="relative size-14 mx-auto mb-4">
+                  <div className="absolute inset-0 rounded-full border-2 border-primary/20" />
+                  <div className="absolute inset-0 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+                  <Sparkles className="absolute inset-0 m-auto size-6 text-primary" />
+                </div>
+                <p className="text-base font-semibold text-foreground">
+                  {analysisStatus === "processing" ? "הפוליסה שלך נמצאת עכשיו בעיבוד" : "הקבצים נשמרו וממתינים לעיבוד"}
+                </p>
+                <p className="text-sm text-muted-foreground mt-2">
+                  אפשר לצאת מהעמוד או לסגור את הדפדפן. לומי ממשיך לעבד את הפוליסה ברקע והתוצאות יופיעו כאן כשהן יהיו מוכנות.
+                </p>
+                {getAnalysisQuery.data?.files?.length ? (
+                  <p className="text-xs text-muted-foreground mt-3">
+                    נשמרו {getAnalysisQuery.data.files.length} קבצים לסריקה
+                  </p>
+                ) : null}
+                <div className="flex items-center justify-center gap-3 mt-6">
+                  <Button variant="outline" onClick={() => setLocation("/insurance")}>
+                    חזרה לביטוחים
+                  </Button>
+                  <Button onClick={() => getAnalysisQuery.refetch()} disabled={getAnalysisQuery.isFetching}>
+                    רענן סטטוס
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </div>
+      )}
+
       {hasSavedAnalysisError && (
         <div className="page-container">
           <div className="max-w-2xl mx-auto">
-            <Card className="animate-fade-in-up">
+            <Card className="animate-fade-in-up" data-testid="policy-analysis-error">
               <CardContent className="py-12 text-center">
                 <div className="size-14 rounded-2xl bg-muted/60 flex items-center justify-center mx-auto mb-4">
                   <FileText className="size-7 text-muted-foreground/50" />
                 </div>
                 <p className="text-base font-semibold text-foreground">
-                  {getAnalysisQuery.error ? "לא הצלחנו לטעון את הסריקה" : "לא מצאנו את הסריקה שבחרת"}
+                  {analysisStatus === "error" ? "הסריקה נכשלה" : getAnalysisQuery.error ? "לא הצלחנו לטעון את הסריקה" : "לא מצאנו את הסריקה שבחרת"}
                 </p>
                 <p className="text-sm text-muted-foreground mt-2">
-                  אפשר לחזור לעמוד הביטוחים או לנסות שוב.
+                  {analysisStatus === "error"
+                    ? getAnalysisQuery.data?.errorMessage || "אירעה שגיאה בעיבוד הפוליסה. אפשר להחזיר אותה לתור ולנסות שוב."
+                    : "אפשר לחזור לעמוד הביטוחים או לנסות שוב."}
                 </p>
                 <div className="flex items-center justify-center gap-3 mt-6">
                   <Button variant="outline" onClick={() => setLocation("/insurance")}>
                     חזרה לביטוחים
                   </Button>
-                  <Button onClick={() => getAnalysisQuery.refetch()}>
-                    נסה שוב
-                  </Button>
+                  {analysisStatus === "error" ? (
+                    <Button
+                      onClick={handleRetryAnalysis}
+                      disabled={analyzeMutation.isPending}
+                      data-testid="policy-analysis-retry"
+                    >
+                      {analyzeMutation.isPending ? "מחזיר לעיבוד..." : "נסה שוב"}
+                    </Button>
+                  ) : (
+                    <Button onClick={() => getAnalysisQuery.refetch()}>
+                      נסה שוב
+                    </Button>
+                  )}
                 </div>
               </CardContent>
             </Card>

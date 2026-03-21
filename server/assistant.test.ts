@@ -7,10 +7,13 @@ let mockProfile: any = null;
 let mockFamilyMembers: any[] = [];
 let mockDocumentClassifications: any[] = [];
 let mockHistory: any[] = [];
+let mockInsuranceDiscoveries: any[] = [];
 
-const { invokeLLMMock, logApiUsageMock } = vi.hoisted(() => ({
+const { invokeLLMMock, logApiUsageMock, getAllGmailConnectionsMock, getInsuranceDiscoveriesMock } = vi.hoisted(() => ({
   invokeLLMMock: vi.fn(),
   logApiUsageMock: vi.fn(),
+  getAllGmailConnectionsMock: vi.fn(),
+  getInsuranceDiscoveriesMock: vi.fn(),
 }));
 
 vi.mock("./_core/env", () => ({
@@ -82,9 +85,10 @@ vi.mock("./gmail", () => ({
   getGmailAuthUrl: vi.fn(),
   exchangeCodeForTokens: vi.fn(),
   saveGmailConnection: vi.fn(),
-  getAllGmailConnections: vi.fn().mockResolvedValue([]),
+  getAllGmailConnections: getAllGmailConnectionsMock,
   disconnectGmail: vi.fn(),
   scanGmailForInvoices: vi.fn(),
+  getInsuranceDiscoveries: getInsuranceDiscoveriesMock,
 }));
 
 vi.mock("./storage", () => ({
@@ -285,8 +289,39 @@ beforeEach(() => {
     }),
   ];
   mockHistory = [];
+  mockInsuranceDiscoveries = [];
   invokeLLMMock.mockReset();
   logApiUsageMock.mockReset();
+  getAllGmailConnectionsMock.mockReset();
+  getAllGmailConnectionsMock.mockResolvedValue([]);
+  getInsuranceDiscoveriesMock.mockReset();
+  getInsuranceDiscoveriesMock.mockImplementation(async () => mockInsuranceDiscoveries);
+});
+
+describe("assistant.getHomeContext", () => {
+  it("surfaces insurance discoveries from Gmail in the assistant home context", async () => {
+    mockInsuranceDiscoveries = [
+      {
+        provider: "הראל",
+        insuranceCategory: "health",
+        artifactType: "renewal_notice",
+        summary: "זוהה מייל חידוש לביטוח בריאות משפחתי",
+        actionHint: "כדאי לבדוק את תנאי החידוש והפרמיה החדשה",
+        policyNumber: "98765",
+        premiumAmount: 210,
+        documentDate: new Date("2026-03-18T09:00:00.000Z"),
+        attachmentFilename: "renewal.pdf",
+      },
+    ];
+    getAllGmailConnectionsMock.mockResolvedValue([{ id: 5 }]);
+
+    const caller = appRouter.createCaller(makeAuthCtx());
+    const result = await caller.assistant.getHomeContext();
+
+    expect(result.chips.some((chip) => chip.label.includes("גילויי ביטוח מהמייל"))).toBe(true);
+    expect(result.highlights.some((highlight) => highlight.title.includes("חידוש ביטוחי"))).toBe(true);
+    expect(result.suggestedPrompts).toContain("יש חידוש ביטוחי מהמייל שכדאי לטפל בו עכשיו?");
+  });
 });
 
 describe("assistant.chat", () => {
@@ -387,5 +422,59 @@ describe("assistant.chat", () => {
         model: "gemini-2.5-flash",
       })
     );
+  });
+
+  it("injects relevant Gmail insurance discoveries into the assistant prompt", async () => {
+    mockInsuranceDiscoveries = [
+      {
+        provider: "הראל",
+        insuranceCategory: "health",
+        artifactType: "renewal_notice",
+        summary: "זוהה מייל חידוש לביטוח בריאות משפחתי",
+        actionHint: "כדאי לבדוק אם הפרמיה החדשה תואמת את הכיסוי",
+        policyNumber: "98765",
+        premiumAmount: 210,
+        documentDate: new Date("2026-03-18T09:00:00.000Z"),
+        attachmentFilename: "renewal.pdf",
+      },
+    ];
+    getAllGmailConnectionsMock.mockResolvedValue([{ id: 5 }]);
+    invokeLLMMock.mockResolvedValue({
+      id: "resp-3",
+      created: Date.now(),
+      model: "gemini-2.5-flash",
+      choices: [
+        {
+          index: 0,
+          message: {
+            role: "assistant",
+            content: "כן, זוהה מייל חידוש שכדאי לעבור עליו.",
+          },
+          finish_reason: "stop",
+        },
+      ],
+      usage: {
+        prompt_tokens: 150,
+        completion_tokens: 30,
+        total_tokens: 180,
+      },
+    });
+
+    const caller = appRouter.createCaller(makeAuthCtx());
+    const result = await caller.assistant.chat({
+      message: "יש לי חידוש ביטוחי מהמייל שכדאי לבדוק?",
+    });
+
+    expect(result.response).toContain("חידוש");
+
+    const llmCall = invokeLLMMock.mock.calls[0][0];
+    const systemPrompt = llmCall.messages[0].content as string;
+    const relevantDiscoveriesSection =
+      systemPrompt.split("ממצאים ביטוחיים מהמייל שרלוונטיים לשאלה:\n")[1]?.split("\n\nמסמכים:")[0] ?? "";
+
+    expect(relevantDiscoveriesSection).toContain("הראל");
+    expect(relevantDiscoveriesSection).toContain("חידוש");
+    expect(relevantDiscoveriesSection).toContain("renewal.pdf");
+    expect(relevantDiscoveriesSection).toContain("כדאי לבדוק");
   });
 });

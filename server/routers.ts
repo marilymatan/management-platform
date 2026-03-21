@@ -2,16 +2,16 @@ import crypto from "crypto";
 import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
+import { policyAnalysisWorker } from "./policyAnalysisWorker";
 import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
 import { z } from "zod";
 import { nanoid } from "nanoid";
-import { storagePut, storageGet, storageRead, sanitizeFilename, generateSignedFileUrl } from "./storage";
+import { storagePut, storageGet, sanitizeFilename, generateSignedFileUrl } from "./storage";
 import { invokeLLM } from "./_core/llm";
 import { ENV } from "./_core/env";
 import {
   createAnalysis,
   getAnalysisBySessionId,
-  updateAnalysisStatus,
   addChatMessage,
   getChatHistory,
   getUserAnalyses,
@@ -37,6 +37,8 @@ import {
   getNewUsersOverTime,
   getCategoryDistribution,
   getCategorySummaryCache,
+  resetAnalysisForRetry,
+  updateAnalysisStatus,
   upsertCategorySummaryCache,
 } from "./db";
 import { TRPCError } from "@trpc/server";
@@ -50,12 +52,23 @@ import {
   getGmailAuthUrl,
   exchangeCodeForTokens,
   saveGmailConnection,
+  discoverPolicyPdfs,
   getAllGmailConnections,
   disconnectGmail,
+  getInsuranceDiscoveries as listInsuranceDiscoveries,
+  importPolicyPdfFromGmail,
   scanGmailForInvoices,
 } from "./gmail";
 import { getDb } from "./db";
-import { smartInvoices, categoryMappings } from "../drizzle/schema";
+import {
+  smartInvoices,
+  categoryMappings,
+  insuranceArtifacts,
+  insuranceScoreHistory,
+  savingsOpportunities,
+  actionItems,
+  monthlyReports,
+} from "../drizzle/schema";
 import { decryptField, decryptJson, encryptJson } from "./encryption";
 import { eq, desc, and } from "drizzle-orm";
 import { audit, getClientIp, getRecentAuditLogs, getSecurityEvents } from "./auditLog";
@@ -66,6 +79,15 @@ import {
   getAssistantSessionId as getLumiSessionId,
   shouldUseComplexLumiModel,
 } from "./assistantContext";
+import {
+  buildActionItemsDraft,
+  buildInsuranceScoreSnapshot,
+  buildManualPolicyAnalysis,
+  buildMonthlyReportDraft,
+  buildSavingsReportDraft,
+  buildWorkspaceDataHash,
+} from "./insuranceHub";
+import { buildFamilyCoverageSnapshot } from "../client/src/lib/familyCoverage";
 
 function signOAuthState(payload: Record<string, unknown>): string {
   const json = JSON.stringify(payload);
@@ -84,6 +106,13 @@ export function verifyOAuthState(state: string): Record<string, unknown> {
     throw new Error("State expired");
   }
   return payload;
+}
+
+function normalizeReturnTo(value?: string | null) {
+  if (!value || !value.startsWith("/") || value.startsWith("//")) {
+    return "/expenses";
+  }
+  return value;
 }
 
 function extractLLMContent(response: any): string {
@@ -127,94 +156,6 @@ function parseLLMJson<T = any>(raw: string): T {
   return JSON.parse(cleaned);
 }
 
-const ANALYSIS_SYSTEM_PROMPT = `אתה מומחה לניתוח פוליסות ביטוח בעברית. תפקידך לנתח את הטקסט של פוליסת הביטוח ולחלץ ממנו מידע מובנה.
-
-עליך להחזיר JSON בפורמט הבא בלבד, ללא טקסט נוסף:
-{
-  "coverages": [
-    {
-      "id": "מזהה ייחודי",
-      "title": "שם הכיסוי/ההטבה",
-      "category": "קטגוריה משנית בתוך סוג הביטוח — ראה רשימה למטה",
-      "limit": "מגבלת שימוש (למשל: עד 12 טיפולים בשנה)",
-      "details": "תיאור מפורט של הכיסוי",
-      "eligibility": "תנאי זכאות",
-      "copay": "גובה השתתפות עצמית",
-      "maxReimbursement": "תקרת החזר כספי",
-      "exclusions": "החרגות רלוונטיות",
-      "waitingPeriod": "תקופת אכשרה",
-      "sourceFile": "שם הקובץ שמהו הכיסוי חולץ"
-    }
-  ],
-  "generalInfo": {
-    "policyName": "שם הפוליסה",
-    "insurerName": "שם חברת הביטוח",
-    "policyNumber": "מספר פוליסה",
-    "policyType": "סוג הפוליסה",
-    "insuranceCategory": "health | life | car | home",
-    "monthlyPremium": "פרמיה חודשית",
-    "annualPremium": "פרמיה שנתית",
-    "startDate": "תאריך תחילה",
-    "endDate": "תאריך סיום",
-    "importantNotes": ["הערות חשובות"],
-    "fineprint": ["אותיות קטנות וחריגים בולטים"]
-  },
-  "summary": "סיכום כללי קצר של הפוליסה ב-2-3 משפטים",
-  "duplicateCoverages": [
-    {
-      "id": "מזהה ייחודי",
-      "title": "שם הכיסוי הכפול",
-      "coverageIds": ["מזהה כיסוי 1", "מזהה כיסוי 2"],
-      "sourceFiles": ["שם קובץ 1", "שם קובץ 2"],
-      "explanation": "הסבר קצר מדוע כיסויים אלו נחשבים כפולים או חופפים",
-      "recommendation": "המלצה למשתמש, למשל: לבדוק אם משלם כפל ביטוח"
-    }
-  ]
-}
-
-הנחיות:
-- חלץ את כל הכיסויים וההטבות שמופיעים בפוליסה
-- לכל כיסוי, הוסף את שם הקובץ (sourceFile) שממנו הוא חולץ
-- אם מידע מסוים לא נמצא, רשום "לא מצוין בפוליסה" (לא "לא צוין")
-- עבור insuranceCategory, סווג את הפוליסה לאחת מהקטגוריות הבאות בלבד:
-  * "health" - ביטוח בריאות (רפואה משלימה, אשפוז, שיניים, תרופות, ביטוח בריאות)
-  * "life" - ביטוח חיים (ביטוח חיים, ריסק, אובדן כושר עבודה, נכות, מוות, סיעודי, פנסיה)
-  * "car" - ביטוח רכב (ביטוח רכב, מקיף, צד ג, חובה, רכב)
-  * "home" - ביטוח דירה (ביטוח דירה, מבנה, תכולה, רעידת אדמה, צנרת)
-- עבור category של כל כיסוי, סווג לפי סוג הפוליסה:
-  * ביטוח בריאות (health): "רפואה משלימה", "אשפוז", "שיניים", "עיניים", "תרופות", "ניתוח", "נפש", "הריון ולידה", "אחר"
-  * ביטוח חיים (life): "ביטוח חיים", "אובדן כושר עבודה", "סיעודי", "נכות", "פנסיה", "ריסק", "אחר"
-  * ביטוח רכב (car): "חובה", "מקיף", "צד ג", "נזקי גוף", "רכוש", "גניבה", "אחר"
-  * ביטוח דירה (home): "מבנה", "תכולה", "צד ג", "נזקי טבע", "צנרת", "אחר"
-  חשוב: תמיד השתמש בקטגוריות מגוונות ומתאימות לתוכן. אל תסווג את כל הכיסויים לקטגוריה אחת — חלק אותם לפי תת-נושאים ברורים.
-- הקפד על דיוק בנתונים הכספיים
-- שמור על שפה ברורה ומובנת בעברית
-- החזר JSON תקין בלבד
-
-הנחיות לזיהוי כיסויים כפולים:
-- בדוק אם יש כיסויים זהים או חופפים שמופיעים ביותר מקובץ אחד, או אפילו בתוך אותו קובץ
-- כיסוי נחשב כפול כאשר שני כיסויים מכסים את אותו סוג טיפול/שירות, גם אם השמות שונים במקצת
-- לכל קבוצת כיסויים כפולים, ציין את ה-id של הכיסויים הרלוונטיים מתוך מערך ה-coverages
-- הסבר בבירור למה הכיסויים נחשבים כפולים (למשל: שניהם מכסים ביקור רופא מומחה)
-- תן המלצה מעשית למשתמש (למשל: כדאי לבדוק אם ניתן לבטל אחד מהכיסויים ולחסוך בפרמיה)
-- אם אין כיסויים כפולים, החזר מערך ריק []`;
-
-const PDF_BATCH_SIZE = 3;
-
-const BATCH_MERGE_PROMPT = `אתה מומחה לניתוח פוליסות ביטוח בעברית. קיבלת תוצאות ניתוח של מספר קבוצות קבצי פוליסה שנותחו בנפרד.
-
-משימתך:
-1. אחד את כל פרטי המידע הכללי (generalInfo) לאובייקט אחד מסכם. אם יש מספר פוליסות שונות, סכם את שמות כל הפוליסות, חברות הביטוח, מספרי הפוליסות, הפרמיות וכו׳
-2. כתוב סיכום (summary) אחד כולל שמכסה את כל הפוליסות
-3. זהה כיסויים כפולים (duplicateCoverages) בין הקבוצות השונות — השתמש ב-id המדויקים כפי שהתקבלו (מתחילים ב-b0-, b1-, b2- וכו׳)
-
-הנחיות:
-- בדוק כיסויים כפולים בין קבוצות שונות, לא רק בתוך אותה קבוצה
-- כיסוי נחשב כפול כאשר שני כיסויים מכסים את אותו סוג טיפול/שירות
-- עבור insuranceCategory, בחר את הקטגוריה הנפוצה ביותר
-- שמור על שפה ברורה ומובנת בעברית
-- החזר JSON תקין בלבד`;
-
 const CHAT_SYSTEM_PROMPT = `אתה עוזר וירטואלי מומחה בפוליסות ביטוח. תפקידך לענות על שאלות של המשתמש לגבי פוליסת הביטוח שלו.
 
 כללים חשובים:
@@ -227,43 +168,6 @@ const CHAT_SYSTEM_PROMPT = `אתה עוזר וירטואלי מומחה בפול
 להלן המידע שחולץ מהפוליסה:
 `;
 
-const PERSONALIZED_INSIGHTS_PROMPT = `אתה יועץ ביטוח מומחה ומנוסה בישראל. קיבלת ניתוח מלא של פוליסת ביטוח ופרופיל אישי של הלקוח.
-
-תפקידך: לזהות פערים ביטוחיים, סיכונים, והמלצות מותאמות אישית על בסיס המצב האישי והמשפחתי של הלקוח.
-
-עליך לבדוק את הנקודות הבאות ולהחזיר תובנות רלוונטיות בלבד:
-
-1. **ילדים ומשפחה**: אם יש ילדים - האם יש כיסוי לתאונות ילדים, ביטוח בריאות לילדים, ביטוח שיניים לילדים? האם סכום ביטוח החיים מתאים למספר הנפשות התלויות?
-2. **דירה ומשכנתא**: אם יש דירה בבעלות - האם יש ביטוח מבנה ותכולה? אם יש משכנתא - האם יש ביטוח חיים לכיסוי המשכנתא?
-3. **רכבים**: אם יש רכבים - האם יש כיסוי מקיף/צד ג'? האם מספר הרכבים תואם את הכיסוי?
-4. **תעסוקה והכנסה**: האם יש ביטוח אובדן כושר עבודה? האם סכום הכיסוי מתאים לטווח ההכנסה? עצמאים - האם יש ביטוח אחריות מקצועית?
-5. **גיל ושלב בחיים**: על בסיס הגיל - האם הפוליסה מתאימה? האם כדאי לשקול ביטוח סיעודי? האם תקופת האכשרה בעייתית?
-6. **ספורט אקסטרימי**: אם יש תחביבים מסוכנים - האם יש החרגות רלוונטיות בפוליסה?
-7. **מצב בריאותי**: אם יש מצבים בריאותיים מיוחדים - האם הכיסוי הבריאותי מתאים? האם יש החרגות שעלולות להשפיע?
-8. **חיות מחמד**: אם יש חיות מחמד - האם יש ביטוח וטרינרי?
-
-כללים:
-- החזר רק תובנות רלוונטיות למצב הספציפי של הלקוח (אל תחזיר תובנות על ילדים אם אין ילדים, וכו')
-- לכל תובנה, סווג אותה כ: "warning" (חסר כיסוי קריטי), "recommendation" (המלצה לשיפור), או "positive" (כיסוי מתאים קיים)
-- דרג כל תובנה: "high" (דחוף/קריטי), "medium" (חשוב), או "low" (כדאי לשקול)
-- כתוב בעברית ברורה ומובנת, בגובה העיניים
-- הסבר בקצרה למה זה רלוונטי ומה ההמלצה המעשית
-- החזר 3-8 תובנות, לא יותר
-- אם יש כיסוי טוב שמתאים למצב הלקוח, ציין את זה כ-"positive"
-
-החזר JSON בפורמט הבא בלבד:
-{
-  "personalizedInsights": [
-    {
-      "id": "מזהה ייחודי",
-      "type": "warning | recommendation | positive",
-      "title": "כותרת קצרה",
-      "description": "תיאור מפורט של התובנה וההמלצה",
-      "relevantCoverage": "שם הכיסוי הרלוונטי מהפוליסה (אם יש)",
-      "priority": "high | medium | low"
-    }
-  ]
-}`;
 
 const CATEGORY_SUMMARY_SYSTEM_PROMPT = `אתה יועץ ביטוח ישראלי. קיבלת כמה סקירות של פוליסות מאותה קטגוריית ביטוח עבור אותו משתמש.
 
@@ -448,6 +352,20 @@ function serializeProfileForClient(profile: any) {
     businessTaxId: profile.businessTaxId ?? null,
     businessEmailDomains: profile.businessEmailDomains ?? null,
     profileImageKey: profile.profileImageKey ?? null,
+    onboardingCompleted: profile.onboardingCompleted ?? false,
+  };
+}
+
+function normalizeHubProfile(profile: any) {
+  if (!profile) return null;
+  return {
+    ...profile,
+    numberOfChildren: profile.numberOfChildren ?? 0,
+    ownsApartment: Boolean(profile.ownsApartment),
+    hasActiveMortgage: Boolean(profile.hasActiveMortgage),
+    numberOfVehicles: profile.numberOfVehicles ?? 0,
+    hasSpecialHealthConditions: Boolean(profile.hasSpecialHealthConditions),
+    onboardingCompleted: Boolean(profile.onboardingCompleted),
   };
 }
 
@@ -575,6 +493,337 @@ async function getAssistantInvoices(userId: number) {
       };
     }
   });
+}
+
+function toNumericValue(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    if (!Number.isNaN(parsed)) return parsed;
+  }
+  return 0;
+}
+
+function serializeSavingsOpportunityRow(row: any) {
+  return {
+    ...row,
+    monthlySaving: toNumericValue(row.monthlySaving),
+    annualSaving: toNumericValue(row.annualSaving),
+    actionSteps: Array.isArray(row.actionSteps) ? row.actionSteps : [],
+    relatedSessionIds: Array.isArray(row.relatedSessionIds) ? row.relatedSessionIds : [],
+  };
+}
+
+function serializeActionItemRow(row: any) {
+  return {
+    ...row,
+    potentialSaving: toNumericValue(row.potentialSaving),
+    instructions: Array.isArray(row.instructions) ? row.instructions : [],
+  };
+}
+
+function serializeMonthlyReportRow(row: any) {
+  return {
+    ...row,
+    changes: Array.isArray(row.changes) ? row.changes : [],
+    newActions: Array.isArray(row.newActions) ? row.newActions : [],
+  };
+}
+
+async function syncSavingsOpportunities(
+  userId: number,
+  report: ReturnType<typeof buildSavingsReportDraft>,
+  dataHash: string
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const existingRows = await db
+    .select()
+    .from(savingsOpportunities)
+    .where(eq(savingsOpportunities.userId, userId));
+  const existingByKey = new Map(existingRows.map((row) => [row.opportunityKey, row]));
+  const activeKeys = new Set(report.opportunities.map((opportunity) => opportunity.opportunityKey));
+
+  for (const row of existingRows) {
+    if (!activeKeys.has(row.opportunityKey)) {
+      await db.delete(savingsOpportunities).where(eq(savingsOpportunities.id, row.id));
+    }
+  }
+
+  for (const opportunity of report.opportunities) {
+    const existing = existingByKey.get(opportunity.opportunityKey);
+    const status = existing?.status ?? opportunity.status;
+    const completedAt = status === "completed" ? (existing?.completedAt ?? new Date()) : null;
+    const payload = {
+      userId,
+      opportunityKey: opportunity.opportunityKey,
+      type: opportunity.type,
+      title: opportunity.title,
+      description: opportunity.description,
+      monthlySaving: opportunity.monthlySaving.toFixed(2),
+      annualSaving: opportunity.annualSaving.toFixed(2),
+      priority: opportunity.priority,
+      actionSteps: opportunity.actionSteps,
+      relatedSessionIds: opportunity.relatedSessionIds,
+      status,
+      dataHash,
+      completedAt,
+      updatedAt: new Date(),
+    } as const;
+
+    if (existing) {
+      await db
+        .update(savingsOpportunities)
+        .set(payload)
+        .where(eq(savingsOpportunities.id, existing.id));
+    } else {
+      await db.insert(savingsOpportunities).values(payload);
+    }
+  }
+
+  const rows = await db
+    .select()
+    .from(savingsOpportunities)
+    .where(eq(savingsOpportunities.userId, userId))
+    .orderBy(desc(savingsOpportunities.createdAt));
+
+  return rows.map(serializeSavingsOpportunityRow);
+}
+
+async function syncMonthlyReportRow(
+  userId: number,
+  report: ReturnType<typeof buildMonthlyReportDraft>,
+  dataHash: string
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const [existing] = await db
+    .select()
+    .from(monthlyReports)
+    .where(and(eq(monthlyReports.userId, userId), eq(monthlyReports.month, report.month)))
+    .limit(1);
+
+  const payload = {
+    userId,
+    month: report.month,
+    scoreAtTime: report.scoreAtTime,
+    scoreChange: report.scoreChange,
+    changes: report.changes,
+    newActions: report.newActions,
+    summary: report.summary,
+    dataHash,
+    updatedAt: new Date(),
+  } as const;
+
+  if (existing) {
+    await db.update(monthlyReports).set(payload).where(eq(monthlyReports.id, existing.id));
+  } else {
+    await db.insert(monthlyReports).values(payload);
+  }
+
+  const [row] = await db
+    .select()
+    .from(monthlyReports)
+    .where(and(eq(monthlyReports.userId, userId), eq(monthlyReports.month, report.month)))
+    .limit(1);
+
+  return row ? serializeMonthlyReportRow(row) : null;
+}
+
+async function syncActionItems(
+  userId: number,
+  drafts: ReturnType<typeof buildActionItemsDraft>,
+  opportunityRows: Array<ReturnType<typeof serializeSavingsOpportunityRow>>
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const opportunityIdsByKey = new Map(opportunityRows.map((row) => [row.opportunityKey, row.id]));
+  const existingRows = await db
+    .select()
+    .from(actionItems)
+    .where(eq(actionItems.userId, userId));
+  const existingByKey = new Map(existingRows.map((row) => [row.actionKey, row]));
+  const activeKeys = new Set(drafts.map((draft) => draft.actionKey));
+
+  for (const row of existingRows) {
+    if (!activeKeys.has(row.actionKey)) {
+      await db.delete(actionItems).where(eq(actionItems.id, row.id));
+    }
+  }
+
+  for (const draft of drafts) {
+    const existing = existingByKey.get(draft.actionKey);
+    const status = existing?.status ?? draft.status;
+    const completedAt = status === "completed" ? (existing?.completedAt ?? new Date()) : null;
+    const payload = {
+      userId,
+      actionKey: draft.actionKey,
+      savingsOpportunityId: draft.relatedOpportunityKey ? opportunityIdsByKey.get(draft.relatedOpportunityKey) ?? null : null,
+      type: draft.type,
+      title: draft.title,
+      description: draft.description,
+      instructions: draft.instructions,
+      potentialSaving: draft.potentialSaving.toFixed(2),
+      priority: draft.priority,
+      status,
+      dueDate: draft.dueDate,
+      completedAt,
+      updatedAt: new Date(),
+    } as const;
+
+    if (existing) {
+      await db
+        .update(actionItems)
+        .set(payload)
+        .where(eq(actionItems.id, existing.id));
+    } else {
+      await db.insert(actionItems).values(payload);
+    }
+  }
+
+  const rows = await db
+    .select()
+    .from(actionItems)
+    .where(eq(actionItems.userId, userId))
+    .orderBy(desc(actionItems.createdAt));
+
+  return rows.map(serializeActionItemRow);
+}
+
+async function buildAndSyncUserHubState(userId: number) {
+  const [profile, analyses, familyMembers, invoices, insuranceDiscoveries, existingReports, existingActions] = await Promise.all([
+    getUserProfile(userId),
+    getUserAnalyses(userId),
+    getFamilyMembers(userId),
+    getAssistantInvoices(userId),
+    listInsuranceDiscoveries(userId, 50),
+    (async () => {
+      const db = await getDb();
+      if (!db) return [];
+      return db
+        .select()
+        .from(monthlyReports)
+        .where(eq(monthlyReports.userId, userId))
+        .orderBy(desc(monthlyReports.month));
+    })(),
+    (async () => {
+      const db = await getDb();
+      if (!db) return [];
+      return db
+        .select()
+        .from(actionItems)
+        .where(eq(actionItems.userId, userId));
+    })(),
+  ]);
+  const normalizedProfile = normalizeHubProfile(profile);
+
+  const existingOpportunityRows = await (async () => {
+    const db = await getDb();
+    if (!db) return [];
+    return db
+      .select()
+      .from(savingsOpportunities)
+      .where(eq(savingsOpportunities.userId, userId));
+  })();
+
+  const opportunityStatusMap = Object.fromEntries(
+    existingOpportunityRows.map((row) => [row.opportunityKey, row.status])
+  );
+  const actionStatusMap = Object.fromEntries(
+    existingActions.map((row) => [row.actionKey, row.status])
+  );
+
+  const savingsDraft = buildSavingsReportDraft({
+    analyses,
+    profile: normalizedProfile,
+    familyMembers,
+    insuranceDiscoveries,
+    invoices,
+    previousStatuses: opportunityStatusMap as Record<string, "open" | "completed" | "dismissed">,
+  });
+  const scoreSnapshot = buildInsuranceScoreSnapshot({
+    analyses,
+    profile: normalizedProfile,
+    familyMembers,
+    insuranceDiscoveries,
+    invoices,
+    potentialSavings: savingsDraft.totalMonthlySaving,
+  });
+
+  const latestReport = existingReports[0];
+  const monthlyDraft = buildMonthlyReportDraft({
+    invoices,
+    currentScore: scoreSnapshot.score,
+    previousScore: latestReport?.scoreAtTime ?? null,
+    previousStatuses: actionStatusMap as Record<string, "pending" | "completed" | "dismissed">,
+  });
+  const fullActionDrafts = buildActionItemsDraft({
+    opportunities: savingsDraft.opportunities,
+    analyses,
+    profile: normalizedProfile,
+    familyMembers,
+    monitoringChanges: monthlyDraft.changes,
+    previousStatuses: actionStatusMap as Record<string, "pending" | "completed" | "dismissed">,
+  });
+
+  const dataHash = buildWorkspaceDataHash({
+    profile,
+    analyses: analyses.map((analysis) => ({
+      sessionId: analysis.sessionId,
+      updatedAt: analysis.updatedAt instanceof Date ? analysis.updatedAt.toISOString() : analysis.updatedAt,
+      status: analysis.status,
+      category: analysis.insuranceCategory,
+    })),
+    familyMembers: familyMembers.map((member) => ({
+      id: member.id,
+      updatedAt: member.updatedAt instanceof Date ? member.updatedAt.toISOString() : member.updatedAt,
+    })),
+    insuranceDiscoveries: insuranceDiscoveries.map((discovery) => ({
+      id: discovery.id,
+      documentDate: discovery.documentDate instanceof Date ? discovery.documentDate.toISOString() : discovery.documentDate,
+      artifactType: discovery.artifactType,
+      premiumAmount: discovery.premiumAmount,
+    })),
+    invoices: invoices.map((invoice) => ({
+      id: invoice.id,
+      amount: invoice.amount,
+      invoiceDate: invoice.invoiceDate instanceof Date ? invoice.invoiceDate.toISOString() : invoice.invoiceDate,
+      provider: invoice.provider,
+      status: invoice.status,
+    })),
+    savings: savingsDraft.opportunities.map((opportunity) => ({
+      key: opportunity.opportunityKey,
+      type: opportunity.type,
+      monthlySaving: opportunity.monthlySaving,
+    })),
+    monthly: {
+      month: monthlyDraft.month,
+      changes: monthlyDraft.changes,
+    },
+  });
+
+  const opportunityRows = await syncSavingsOpportunities(userId, savingsDraft, dataHash);
+  const monthlyReportRow = await syncMonthlyReportRow(userId, monthlyDraft, dataHash);
+  const actionRows = await syncActionItems(userId, fullActionDrafts, opportunityRows);
+
+  return {
+    profile,
+    normalizedProfile,
+    analyses,
+    familyMembers,
+    invoices,
+    insuranceDiscoveries,
+    savingsDraft,
+    scoreSnapshot,
+    monthlyDraft,
+    opportunities: opportunityRows,
+    actions: actionRows,
+    monthlyReport: monthlyReportRow,
+    dataHash,
+  };
 }
 
 function buildAssistantHomeContext(params: {
@@ -842,6 +1091,7 @@ export const appRouter = router({
         businessName: z.string().max(160).nullable().optional(),
         businessTaxId: z.string().max(64).nullable().optional(),
         businessEmailDomains: z.string().max(1000).nullable().optional(),
+        onboardingCompleted: z.boolean().optional(),
       }))
       .mutation(async ({ ctx, input }) => {
         if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
@@ -1001,10 +1251,11 @@ export const appRouter = router({
   assistant: router({
     getHomeContext: protectedProcedure.query(async ({ ctx }) => {
       if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
-      const [profile, analyses, invoices, gmailConnections, familyMembers, documentClassifications] = await Promise.all([
+      const [profile, analyses, invoices, insuranceDiscoveries, gmailConnections, familyMembers, documentClassifications] = await Promise.all([
         getUserProfile(ctx.user.id),
         getUserAnalyses(ctx.user.id),
         getAssistantInvoices(ctx.user.id),
+        listInsuranceDiscoveries(ctx.user.id, 20),
         getAllGmailConnections(ctx.user.id),
         getFamilyMembers(ctx.user.id),
         getDocumentClassifications(ctx.user.id),
@@ -1015,6 +1266,7 @@ export const appRouter = router({
         profile,
         analyses,
         invoices,
+        insuranceDiscoveries,
         familyMembers,
         gmailConnections,
         documentClassifications,
@@ -1045,11 +1297,12 @@ export const appRouter = router({
           content: input.message,
         });
 
-        const [history, profile, analyses, invoices, gmailConnections, familyMembers, documentClassifications] = await Promise.all([
+        const [history, profile, analyses, invoices, insuranceDiscoveries, gmailConnections, familyMembers, documentClassifications] = await Promise.all([
           getChatHistory(sessionId),
           getUserProfile(ctx.user.id),
           getUserAnalyses(ctx.user.id),
           getAssistantInvoices(ctx.user.id),
+          listInsuranceDiscoveries(ctx.user.id, 30),
           getAllGmailConnections(ctx.user.id),
           getFamilyMembers(ctx.user.id),
           getDocumentClassifications(ctx.user.id),
@@ -1060,6 +1313,7 @@ export const appRouter = router({
           profile,
           analyses,
           invoices,
+          insuranceDiscoveries,
           familyMembers,
           gmailConnections,
           documentClassifications,
@@ -1118,6 +1372,176 @@ export const appRouter = router({
       }),
   }),
 
+  insuranceScore: router({
+    getDashboard: protectedProcedure.query(async ({ ctx }) => {
+      if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const state = await buildAndSyncUserHubState(ctx.user.id);
+      const db = await getDb();
+      if (db) {
+        await db.insert(insuranceScoreHistory).values({
+          userId: ctx.user.id,
+          score: state.scoreSnapshot.score,
+          breakdown: state.scoreSnapshot.breakdown,
+          totalMonthlySpend: state.scoreSnapshot.totalMonthlySpend.toFixed(2),
+          potentialSavings: state.scoreSnapshot.potentialSavings.toFixed(2),
+        });
+      }
+      return {
+        score: state.scoreSnapshot.score,
+        breakdown: state.scoreSnapshot.breakdown,
+        totalMonthlySpend: state.scoreSnapshot.totalMonthlySpend,
+        potentialSavings: state.scoreSnapshot.potentialSavings,
+        topActions: state.actions.filter((action) => action.status === "pending").slice(0, 4),
+        upcomingRenewals: state.scoreSnapshot.overview.renewals.slice(0, 4),
+        recentChanges: state.monthlyReport?.changes ?? [],
+      };
+    }),
+  }),
+
+  insuranceMap: router({
+    get: protectedProcedure.query(async ({ ctx }) => {
+      if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const [profile, analyses, familyMembers] = await Promise.all([
+        getUserProfile(ctx.user.id),
+        getUserAnalyses(ctx.user.id),
+        getFamilyMembers(ctx.user.id),
+      ]);
+      return buildFamilyCoverageSnapshot(analyses, normalizeHubProfile(profile), familyMembers);
+    }),
+  }),
+
+  savings: router({
+    getReport: protectedProcedure.query(async ({ ctx }) => {
+      if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const state = await buildAndSyncUserHubState(ctx.user.id);
+      const savedSoFar = state.opportunities
+        .filter((opportunity) => opportunity.status === "completed")
+        .reduce((sum, opportunity) => sum + opportunity.annualSaving, 0);
+      return {
+        overview: state.savingsDraft.overview,
+        totalMonthlySaving: state.savingsDraft.totalMonthlySaving,
+        totalAnnualSaving: state.savingsDraft.totalAnnualSaving,
+        savedSoFar,
+        score: state.scoreSnapshot.score,
+        totalMonthlySpend: state.scoreSnapshot.totalMonthlySpend,
+        opportunities: state.opportunities,
+        actionItems: state.actions,
+      };
+    }),
+
+    completeOpportunity: protectedProcedure
+      .input(z.object({ opportunityId: z.number().int().positive() }))
+      .mutation(async ({ ctx, input }) => {
+        if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
+        const db = await getDb();
+        if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+        await db
+          .update(savingsOpportunities)
+          .set({ status: "completed", completedAt: new Date(), updatedAt: new Date() })
+          .where(and(eq(savingsOpportunities.id, input.opportunityId), eq(savingsOpportunities.userId, ctx.user.id)));
+        await audit({
+          userId: ctx.user.id,
+          action: "complete_savings_opportunity",
+          resource: "savings",
+          resourceId: String(input.opportunityId),
+        });
+        return { success: true };
+      }),
+
+    dismissOpportunity: protectedProcedure
+      .input(z.object({ opportunityId: z.number().int().positive() }))
+      .mutation(async ({ ctx, input }) => {
+        if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
+        const db = await getDb();
+        if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+        await db
+          .update(savingsOpportunities)
+          .set({ status: "dismissed", completedAt: null, updatedAt: new Date() })
+          .where(and(eq(savingsOpportunities.id, input.opportunityId), eq(savingsOpportunities.userId, ctx.user.id)));
+        await audit({
+          userId: ctx.user.id,
+          action: "dismiss_savings_opportunity",
+          resource: "savings",
+          resourceId: String(input.opportunityId),
+        });
+        return { success: true };
+      }),
+  }),
+
+  actions: router({
+    list: protectedProcedure.query(async ({ ctx }) => {
+      if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const state = await buildAndSyncUserHubState(ctx.user.id);
+      return state.actions;
+    }),
+
+    complete: protectedProcedure
+      .input(z.object({ actionId: z.number().int().positive() }))
+      .mutation(async ({ ctx, input }) => {
+        if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
+        const db = await getDb();
+        if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+        await db
+          .update(actionItems)
+          .set({ status: "completed", completedAt: new Date(), updatedAt: new Date() })
+          .where(and(eq(actionItems.id, input.actionId), eq(actionItems.userId, ctx.user.id)));
+        await audit({
+          userId: ctx.user.id,
+          action: "complete_action_item",
+          resource: "action",
+          resourceId: String(input.actionId),
+        });
+        return { success: true };
+      }),
+
+    dismiss: protectedProcedure
+      .input(z.object({ actionId: z.number().int().positive() }))
+      .mutation(async ({ ctx, input }) => {
+        if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
+        const db = await getDb();
+        if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+        await db
+          .update(actionItems)
+          .set({ status: "dismissed", completedAt: null, updatedAt: new Date() })
+          .where(and(eq(actionItems.id, input.actionId), eq(actionItems.userId, ctx.user.id)));
+        await audit({
+          userId: ctx.user.id,
+          action: "dismiss_action_item",
+          resource: "action",
+          resourceId: String(input.actionId),
+        });
+        return { success: true };
+      }),
+  }),
+
+  monitoring: router({
+    getMonthlyReport: protectedProcedure.query(async ({ ctx }) => {
+      if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const state = await buildAndSyncUserHubState(ctx.user.id);
+      return state.monthlyReport;
+    }),
+
+    checkForChanges: protectedProcedure
+      .input(z.object({
+        daysBack: z.number().min(1).max(90).default(30),
+        scanFirst: z.boolean().default(false),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
+        if (input.scanFirst) {
+          await scanGmailForInvoices(ctx.user.id, input.daysBack);
+        }
+        const state = await buildAndSyncUserHubState(ctx.user.id);
+        await audit({
+          userId: ctx.user.id,
+          action: "monitor_insurance_changes",
+          resource: "monitoring",
+          details: JSON.stringify({ daysBack: input.daysBack, scanFirst: input.scanFirst }),
+        });
+        return state.monthlyReport;
+      }),
+  }),
+
   policy: router({
     /** Upload PDF files and create an analysis session */
     upload: protectedProcedure
@@ -1135,14 +1559,14 @@ export const appRouter = router({
 
         for (const file of input.files) {
           const buffer = Buffer.from(file.base64, "base64");
-          const safeName = sanitizeFilename(file.name);
-          const fileKey = `policies/${sessionId}/${nanoid(8)}-${safeName}`;
+          const fileKey = `policies/${sessionId}/${nanoid(24)}.pdf`;
           await storagePut(fileKey, buffer, "application/pdf");
           uploadedFiles.push({ name: file.name, size: file.size, fileKey });
         }
 
         await createAnalysis({
           sessionId,
+          userId: ctx.user.id,
           files: uploadedFiles,
           status: "pending",
         });
@@ -1156,7 +1580,55 @@ export const appRouter = router({
           details: JSON.stringify({ fileCount: uploadedFiles.length, fileNames: uploadedFiles.map(f => f.name) }),
         });
 
+        policyAnalysisWorker.nudge();
+
         return { sessionId, files: uploadedFiles };
+      }),
+
+    createManualEntry: protectedProcedure
+      .input(z.object({
+        company: z.string().min(1).max(160),
+        category: z.enum(["health", "life", "car", "home"]),
+        monthlyPremium: z.number().min(0).max(100000).nullable().optional(),
+        startDate: z.string().nullable().optional(),
+        endDate: z.string().nullable().optional(),
+        coveredMembers: z.array(z.string().min(1).max(120)).max(20).optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
+        const sessionId = nanoid(16);
+        await createAnalysis({
+          sessionId,
+          userId: ctx.user.id,
+          files: [],
+          status: "completed",
+          insuranceCategory: input.category,
+        });
+        const analysisResult = buildManualPolicyAnalysis({
+          company: input.company.trim(),
+          category: input.category,
+          monthlyPremium: input.monthlyPremium ?? null,
+          startDate: input.startDate ?? null,
+          endDate: input.endDate ?? null,
+          coveredMembers: input.coveredMembers ?? [],
+        });
+        await updateAnalysisStatus(sessionId, "completed", {
+          analysisResult,
+          insuranceCategory: input.category,
+          completedAt: new Date(),
+        });
+        await audit({
+          userId: ctx.user.id,
+          action: "create_manual_policy",
+          resource: "analysis",
+          resourceId: sessionId,
+          details: JSON.stringify({
+            company: input.company,
+            category: input.category,
+            coveredMembers: input.coveredMembers ?? [],
+          }),
+        });
+        return { sessionId };
       }),
 
     /** Get a secure presigned URL for a file (ownership verified) */
@@ -1199,331 +1671,23 @@ export const appRouter = router({
         if (!analysis.userId) {
           await linkAnalysisToUser(input.sessionId, ctx.user.id);
         }
-
-        await updateAnalysisStatus(input.sessionId, "processing");
-
-        try {
-          const typedFiles = analysis.files as Array<{ name: string; fileKey?: string; url?: string }>;
-
-          const loadFileParts = async (fileList: typeof typedFiles) => {
-            const parts = await Promise.all(
-              fileList.map(async (file) => {
-                const fileKey = file.fileKey || file.url;
-                if (!fileKey) return null;
-                const buffer = await storageRead(fileKey);
-                if (!buffer) return null;
-                const base64 = buffer.toString("base64");
-                return {
-                  type: "image_url" as const,
-                  image_url: { url: `data:application/pdf;base64,${base64}` },
-                };
-              })
-            );
-            return parts.filter((p): p is NonNullable<typeof parts[number]> => p !== null);
+        if (analysis.status === "completed" && analysis.analysisResult) {
+          return {
+            status: "completed" as const,
+            result: analysis.analysisResult as PolicyAnalysis,
           };
-
-          const generalInfoSchema = {
-            type: "object",
-            properties: {
-              policyName: { type: "string" },
-              insurerName: { type: "string" },
-              policyNumber: { type: "string" },
-              policyType: { type: "string" },
-              insuranceCategory: { type: "string", enum: ["health", "life", "car", "home"] },
-              monthlyPremium: { type: "string" },
-              annualPremium: { type: "string" },
-              startDate: { type: "string" },
-              endDate: { type: "string" },
-              importantNotes: { type: "array", items: { type: "string" } },
-              fineprint: { type: "array", items: { type: "string" } },
-            },
-            required: ["policyName", "insurerName", "policyNumber", "policyType", "insuranceCategory", "monthlyPremium", "annualPremium", "startDate", "endDate", "importantNotes", "fineprint"],
-            additionalProperties: false,
-          };
-
-          const duplicateCoveragesSchema = {
-            type: "array",
-            items: {
-              type: "object",
-              properties: {
-                id: { type: "string" },
-                title: { type: "string" },
-                coverageIds: { type: "array", items: { type: "string" } },
-                sourceFiles: { type: "array", items: { type: "string" } },
-                explanation: { type: "string" },
-                recommendation: { type: "string" },
-              },
-              required: ["id", "title", "coverageIds", "sourceFiles", "explanation", "recommendation"],
-              additionalProperties: false,
-            },
-          };
-
-          const analysisResponseFormat = {
-            type: "json_schema" as const,
-            json_schema: {
-              name: "policy_analysis",
-              strict: true,
-              schema: {
-                type: "object",
-                properties: {
-                  coverages: {
-                    type: "array",
-                    items: {
-                      type: "object",
-                      properties: {
-                        id: { type: "string" },
-                        title: { type: "string" },
-                        category: { type: "string" },
-                        limit: { type: "string" },
-                        details: { type: "string" },
-                        eligibility: { type: "string" },
-                        copay: { type: "string" },
-                        maxReimbursement: { type: "string" },
-                        exclusions: { type: "string" },
-                        waitingPeriod: { type: "string" },
-                        sourceFile: { type: "string" },
-                      },
-                      required: ["id", "title", "category", "limit", "details", "eligibility", "copay", "maxReimbursement", "exclusions", "waitingPeriod", "sourceFile"],
-                      additionalProperties: false,
-                    },
-                  },
-                  generalInfo: generalInfoSchema,
-                  summary: { type: "string" },
-                  duplicateCoverages: duplicateCoveragesSchema,
-                },
-                required: ["coverages", "generalInfo", "summary", "duplicateCoverages"],
-                additionalProperties: false,
-              },
-            },
-          };
-
-          const logLlmUsage = async (resp: { usage?: { prompt_tokens?: number; completion_tokens?: number }; model?: string }) => {
-            if (resp.usage) {
-              await logApiUsage({
-                userId: analysis.userId ?? null,
-                sessionId: input.sessionId,
-                action: "analyze",
-                model: resp.model || ENV.llmModel,
-                promptTokens: resp.usage.prompt_tokens ?? 0,
-                completionTokens: resp.usage.completion_tokens ?? 0,
-              });
-            }
-          };
-
-          const runBatchAnalysis = async (fileList: typeof typedFiles, label: string): Promise<PolicyAnalysis> => {
-            const fileParts = await loadFileParts(fileList);
-            const response = await invokeLLM({
-              messages: [
-                { role: "system", content: ANALYSIS_SYSTEM_PROMPT },
-                {
-                  role: "user",
-                  content: [
-                    { type: "text" as const, text: `נא לנתח את פוליסות הביטוח הבאות (${label}) ולהחזיר את המידע בפורמט JSON המבוקש:` },
-                    ...fileParts,
-                  ],
-                },
-              ],
-              maxTokens: 65536,
-              response_format: analysisResponseFormat,
-            });
-            await logLlmUsage(response);
-            return parseLLMJson<PolicyAnalysis>(extractLLMContent(response));
-          };
-
-          let analysisResult: PolicyAnalysis;
-
-          if (typedFiles.length <= PDF_BATCH_SIZE) {
-            try {
-              analysisResult = await runBatchAnalysis(typedFiles, `${typedFiles.length} קבצים`);
-            } catch (err: any) {
-              console.error("[Analysis] Failed:", err.message);
-              throw new Error("שגיאה בעיבוד תגובת ה-AI. התגובה לא התקבלה בפורמט תקין. נסה להעלות פחות קבצים בבת אחת.");
-            }
-          } else {
-            const batches: (typeof typedFiles)[] = [];
-            for (let i = 0; i < typedFiles.length; i += PDF_BATCH_SIZE) {
-              batches.push(typedFiles.slice(i, i + PDF_BATCH_SIZE));
-            }
-
-            const batchResults: PolicyAnalysis[] = [];
-            for (let batchIdx = 0; batchIdx < batches.length; batchIdx++) {
-              try {
-                const result = await runBatchAnalysis(
-                  batches[batchIdx],
-                  `${batches[batchIdx].length} קבצים, קבוצה ${batchIdx + 1} מתוך ${batches.length}`
-                );
-                result.coverages = result.coverages.map(c => ({ ...c, id: `b${batchIdx}-${c.id}` }));
-                if (result.duplicateCoverages) {
-                  result.duplicateCoverages = result.duplicateCoverages.map(d => ({
-                    ...d,
-                    id: `b${batchIdx}-${d.id}`,
-                    coverageIds: d.coverageIds.map(cid => `b${batchIdx}-${cid}`),
-                  }));
-                }
-                batchResults.push(result);
-              } catch (batchErr: any) {
-                console.error(`[Analysis] Batch ${batchIdx + 1}/${batches.length} failed:`, batchErr.message);
-                throw new Error(`שגיאה בעיבוד קבוצה ${batchIdx + 1} מתוך ${batches.length}. ${batchErr.message}`);
-              }
-            }
-
-            const allCoverages = batchResults.flatMap(r => r.coverages);
-            const withinBatchDuplicates = batchResults.flatMap(r => r.duplicateCoverages || []);
-            const coverageSummary = allCoverages.map(c => ({
-              id: c.id, title: c.title, category: c.category,
-              sourceFile: c.sourceFile, copay: c.copay, limit: c.limit,
-            }));
-            const batchGeneralInfos = batchResults.map((r, i) => ({ batch: i, ...r.generalInfo }));
-            const batchSummariesText = batchResults.map((r, i) => `קבוצה ${i + 1}: ${r.summary}`).join("\n");
-
-            try {
-              const mergeResponse = await invokeLLM({
-                messages: [
-                  { role: "system", content: BATCH_MERGE_PROMPT },
-                  {
-                    role: "user",
-                    content: `מידע כללי מכל הקבוצות:\n${JSON.stringify(batchGeneralInfos, null, 2)}\n\nסיכומי הקבוצות:\n${batchSummariesText}\n\nכל הכיסויים (תקציר):\n${JSON.stringify(coverageSummary, null, 2)}\n\nכיסויים כפולים שזוהו בתוך קבוצות:\n${JSON.stringify(withinBatchDuplicates, null, 2)}`,
-                  },
-                ],
-                maxTokens: 16384,
-                response_format: {
-                  type: "json_schema" as const,
-                  json_schema: {
-                    name: "batch_merge",
-                    strict: true,
-                    schema: {
-                      type: "object",
-                      properties: {
-                        generalInfo: generalInfoSchema,
-                        summary: { type: "string" },
-                        duplicateCoverages: duplicateCoveragesSchema,
-                      },
-                      required: ["generalInfo", "summary", "duplicateCoverages"],
-                      additionalProperties: false,
-                    },
-                  },
-                },
-              });
-              await logLlmUsage(mergeResponse);
-              const merged = parseLLMJson<{
-                generalInfo: PolicyAnalysis["generalInfo"];
-                summary: string;
-                duplicateCoverages: NonNullable<PolicyAnalysis["duplicateCoverages"]>;
-              }>(extractLLMContent(mergeResponse));
-
-              const allDups = [...withinBatchDuplicates, ...(merged.duplicateCoverages || [])];
-              const seenIds = new Set<string>();
-              const uniqueDups = allDups.filter(d => {
-                if (seenIds.has(d.id)) return false;
-                seenIds.add(d.id);
-                return true;
-              });
-
-              analysisResult = {
-                coverages: allCoverages,
-                generalInfo: merged.generalInfo,
-                summary: merged.summary,
-                duplicateCoverages: uniqueDups,
-              };
-            } catch (mergeErr: any) {
-              console.error("[Analysis] Merge step failed:", mergeErr.message);
-              analysisResult = {
-                coverages: allCoverages,
-                generalInfo: batchResults[0].generalInfo,
-                summary: batchSummariesText,
-                duplicateCoverages: withinBatchDuplicates,
-              };
-            }
-          }
-
-          const userProfile = ctx.user ? await getUserProfile(ctx.user.id) : null;
-          if (userProfile) {
-            try {
-              const profileText = buildProfileContext(userProfile);
-              const insightsResponse = await invokeLLM({
-                messages: [
-                  { role: "system", content: PERSONALIZED_INSIGHTS_PROMPT },
-                  {
-                    role: "user",
-                    content: `פרופיל הלקוח:\n${profileText}\n\nניתוח הפוליסה:\n${JSON.stringify(analysisResult, null, 2)}`,
-                  },
-                ],
-                response_format: {
-                  type: "json_schema",
-                  json_schema: {
-                    name: "personalized_insights",
-                    strict: true,
-                    schema: {
-                      type: "object",
-                      properties: {
-                        personalizedInsights: {
-                          type: "array",
-                          items: {
-                            type: "object",
-                            properties: {
-                              id: { type: "string" },
-                              type: { type: "string", enum: ["warning", "recommendation", "positive"] },
-                              title: { type: "string" },
-                              description: { type: "string" },
-                              relevantCoverage: { type: "string" },
-                              priority: { type: "string", enum: ["high", "medium", "low"] },
-                            },
-                            required: ["id", "type", "title", "description", "relevantCoverage", "priority"],
-                            additionalProperties: false,
-                          },
-                        },
-                      },
-                      required: ["personalizedInsights"],
-                      additionalProperties: false,
-                    },
-                  },
-                },
-              });
-
-              try {
-                const insightsContent = extractLLMContent(insightsResponse);
-                const parsed = parseLLMJson(insightsContent);
-                analysisResult.personalizedInsights = parsed.personalizedInsights;
-              } catch {
-              }
-
-              const insightsUsage = insightsResponse.usage;
-              if (insightsUsage) {
-                await logApiUsage({
-                  userId: analysis.userId ?? null,
-                  sessionId: input.sessionId,
-                  action: "analyze",
-                  model: insightsResponse.model || ENV.llmModel,
-                  promptTokens: insightsUsage.prompt_tokens ?? 0,
-                  completionTokens: insightsUsage.completion_tokens ?? 0,
-                });
-              }
-            } catch (insightError) {
-              console.error("[Insights] Failed to generate personalized insights:", insightError);
-            }
-          }
-
-          const detectedCategory = analysisResult.generalInfo?.insuranceCategory;
-          await updateAnalysisStatus(input.sessionId, "completed", {
-            analysisResult,
-            insuranceCategory: detectedCategory,
-          });
-
-          // Audit log
-          await audit({
-            userId: ctx.user.id,
-            action: "create_analysis",
-            resource: "analysis",
-            resourceId: input.sessionId,
-          });
-
-          return { status: "completed" as const, result: analysisResult };
-        } catch (error: any) {
-          await updateAnalysisStatus(input.sessionId, "error", {
-            errorMessage: error.message || "Unknown error",
-          });
-          throw error;
         }
+
+        if (analysis.status === "error") {
+          await resetAnalysisForRetry(input.sessionId);
+        }
+
+        policyAnalysisWorker.nudge();
+
+        return {
+          status: analysis.status === "processing" ? "processing" as const : "queued" as const,
+          result: null,
+        };
       }),
 
     /** Get analysis results for a session (ownership verified) */
@@ -1536,13 +1700,14 @@ export const appRouter = router({
         if (!analysis.userId || analysis.userId !== ctx.user.id) {
           throw new TRPCError({ code: "FORBIDDEN", message: "Access denied" });
         }
-        // Audit log
-        await audit({
-          userId: ctx.user.id,
-          action: "view_analysis",
-          resource: "analysis",
-          resourceId: input.sessionId,
-        });
+        if (analysis.status === "completed" && analysis.analysisResult) {
+          await audit({
+            userId: ctx.user.id,
+            action: "view_analysis",
+            resource: "analysis",
+            resourceId: input.sessionId,
+          });
+        }
 
         return {
           sessionId: analysis.sessionId,
@@ -1840,11 +2005,18 @@ ${JSON.stringify(payload, null, 2)}`,
   gmail: router({
     /** Get Gmail OAuth URL for connecting a user's Gmail account */
     getAuthUrl: protectedProcedure
-      .input(z.object({ redirectUri: z.string().optional() }))
-      .query(async ({ ctx }) => {
+      .input(z.object({
+        redirectUri: z.string().optional(),
+        returnTo: z.string().optional(),
+      }))
+      .query(async ({ ctx, input }) => {
         if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
         const exp = Math.floor(Date.now() / 1000) + 600;
-        const state = signOAuthState({ userId: ctx.user.id, exp });
+        const state = signOAuthState({
+          userId: ctx.user.id,
+          exp,
+          returnTo: normalizeReturnTo(input.returnTo),
+        });
         const redirectUri = `${ENV.appUrl}/api/gmail/callback`;
         const url = getGmailAuthUrl(redirectUri, state);
         return { url };
@@ -1952,6 +2124,52 @@ ${JSON.stringify(payload, null, 2)}`,
         });
       }),
 
+    getInsuranceDiscoveries: protectedProcedure
+      .input(z.object({ limit: z.number().min(1).max(100).default(25) }))
+      .query(async ({ ctx, input }) => {
+        if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
+        return listInsuranceDiscoveries(ctx.user.id, input.limit);
+      }),
+
+    discoverPolicies: protectedProcedure
+      .input(z.object({ daysBack: z.number().min(1).max(365).default(90) }))
+      .query(async ({ ctx, input }) => {
+        if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
+        return discoverPolicyPdfs(ctx.user.id, input.daysBack);
+      }),
+
+    importPolicyPdf: protectedProcedure
+      .input(z.object({
+        connectionId: z.number().int().positive(),
+        gmailMessageId: z.string().min(1).max(128),
+        attachmentId: z.string().min(1).max(255),
+        filename: z.string().min(1).max(255),
+        insuranceCategory: z.enum(["health", "life", "car", "home"]).nullable().optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
+        const result = await importPolicyPdfFromGmail({
+          userId: ctx.user.id,
+          connectionId: input.connectionId,
+          gmailMessageId: input.gmailMessageId,
+          attachmentId: input.attachmentId,
+          filename: input.filename,
+          insuranceCategory: input.insuranceCategory ?? null,
+        });
+        await audit({
+          userId: ctx.user.id,
+          action: "import_policy_from_gmail",
+          resource: "gmail",
+          resourceId: result.sessionId,
+          details: JSON.stringify({
+            connectionId: input.connectionId,
+            gmailMessageId: input.gmailMessageId,
+            filename: input.filename,
+          }),
+        });
+        return result;
+      }),
+
     /** Clear all invoices and rescan from scratch */
     clearAndRescan: protectedProcedure
       .input(z.object({ daysBack: z.number().min(1).max(90).default(7) }))
@@ -1961,6 +2179,7 @@ ${JSON.stringify(payload, null, 2)}`,
         if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
         // Delete all existing invoices for this user
         await db.delete(smartInvoices).where(eq(smartInvoices.userId, ctx.user.id));
+        await db.delete(insuranceArtifacts).where(eq(insuranceArtifacts.userId, ctx.user.id));
         // Audit log
         await audit({
           userId: ctx.user.id,

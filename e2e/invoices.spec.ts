@@ -192,6 +192,13 @@ test.describe("Expenses API", () => {
     expect([200, 401]).toContain(response.status());
   });
 
+  test("tRPC getInsuranceDiscoveries endpoint is reachable", async ({ request }) => {
+    const response = await request.get(
+      '/api/trpc/gmail.getInsuranceDiscoveries?input=%7B%22limit%22%3A10%7D'
+    );
+    expect([200, 401]).toContain(response.status());
+  });
+
   test("tRPC addManualExpense endpoint requires auth", async ({ request }) => {
     const response = await request.post("/api/trpc/gmail.addManualExpense", {
       data: {

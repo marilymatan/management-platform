@@ -1,31 +1,31 @@
 import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import { motion, type Variants } from "framer-motion";
-import { Sparkles, MessageSquare, Users, Wallet, FolderOpen, ArrowLeft } from "lucide-react";
+import { Sparkles, MessageSquare, Users, Shield, Mail, ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { getLoginUrl } from "@/const";
 import { trpc } from "@/lib/trpc";
 
 const FEATURES = [
   {
-    icon: MessageSquare,
-    title: "Assistant חכם",
-    description: "שאל כל דבר על הבית, הכסף, המסמכים והביטוחים שלך",
+    icon: Shield,
+    title: "תיק ביטוחי אחד ברור",
+    description: "ראה במקום אחד את הפוליסות, החידושים, הכפילויות והמסמכים החשובים שלך",
+  },
+  {
+    icon: Mail,
+    title: "גילוי חכם מהמייל",
+    description: "חיבור Gmail עוזר ללומי לזהות חיובי ביטוח, מסמכים והתראות בלי להתחיל מאפס",
   },
   {
     icon: Users,
     title: "המשפחה שלי",
-    description: "תמונת משפחה חכמה עם הקשר לביטוחים, מסמכים ואירועים",
+    description: "מודל משפחתי עם בני בית, דגשים בריאותיים וכיסוי שצריך בדיקה או השלמה",
   },
   {
-    icon: Wallet,
-    title: "הוצאות והכנסות",
-    description: "סריקה אוטומטית מהמייל, אגרגציות חודשיות והוספה ידנית",
-  },
-  {
-    icon: FolderOpen,
-    title: "מסמכים וביטוחים",
-    description: "כל המסמכים שלך מסודרים במקום אחד עם הקשר מלא ללקוח",
+    icon: MessageSquare,
+    title: "לומי על כל התיק",
+    description: "שאל כל דבר על הביטוחים, הילדים, המסמכים והחיובים שלך מתוך אותו הקשר",
   },
 ];
 
@@ -114,7 +114,7 @@ export default function Login() {
             </div>
             <div>
               <h1 className="text-2xl font-bold text-white tracking-wide">Lumi</h1>
-              <p className="text-sm text-white/50">העוזר של משק הבית</p>
+              <p className="text-sm text-white/50">מנהלת הביטוח המשפחתי</p>
             </div>
           </motion.div>
 
@@ -122,10 +122,10 @@ export default function Login() {
             variants={itemVariants}
             className="text-3xl lg:text-4xl font-bold text-white leading-tight mb-4"
           >
-            ה-AI שמבין
+            לגלות מה באמת קורה
             <br />
             <span className="text-transparent bg-clip-text bg-gradient-to-l from-amber-300 to-orange-200">
-              את כל הבית שלך
+              בתיק הביטוחי של המשפחה
             </span>
           </motion.h2>
 
@@ -133,7 +133,7 @@ export default function Login() {
             variants={itemVariants}
             className="text-base text-white/60 mb-10 max-w-md leading-relaxed"
           >
-            שאלו את לומי כל דבר על הכסף, המשפחה, המסמכים והביטוחים שלכם, וקבלו תשובות שמבוססות על הנתונים שלכם.
+            לומי מרכזת את הביטוחים, מזהה חידושים וחפיפות, ובונה תמונה אחת ברורה של הכיסוי והמסמכים של כל המשפחה.
           </motion.p>
 
           <motion.div variants={containerVariants} className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -172,7 +172,7 @@ export default function Login() {
             </div>
             <h3 className="text-2xl font-bold text-foreground mb-2">ברוכים הבאים</h3>
             <p className="text-sm text-muted-foreground">
-              התחברו עם חשבון Google כדי להתחיל
+              התחברו עם חשבון Google כדי להתחיל לבנות את מרכז הפיקוד הביטוחי שלכם
             </p>
           </div>
 
@@ -201,7 +201,7 @@ export default function Login() {
               </div>
               <div className="relative flex justify-center">
                 <span className="bg-background px-4 text-xs text-muted-foreground">
-                  כניסה מאובטחת באמצעות Google
+                  כניסה מאובטחת באמצעות Google בלבד
                 </span>
               </div>
             </div>
@@ -213,7 +213,7 @@ export default function Login() {
               </div>
               <p className="text-[11px] text-muted-foreground/60 leading-relaxed max-w-[300px] mx-auto">
                 בהתחברות אתם מאשרים את תנאי השימוש ומדיניות הפרטיות שלנו.
-                אנחנו לא שומרים את סיסמת Google שלכם.
+                אנחנו לא שומרים את סיסמת Google שלכם, והגישה נשמרת מוצפנת ומבוקרת.
               </p>
             </div>
           </div>

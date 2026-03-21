@@ -1,6 +1,8 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { appRouter } from "./routers";
 import type { TrpcContext } from "./_core/context";
+import { createAnalysis, resetAnalysisForRetry } from "./db";
+import { policyAnalysisWorker } from "./policyAnalysisWorker";
 
 // Mock storage
 vi.mock("./storage", () => ({
@@ -69,11 +71,38 @@ vi.mock("./db", () => ({
         errorMessage: null,
       };
     }
+    if (sessionId === "processing-session") {
+      return {
+        sessionId: "processing-session",
+        userId: 1,
+        files: [{ name: "processing.pdf", size: 1024, fileKey: "policies/processing-session/test.pdf" }],
+        status: "processing",
+        analysisResult: null,
+        errorMessage: null,
+      };
+    }
+    if (sessionId === "error-session") {
+      return {
+        sessionId: "error-session",
+        userId: 1,
+        files: [{ name: "error.pdf", size: 1024, fileKey: "policies/error-session/test.pdf" }],
+        status: "error",
+        analysisResult: null,
+        errorMessage: "Processing failed",
+      };
+    }
     return null;
   }),
   updateAnalysisStatus: vi.fn(),
+  resetAnalysisForRetry: vi.fn().mockResolvedValue(undefined),
   addChatMessage: vi.fn(),
   getChatHistory: vi.fn().mockResolvedValue([]),
+}));
+
+vi.mock("./policyAnalysisWorker", () => ({
+  policyAnalysisWorker: {
+    nudge: vi.fn(),
+  },
 }));
 
 function createPublicContext(): TrpcContext {
@@ -111,6 +140,12 @@ function createAuthenticatedContext(): TrpcContext {
   };
 }
 
+beforeEach(() => {
+  vi.mocked(createAnalysis).mockClear();
+  vi.mocked(policyAnalysisWorker.nudge).mockClear();
+  vi.mocked(resetAnalysisForRetry).mockClear();
+});
+
 describe("policy.upload", () => {
   it("rejects unauthenticated requests", async () => {
     const ctx = createPublicContext();
@@ -143,6 +178,13 @@ describe("policy.upload", () => {
     expect(result.files).toHaveLength(1);
     expect(result.files[0].name).toBe("test-policy.pdf");
     expect(result.files[0].fileKey).toBeDefined();
+    expect(createAnalysis).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 1,
+        status: "pending",
+      })
+    );
+    expect(policyAnalysisWorker.nudge).toHaveBeenCalled();
   });
 
   it("handles multiple files", async () => {
@@ -157,6 +199,41 @@ describe("policy.upload", () => {
     });
 
     expect(result.files).toHaveLength(2);
+  });
+});
+
+describe("policy.analyze", () => {
+  it("returns completed analysis immediately when already ready", async () => {
+    const ctx = createAuthenticatedContext();
+    const caller = appRouter.createCaller(ctx);
+
+    const result = await caller.policy.analyze({ sessionId: "existing-session" });
+
+    expect(result.status).toBe("completed");
+    expect(result.result?.generalInfo.policyName).toBe("פוליסת בריאות כללית");
+    expect(policyAnalysisWorker.nudge).not.toHaveBeenCalled();
+  });
+
+  it("nudges the worker for pending sessions", async () => {
+    const ctx = createAuthenticatedContext();
+    const caller = appRouter.createCaller(ctx);
+
+    const result = await caller.policy.analyze({ sessionId: "no-analysis" });
+
+    expect(result.status).toBe("queued");
+    expect(result.result).toBeNull();
+    expect(policyAnalysisWorker.nudge).toHaveBeenCalled();
+  });
+
+  it("resets failed sessions before requeueing", async () => {
+    const ctx = createAuthenticatedContext();
+    const caller = appRouter.createCaller(ctx);
+
+    const result = await caller.policy.analyze({ sessionId: "error-session" });
+
+    expect(result.status).toBe("queued");
+    expect(resetAnalysisForRetry).toHaveBeenCalledWith("error-session");
+    expect(policyAnalysisWorker.nudge).toHaveBeenCalled();
   });
 });
 
