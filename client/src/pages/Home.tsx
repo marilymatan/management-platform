@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { useRoute, useLocation } from "wouter";
 import { nanoid } from "nanoid";
 import { trpc } from "@/lib/trpc";
@@ -42,6 +42,9 @@ const STEPS = [
   { icon: <Sparkles className="size-5" />, title: "סריקה", desc: "AI סורק את הפרטים" },
   { icon: <LayoutDashboard className="size-5" />, title: "תוצאות", desc: "צפה בכיסויים והמלצות" },
 ];
+
+const PENDING_ANALYSIS_REFETCH_MS = 3_000;
+const PENDING_ANALYSIS_STALE_MS = 90_000;
 
 function getRequestedAnalysisFileFilter() {
   if (typeof window === "undefined") {
@@ -153,6 +156,7 @@ export default function Home() {
   const [intakeMode, setIntakeMode] = useState("upload");
   const [activeTab, setActiveTab] = useState("coverages");
   const [selectedFileFilter, setSelectedFileFilter] = useState<string | null>(null);
+  const kickedPendingSessionRef = useRef<string | null>(null);
   const requestedSessionId = params?.sessionId && params.sessionId !== "new" ? params.sessionId : null;
   const requestedFileFilter = getRequestedAnalysisFileFilter();
   const requestedCoverageCategory = getRequestedAnalysisCoverageCategory();
@@ -164,7 +168,9 @@ export default function Home() {
     {
       enabled: !!requestedSessionId,
       retry: false,
-      refetchInterval: query => getAnalysisPollInterval(query.state.data, { intervalMs: 10_000 }),
+      refetchInterval: query => getAnalysisPollInterval(query.state.data, {
+        intervalMs: query.state.data?.status === "pending" ? PENDING_ANALYSIS_REFETCH_MS : 10_000,
+      }),
       refetchIntervalInBackground: false,
       refetchOnWindowFocus: false,
       refetchOnReconnect: false,
@@ -172,6 +178,7 @@ export default function Home() {
   );
 
   useEffect(() => {
+    kickedPendingSessionRef.current = null;
     if (!requestedSessionId) {
       setFiles([]);
       setIsUploading(false);
@@ -203,6 +210,45 @@ export default function Home() {
     }
     setAnalysisResult(null);
   }, [getAnalysisQuery.data?.result, getAnalysisQuery.data?.status, requestedSessionId, utils]);
+
+  useEffect(() => {
+    if (!requestedSessionId || !getAnalysisQuery.data) {
+      return;
+    }
+
+    if (
+      getAnalysisQuery.data.status !== "pending"
+      || getAnalysisQuery.data.startedAt
+      || (getAnalysisQuery.data.attemptCount ?? 0) > 0
+      || kickedPendingSessionRef.current === requestedSessionId
+    ) {
+      return;
+    }
+
+    kickedPendingSessionRef.current = requestedSessionId;
+
+    void analyzeMutation
+      .mutateAsync({ sessionId: requestedSessionId })
+      .then(async (result) => {
+        if (result.status === "completed" && result.result) {
+          setAnalysisResult(result.result);
+        }
+
+        await Promise.all([
+          getAnalysisQuery.refetch(),
+          utils.policy.getUserAnalyses.invalidate(),
+        ]);
+      })
+      .catch(() => {
+        kickedPendingSessionRef.current = null;
+      });
+  }, [
+    analyzeMutation,
+    getAnalysisQuery.data,
+    getAnalysisQuery.refetch,
+    requestedSessionId,
+    utils.policy.getUserAnalyses,
+  ]);
 
   useEffect(() => {
     setSelectedFileFilter(resolveSelectedFileFilter(analysisResult, requestedFileFilter));
@@ -257,17 +303,21 @@ export default function Home() {
     if (!requestedSessionId) {
       return;
     }
+    const isPendingRetry = getAnalysisQuery.data?.status === "pending";
     try {
       await analyzeMutation.mutateAsync({ sessionId: requestedSessionId });
       await Promise.all([
         getAnalysisQuery.refetch(),
         utils.policy.getUserAnalyses.invalidate(),
       ]);
-      toast.success("הסריקה חזרה לתור העיבוד.");
+      toast.success(isPendingRetry ? "לומי מנסה להתחיל את העיבוד שוב." : "הסריקה חזרה לתור העיבוד.");
     } catch (error: any) {
-      toast.error("לא הצלחנו להחזיר את הסריקה לעיבוד: " + (error.message || "נסה שוב"));
+      toast.error(
+        (isPendingRetry ? "לא הצלחנו להתחיל את העיבוד: " : "לא הצלחנו להחזיר את הסריקה לעיבוד: ")
+        + (error.message || "נסה שוב")
+      );
     }
-  }, [analyzeMutation, getAnalysisQuery.refetch, requestedSessionId, utils.policy.getUserAnalyses]);
+  }, [analyzeMutation, getAnalysisQuery.data?.status, getAnalysisQuery.refetch, requestedSessionId, utils.policy.getUserAnalyses]);
 
   const handleReset = useCallback(() => {
     setFiles([]);
@@ -299,6 +349,7 @@ export default function Home() {
   }, [requestedSessionId]);
 
   const analysisStatus = getAnalysisQuery.data?.status ?? null;
+  const isQueuedAnalysis = analysisStatus === "pending";
   const analysisProgress = getAnalysisProgressSnapshot({
     status: analysisStatus,
     files: getAnalysisQuery.data?.files,
@@ -320,11 +371,19 @@ export default function Home() {
         return null;
       })()
     : null;
+  const isPendingAnalysisStale =
+    analysisStatus === "pending"
+    && getAnalysisPollInterval(getAnalysisQuery.data, {
+      nowMs: Date.now(),
+      maxAgeMs: PENDING_ANALYSIS_STALE_MS,
+    }) === false;
+  const isProcessingAnalysisStale =
+    analysisStatus === "processing"
+    && getAnalysisPollInterval(getAnalysisQuery.data, { nowMs: Date.now() }) === false;
   const isSavedAnalysisStale =
-    isViewingSavedAnalysis &&
-    !analysisResult &&
-    (analysisStatus === "pending" || analysisStatus === "processing") &&
-    getAnalysisPollInterval(getAnalysisQuery.data, { nowMs: Date.now() }) === false;
+    isViewingSavedAnalysis
+    && !analysisResult
+    && (isPendingAnalysisStale || isProcessingAnalysisStale);
   const currentStep = analysisResult ? 2 : 0;
   const isSavedAnalysisLoading =
     isViewingSavedAnalysis &&
@@ -496,34 +555,57 @@ export default function Home() {
                   <Sparkles className="absolute inset-0 m-auto size-6 text-primary" />
                 </div>
                 <p className="text-base font-semibold text-foreground">
-                  {analysisStatus === "processing" ? "הפוליסה שלך נמצאת עכשיו בעיבוד" : "הקבצים נשמרו וממתינים לעיבוד"}
+                  {analysisStatus === "processing" ? "הפוליסה שלך נמצאת עכשיו בעיבוד" : "הקבצים בתור לעיבוד"}
                 </p>
                 <p className="text-sm text-muted-foreground mt-2">
-                  אפשר לצאת מהעמוד או לסגור את הדפדפן. לומי ממשיך לעבד את הפוליסה ברקע והתוצאות יופיעו כאן כשהן יהיו מוכנות.
+                  {isQueuedAnalysis
+                    ? "לומי כבר שמר את הקבצים ומנסה להתחיל את הסריקה ברקע. אפשר להישאר בעמוד, לצאת ממנו או לסגור את הדפדפן."
+                    : "אפשר לצאת מהעמוד או לסגור את הדפדפן. לומי ממשיך לעבד את הפוליסה ברקע והתוצאות יופיעו כאן כשהן יהיו מוכנות."}
                 </p>
                 {analysisProgress ? (
                   <div className="mt-5 rounded-2xl border border-primary/15 bg-background/80 p-4 text-start space-y-3">
                     <div className="flex items-start justify-between gap-3 flex-wrap">
                       <div>
-                        <p className="text-xs text-muted-foreground">התקדמות הסריקה</p>
+                        <p className="text-xs text-muted-foreground">
+                          {isQueuedAnalysis ? "קבצים שנשמרו לסריקה" : "התקדמות הסריקה"}
+                        </p>
                         <p className="text-2xl font-bold text-foreground" style={{ fontVariantNumeric: "tabular-nums" }}>
-                          {analysisProgress.visibleFileCount}/{analysisProgress.totalFiles}
+                          {isQueuedAnalysis
+                            ? analysisProgress.totalFiles
+                            : `${analysisProgress.visibleFileCount}/${analysisProgress.totalFiles}`}
                         </p>
                       </div>
                       <p className="text-xs text-muted-foreground max-w-[220px] leading-relaxed text-end">
-                        לומי מחלק את הסריקה לקבוצות של עד {POLICY_ANALYSIS_BATCH_SIZE} קבצים כדי לשמור על יציבות ומהירות.
+                        {isQueuedAnalysis
+                          ? `לומי יתחיל לעבד אוטומטית בקבוצות של עד ${POLICY_ANALYSIS_BATCH_SIZE} קבצים.`
+                          : `לומי מחלק את הסריקה לקבוצות של עד ${POLICY_ANALYSIS_BATCH_SIZE} קבצים כדי לשמור על יציבות ומהירות.`}
                       </p>
                     </div>
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
-                        <span>{analysisStatus === "processing" ? "קצב הסריקה הפעילה" : "הקבצים ממתינים להתחלת עיבוד"}</span>
-                        <span style={{ fontVariantNumeric: "tabular-nums" }}>{Math.round(analysisProgress.progressPercent)}%</span>
+                    {isQueuedAnalysis ? (
+                      <div className="space-y-2" data-testid="policy-analysis-queued-progress">
+                        <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+                          <span>ממתין להתחלת עיבוד</span>
+                          <span>{analysisProgress.totalFiles} קבצים בתור</span>
+                        </div>
+                        <div className="relative h-2 overflow-hidden rounded-full bg-primary/15" aria-hidden="true">
+                          <div className="absolute inset-y-0 end-0 w-1/3 rounded-full bg-primary animate-queue-progress" />
+                        </div>
+                        <p className="text-xs leading-relaxed text-muted-foreground text-end">
+                          ברגע שהסריקה תתחיל, לומי יציג כאן אחוזי התקדמות אמיתיים במקום מצב ההמתנה.
+                        </p>
                       </div>
-                      <Progress
-                        value={analysisProgress.progressPercent}
-                        aria-label={`התקדמות סריקת פוליסה ${Math.round(analysisProgress.progressPercent)} אחוז`}
-                      />
-                    </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+                          <span>קצב הסריקה הפעילה</span>
+                          <span style={{ fontVariantNumeric: "tabular-nums" }}>{Math.round(analysisProgress.progressPercent)}%</span>
+                        </div>
+                        <Progress
+                          value={analysisProgress.progressPercent}
+                          aria-label={`התקדמות סריקת פוליסה ${Math.round(analysisProgress.progressPercent)} אחוז`}
+                        />
+                      </div>
+                    )}
                   </div>
                 ) : getAnalysisQuery.data?.files?.length ? (
                   <p className="text-xs text-muted-foreground mt-3">
@@ -534,8 +616,14 @@ export default function Home() {
                   <Button variant="outline" onClick={() => setLocation("/insurance")}>
                     חזרה לביטוחים
                   </Button>
-                  <Button onClick={() => getAnalysisQuery.refetch()} disabled={getAnalysisQuery.isFetching}>
-                    רענן סטטוס
+                  <Button
+                    onClick={isQueuedAnalysis ? handleRetryAnalysis : () => getAnalysisQuery.refetch()}
+                    disabled={isQueuedAnalysis ? analyzeMutation.isPending : getAnalysisQuery.isFetching}
+                    data-testid={isQueuedAnalysis ? "policy-analysis-kick" : undefined}
+                  >
+                    {isQueuedAnalysis
+                      ? analyzeMutation.isPending ? "מנסה להתחיל עיבוד..." : "נסה להתחיל עיבוד"
+                      : "רענן סטטוס"}
                   </Button>
                 </div>
               </CardContent>
