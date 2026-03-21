@@ -296,8 +296,10 @@ export function looksLikeInsuranceMessage({
 
   const text = [subject, from, body.slice(0, 1200), attachmentFilename ?? ""].join(" ");
 
-  if (EXCLUDED_INSURANCE_PATTERNS.some((pattern) => pattern.test(text))) {
-    return false;
+  const isExcluded = EXCLUDED_INSURANCE_PATTERNS.some((pattern) => pattern.test(text));
+  if (isExcluded) {
+    return STRONG_INSURANCE_PHRASES.some((p) => p.test(text))
+      || HEBREW_INSURANCE_KEYWORDS.filter((p) => p.test(text)).length >= 2;
   }
 
   if (STRONG_INSURANCE_PHRASES.some((pattern) => pattern.test(text))) {
@@ -320,6 +322,14 @@ export function looksLikeInsuranceMessage({
 
   return false;
 }
+
+const INSURANCE_PDF_FILENAME_PATTERNS = [
+  /insurance/i,
+  /פוליס/,
+  /ביטוח/,
+  /פרמיה/,
+  /מבוטח/,
+];
 
 export function looksLikeInsurancePdfCandidate({
   subject,
@@ -344,8 +354,14 @@ export function looksLikeInsurancePdfCandidate({
 
   const text = [subject, from, body.slice(0, 1200), attachmentFilename ?? ""].join(" ");
 
-  if (EXCLUDED_INSURANCE_PATTERNS.some((pattern) => pattern.test(text))) {
-    return false;
+  const isExcluded = EXCLUDED_INSURANCE_PATTERNS.some((pattern) => pattern.test(text));
+  if (isExcluded) {
+    return STRONG_INSURANCE_PHRASES.some((p) => p.test(text))
+      || HEBREW_INSURANCE_KEYWORDS.filter((p) => p.test(text)).length >= 2;
+  }
+
+  if (attachmentFilename && INSURANCE_PDF_FILENAME_PATTERNS.some((p) => p.test(attachmentFilename))) {
+    return true;
   }
 
   if (STRONG_INSURANCE_PHRASES.some((pattern) => pattern.test(text))) {
@@ -403,27 +419,37 @@ export async function extractInsuranceDiscoveryData({
           content: `אתה מומחה בזיהוי מיילים ומסמכים ביטוחיים בישראל.
 המטרה היא לזהות האם המייל קשור לביטוח פרטי של המשתמש (ביטוח בריאות, חיים, רכב, דירה), ומה בדיוק נמצא בו.
 
-חשוב מאוד: אם המייל אינו קשור לביטוח (למשל: חשבוניות כלליות, קבלות תרומה, חשבונות תקשורת, מנויי תוכנה, הזמנות, אישורי תשלום שאינם ביטוח, privacy policy) — החזר confidence: 0 ו-artifactType: "other".
+כלל ברזל: המייל חייב להיות מחברת ביטוח, סוכן ביטוח, או קופת חולים, ולעסוק בפוליסת ביטוח, פרמיה, חידוש, תביעה או כיסוי ביטוחי.
+אם אף אחד מהתנאים האלה לא מתקיים — החזר confidence: 0.
 
-דוגמאות למיילים שאינם ביטוחיים (confidence צריך להיות 0):
-- חשבוניות מחברות תקשורת (בזק, פרטנר, סלקום)
-- חשבוניות מחברות תוכנה (Elementor, Wix, Google)
+חברות ביטוח מוכרות בישראל: הראל, מגדל, כלל ביטוח, הפניקס, מנורה מבטחים, איילון, שירביט, הכשרה, ביטוח ישיר, AIG, שומרה, ליברה, דיקלה, שלמה ביטוח, 9 ביטוח, פספורטכארד, ווישור.
+קופות חולים (ביטוח משלים): מכבי, כללית, מאוחדת, לאומית.
+
+מיילים שאינם ביטוחיים — ALWAYS confidence: 0 ו-artifactType: "other":
+- חשבוניות/קבלות מחברות תקשורת (בזק, פרטנר, סלקום, הוט)
+- חשבוניות מחברות תוכנה (Elementor, Wix, Google, Microsoft)
+- חשבוניות חשמל, מים, ארנונה, גז
+- קבלות מעסקים, חנויות, מסעדות
+- אישורי רכישה מחנויות אונליין (Amazon, AliExpress)
 - קבלות תרומה לעמותות
-- אישורי רכישה מחנויות אונליין
-- חשבוניות חשמל, מים, ארנונה
+- חשבוניות מייצוג עסקי (רואי חשבון, עורכי דין) שאינן קשורות לביטוח
+- מיילים עם "privacy policy", "terms of service" או "premium subscription"
+- חשבוניות הוראת קבע שאינן ביטוח
+- כל מייל שהשולח אינו חברת ביטוח/סוכן ביטוח והתוכן אינו עוסק בפוליסה ביטוחית
 
-דוגמאות למיילים ביטוחיים (confidence גבוה):
-- מסמכי פוליסה מחברות ביטוח (הראל, מגדל, כלל, הפניקס, מנורה)
+מיילים ביטוחיים — confidence 0.7+:
+- מסמכי פוליסה מחברות ביטוח
 - הודעות חידוש ביטוח
 - חיובי פרמיה מחברות ביטוח
 - עדכוני כיסוי ביטוחי
 - סטטוס תביעות ביטוח
+- תשלום לסוכן ביטוח עבור פוליסה
 
 החזר JSON בלבד ללא הסברים עם השדות:
 - provider: שם הגוף הביטוחי או הסוכן המרכזי (אם אינו ביטוחי, כתוב את שם השולח)
 - insuranceCategory: health/life/car/home/unknown
 - artifactType: policy_document/renewal_notice/premium_notice/coverage_update/claim_update/other
-- confidence: מספר בין 0 ל-1. 0 = לא קשור לביטוח כלל. 0.5+ = קשור לביטוח. 0.8+ = בוודאות גבוהה קשור לביטוח
+- confidence: מספר בין 0 ל-1. 0 = לא קשור לביטוח כלל. 0.7+ = קשור לביטוח. 0.85+ = בוודאות גבוהה
 - summary: סיכום קצר בעברית עד 140 תווים שמתאר מה זוהה
 - actionHint: פעולה מומלצת קצרה בעברית למשתמש
 - policyNumber: מספר פוליסה אם נמצא, אחרת null

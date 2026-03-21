@@ -53,13 +53,56 @@ describe("gmailInsuranceDiscovery", () => {
     ).toBe(true);
   });
 
-  it("recognizes generic policy PDF emails as discovery candidates", () => {
+  it("recognizes insurance PDF filenames as discovery candidates", () => {
+    expect(
+      looksLikeInsurancePdfCandidate({
+        subject: "מסמכי הפוליסה שלך",
+        from: "notifications@harel-group.co.il",
+        body: "מצורף מסמך הפוליסה שלך",
+        attachmentFilename: "פוליסה_ביטוח_רכב.pdf",
+        detectedProvider: null,
+      })
+    ).toBe(true);
+  });
+
+  it("rejects generic policy.pdf from unknown senders without insurance signals", () => {
     expect(
       looksLikeInsurancePdfCandidate({
         subject: "Your documents are ready",
         from: "notifications@example.com",
         body: "Please review the attached file.",
         attachmentFilename: "policy.pdf",
+        detectedProvider: null,
+      })
+    ).toBe(false);
+  });
+
+  it("rejects non-insurance invoices and receipts", () => {
+    expect(
+      looksLikeInsuranceMessage({
+        subject: "You have a new credit invoice CMIL2600005824 from Elementor",
+        from: "billing@elementor.com",
+        body: "Thank you for your payment. Privacy policy applies.",
+        detectedProvider: null,
+      })
+    ).toBe(false);
+
+    expect(
+      looksLikeInsuranceMessage({
+        subject: "פירוט חיובים בגין שירותי בזק",
+        from: "noreply@bezeq.co.il",
+        body: "חשבון חודשי לשירותי תקשורת",
+        detectedProvider: { name: "בזק", category: "תקשורת" },
+      })
+    ).toBe(false);
+  });
+
+  it("detects insurance messages from known insurance company domains", () => {
+    expect(
+      looksLikeInsuranceMessage({
+        subject: "עדכון חשבון",
+        from: "noreply@migdal.co.il",
+        body: "שלום רב",
         detectedProvider: null,
       })
     ).toBe(true);

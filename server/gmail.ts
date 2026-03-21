@@ -1330,7 +1330,7 @@ export async function scanGmailForInvoices(
           userFilterContext: buildUserFilterContextForLLM(userFilters),
         });
 
-        if (discovery.confidence < 0.5) {
+        if (discovery.confidence < 0.6) {
           console.log(`[Gmail] Skipping low-confidence discovery (${discovery.confidence.toFixed(2)}): "${email.subject}" from "${email.from}"`);
           continue;
         }
