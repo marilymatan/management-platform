@@ -4,6 +4,12 @@ export type SchemaCompatibilityDb = {
   execute: (query: any) => Promise<{ rows: unknown[] }>;
 };
 
+export type MigrationTrackingEntry = {
+  tag: string;
+  hash: string;
+  when: number;
+};
+
 type ColumnSpec = {
   columnName: string;
   ddl: string;
@@ -141,6 +147,16 @@ export async function hasExistingCoreSchema(db: SchemaCompatibilityDb) {
 
 export function shouldSyncMigrationTracking(trackedCount: number, existingCoreSchema: boolean) {
   return trackedCount === 0 && existingCoreSchema;
+}
+
+export function getMissingMigrationTrackingEntries(
+  migrations: MigrationTrackingEntry[],
+  appliedMigrationTags: Set<string>,
+  trackedHashes: Set<string>,
+) {
+  return migrations.filter(
+    (migration) => appliedMigrationTags.has(migration.tag) && !trackedHashes.has(migration.hash),
+  );
 }
 
 export async function getAppliedMigrationTags(db: SchemaCompatibilityDb, tags: string[]) {
