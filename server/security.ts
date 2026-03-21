@@ -1,6 +1,6 @@
 import type { Request, Response, NextFunction, Express } from "express";
 import geoip from "geoip-country";
-import { audit } from "./auditLog";
+import { audit, getClientIp } from "./auditLog";
 import cors from "cors";
 
 // ─── Geo-blocking: Israel only ──────────────────────────────────────────────
@@ -11,23 +11,6 @@ const ALLOWED_COUNTRIES = new Set(["IL"]); // Israel only
 const GEO_EXEMPT_PATHS = ["/api/health", "/api/oauth", "/api/gmail/callback", "/api/config"];
 
 const GEO_EXEMPT_HOSTNAMES: string[] = [];
-
-function getClientIp(req: Request): string {
-  const cfIp = req.headers["cf-connecting-ip"];
-  if (typeof cfIp === "string") {
-    return cfIp.trim();
-  }
-  // x-forwarded-for: first IP is the original client
-  const forwarded = req.headers["x-forwarded-for"];
-  if (typeof forwarded === "string") {
-    return forwarded.split(",")[0].trim();
-  }
-  const realIp = req.headers["x-real-ip"];
-  if (typeof realIp === "string") {
-    return realIp.trim();
-  }
-  return req.ip || req.socket.remoteAddress || "";
-}
 
 function getEffectiveHost(req: Request): string {
   const originalHost = req.headers["x-original-host"];

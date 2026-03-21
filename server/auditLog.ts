@@ -117,6 +117,10 @@ export async function audit(entry: AuditEntry): Promise<void> {
  * Handles X-Forwarded-For, X-Real-IP, and direct connection.
  */
 export function getClientIp(req: { headers: Record<string, string | string[] | undefined>; ip?: string; socket?: { remoteAddress?: string } }): string {
+  const cfIp = req.headers["cf-connecting-ip"];
+  if (typeof cfIp === "string") {
+    return cfIp.trim();
+  }
   const xff = req.headers["x-forwarded-for"];
   if (xff) {
     const ip = Array.isArray(xff) ? xff[0] : xff.split(",")[0].trim();
