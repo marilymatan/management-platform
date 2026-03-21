@@ -1,16 +1,21 @@
 import { useLocation } from "wouter";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { FamilyCoverageGrid } from "@/components/family/FamilyCoverageGrid";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { trpc } from "@/lib/trpc";
-import { Loader2, Shield } from "lucide-react";
+import { AlertCircle, Loader2, Shield } from "lucide-react";
 
 export default function FamilyInsuranceMap() {
-  useAuth({ redirectOnUnauthenticated: true });
+  const { user, loading } = useAuth({ redirectOnUnauthenticated: true });
   const [, setLocation] = useLocation();
-  const { data, isLoading } = trpc.insuranceMap.get.useQuery();
+  const { data, error, isLoading, refetch } = trpc.insuranceMap.get.useQuery(undefined, {
+    enabled: !!user,
+    retry: 1,
+    refetchOnWindowFocus: false,
+  });
 
-  if (isLoading) {
+  if (loading || isLoading) {
     return (
       <div className="page-container">
         <Card>
@@ -23,8 +28,46 @@ export default function FamilyInsuranceMap() {
     );
   }
 
+  if (error) {
+    return (
+      <div className="page-container">
+        <Card data-testid="family-insurance-map-error">
+          <CardContent className="py-10 text-center space-y-3">
+            <div className="size-12 rounded-2xl bg-destructive/10 text-destructive mx-auto flex items-center justify-center">
+              <AlertCircle className="size-6" />
+            </div>
+            <p className="text-base font-semibold">לא הצלחנו לטעון את מפת הביטוחים</p>
+            <p className="text-sm text-muted-foreground">
+              אפשר לנסות שוב עכשיו, או לחזור למסך הביטוחים ולהמשיך משם.
+            </p>
+            <div className="flex items-center justify-center gap-3 pt-2">
+              <Button variant="outline" onClick={() => setLocation("/insurance")}>
+                למסך הביטוחים
+              </Button>
+              <Button onClick={() => void refetch()}>
+                נסה שוב
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
   if (!data) {
-    return null;
+    return (
+      <div className="page-container">
+        <Card data-testid="family-insurance-map-empty">
+          <CardContent className="py-10 text-center space-y-3">
+            <p className="text-base font-semibold">עדיין אין מפת ביטוחים להצגה</p>
+            <p className="text-sm text-muted-foreground">
+              ברגע שלומי יזהה פוליסות או בני בית, המפה המשפחתית תופיע כאן.
+            </p>
+            <Button onClick={() => setLocation("/insurance/new")}>סריקה חדשה</Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
   }
 
   return (

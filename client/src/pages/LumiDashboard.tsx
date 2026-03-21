@@ -300,8 +300,8 @@ export default function LumiDashboard() {
     if (!gmailConnected) {
       items.push({
         id: "gmail-connect",
-        title: "חבר Gmail כדי שלומי יזהה חיובי ביטוח ומסמכים",
-        description: "סריקה מהמייל עוזרת לגלות פוליסות, חידושים וחיובים בלי להתחיל מאפס.",
+        title: "חבר Gmail כדי שלומי יזהה מסמכי ביטוח",
+        description: "סריקה מהמייל עוזרת לגלות פוליסות, חידושים, פרמיות ומסמכים בלי להתחיל מאפס.",
         path: "/money",
         cta: "חיבור Gmail",
         tone: "info",
@@ -321,7 +321,7 @@ export default function LumiDashboard() {
           priorityDiscovery.actionHint
           || priorityDiscovery.summary
           || "לומי זיהה מהמייל פרמיות, חידושים או מסמכים ביטוחיים שיכולים לעזור לבנות את התיק.",
-        path: "/expenses",
+        path: "/money",
         cta: priorityDiscovery.artifactType === "renewal_notice" ? "בדוק חידוש" : "פתח גילויים",
         tone: priorityDiscovery.artifactType === "renewal_notice" ? "warning" : "info",
       });
@@ -761,12 +761,12 @@ export default function LumiDashboard() {
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-sm font-semibold flex items-center gap-2">
                 <TrendingUp className="size-4 text-muted-foreground" />
-                חיובים ומסמכים מהמייל
+                מיילים ומסמכי ביטוח
               </h3>
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => setLocation("/expenses")}
+                onClick={() => setLocation("/money")}
                 className="text-xs gap-1"
               >
                 צפה בהכל
@@ -787,7 +787,7 @@ export default function LumiDashboard() {
             </ResponsiveContainer>
             {totalMonthlyExpenses > 0 && (
               <p className="text-xs text-muted-foreground mt-3">
-                סך ההוצאות החודשיות שזוהו במסמכים: {formatInsuranceCurrency(totalMonthlyExpenses)}
+                סך חיובי הביטוח החודשיים שזוהו במייל: {formatInsuranceCurrency(totalMonthlyExpenses)}
               </p>
             )}
           </CardContent>

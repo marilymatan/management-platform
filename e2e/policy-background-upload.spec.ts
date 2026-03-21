@@ -60,6 +60,7 @@ const completedAnalysis = {
       policyNumber: "POL-123",
       policyType: "ביטוח בריאות",
       insuranceCategory: "health",
+      premiumPaymentPeriod: "monthly",
       monthlyPremium: "180 ש\"ח",
       annualPremium: "2,160 ש\"ח",
       startDate: "01/01/2026",
@@ -101,11 +102,11 @@ test.describe("Background policy upload", () => {
             return createTrpcSuccessResponse(null);
           case "policy.getAnalysis":
             analysisCallCount += 1;
-            if (analysisCallCount < 3) {
+            if (analysisCallCount === 1) {
               return createTrpcSuccessResponse({
                 sessionId: "session-bg-1",
                 files: [{ name: "policy.pdf", size: 1024, fileKey: "policies/session-bg-1/file.pdf" }],
-                status: analysisCallCount === 1 ? "pending" : "processing",
+                status: "pending",
                 result: null,
                 errorMessage: null,
                 insuranceCategory: null,
@@ -146,5 +147,50 @@ test.describe("Background policy upload", () => {
 
     await expect(page.getByText("זהו סיכום הפוליסה המלא לאחר עיבוד הרקע.")).toBeVisible();
     await expect(page.getByText("ניתוחים פרטיים")).toBeVisible();
+  });
+
+  test("shows a recovery state when a saved analysis stops receiving updates", async ({ page }) => {
+    await page.route("**/api/trpc/**", async (route) => {
+      const url = new URL(route.request().url());
+      const procedureNames = url.pathname.replace("/api/trpc/", "").split(",");
+      const responses = procedureNames.map((procedureName) => {
+        switch (procedureName) {
+          case "auth.me":
+            return createTrpcSuccessResponse(testUser);
+          case "profile.getImageUrl":
+            return createTrpcSuccessResponse(null);
+          case "policy.getAnalysis":
+            return createTrpcSuccessResponse({
+              sessionId: "session-stale-1",
+              files: [{ name: "policy.pdf", size: 1024, fileKey: "policies/session-stale-1/file.pdf" }],
+              status: "processing",
+              createdAt: "2026-03-01T09:00:00.000Z",
+              startedAt: "2026-03-01T09:05:00.000Z",
+              lastHeartbeatAt: "2026-03-01T09:10:00.000Z",
+              updatedAt: "2026-03-01T09:10:00.000Z",
+              attemptCount: 2,
+              result: null,
+              errorMessage: null,
+              insuranceCategory: null,
+            });
+          case "policy.getUserAnalyses":
+            return createTrpcSuccessResponse([]);
+          default:
+            return createTrpcSuccessResponse(null);
+        }
+      });
+
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(url.searchParams.get("batch") === "1" ? responses : responses[0]),
+      });
+    });
+
+    await page.goto("/insurance/session-stale-1");
+
+    await expect(page.getByTestId("policy-analysis-stale")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText("נראה שהסריקה נתקעה בדרך")).toBeVisible();
+    await expect(page.getByTestId("policy-analysis-retry-stale")).toBeVisible();
   });
 });

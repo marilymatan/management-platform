@@ -683,6 +683,7 @@ interface DocumentClassificationInput {
   sourceType: "analysis_file" | "invoice_pdf";
   sourceId?: string | null;
   manualType: "insurance" | "money" | "health" | "education" | "family" | "other";
+  familyMemberId?: number | null;
 }
 
 const familyRelationOrder: Record<FamilyMemberInput["relation"], number> = {
@@ -852,6 +853,18 @@ export async function deleteFamilyMember(userId: number, memberId: number) {
   if (!existing) {
     throw new Error("Family member not found");
   }
+  await db
+    .update(documentClassifications)
+    .set({
+      familyMemberId: null,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(documentClassifications.userId, userId),
+        eq(documentClassifications.familyMemberId, memberId)
+      )
+    );
   await db.delete(familyMembers).where(eq(familyMembers.id, memberId));
   await syncFamilyProfile(userId);
 }
@@ -924,6 +937,7 @@ export async function upsertDocumentClassification(userId: number, data: Documen
     sourceType: data.sourceType,
     sourceId: data.sourceId ?? null,
     manualType: data.manualType,
+    familyMemberId: data.familyMemberId ?? null,
   };
   await db
     .insert(documentClassifications)
@@ -934,6 +948,7 @@ export async function upsertDocumentClassification(userId: number, data: Documen
         sourceType: data.sourceType,
         sourceId: data.sourceId ?? null,
         manualType: data.manualType,
+        familyMemberId: data.familyMemberId ?? null,
         updatedAt: new Date(),
       },
     });

@@ -98,7 +98,7 @@ const ACTION_LABELS: Record<string, string> = {
   connect_gmail: "חיבור Gmail",
   disconnect_gmail: "ניתוק Gmail",
   scan_gmail: "סריקת Gmail",
-  clear_invoices: "ניקוי חשבוניות",
+  clear_invoices: "ניקוי מסמכי Gmail",
   admin_view_users: "צפייה במשתמשים",
   admin_view_stats: "צפייה בסטטיסטיקות",
   geo_blocked: "חסימת Geo",
@@ -154,7 +154,7 @@ function OverviewTab() {
     { label: "סה״כ קריאות", value: stats.totalCalls, icon: Zap, color: "bg-amber-100 text-amber-600" },
     { label: "עלות כוללת", value: formatCost(stats.totalCost), icon: DollarSign, color: "bg-rose-100 text-rose-600" },
     { label: "חיבורי Gmail", value: stats.totalGmailConnections, icon: Mail, color: "bg-teal-100 text-teal-600" },
-    { label: "חשבוניות", value: stats.totalInvoices, icon: Receipt, color: "bg-orange-100 text-orange-600" },
+    { label: "מסמכי Gmail", value: stats.totalInvoices, icon: Receipt, color: "bg-orange-100 text-orange-600" },
   ];
 
   const dailyData = stats.dailyUsage.map(d => ({
@@ -458,8 +458,8 @@ function UserDetailPanel({ data }: { data: any }) {
       )}
 
       <div>
-        <h4 className="text-sm font-semibold mb-2">חשבוניות</h4>
-        <p className="text-sm text-muted-foreground">{data.invoices.count} חשבוניות</p>
+        <h4 className="text-sm font-semibold mb-2">מסמכי Gmail</h4>
+        <p className="text-sm text-muted-foreground">{data.invoices.count} מסמכי Gmail</p>
       </div>
 
       {data.recentAudit.length > 0 && (

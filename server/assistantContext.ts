@@ -54,6 +54,7 @@ type AssistantInsuranceDiscovery = {
 };
 
 type AssistantFamilyMember = {
+  id?: number | null;
   relation?: string | null;
   fullName?: string | null;
   ageLabel?: string | null;
@@ -70,6 +71,7 @@ type AssistantDocumentClassification = {
   sourceType?: string | null;
   sourceId?: string | null;
   manualType?: string | null;
+  familyMemberId?: number | null;
   updatedAt?: string | Date | null;
 };
 
@@ -670,6 +672,7 @@ function scoreDocument(document: AssistantDocumentClassification, signals: Quest
     document.sourceType,
     document.sourceId,
     document.manualType,
+    document.familyMemberId ? String(document.familyMemberId) : "",
   ].filter(Boolean).join(" "));
   let score = 0;
   if (signals.isDocumentQuestion) score += 14;
@@ -905,7 +908,23 @@ function formatRelevantInvoicesSection(relevantInvoices: RelevantInvoice[]) {
   }).join("\n");
 }
 
-function formatDocumentType(manualType?: string | null) {
+function buildFamilyMemberNameMap(familyMembers: AssistantFamilyMember[]) {
+  return new Map(
+    familyMembers
+      .filter((member) => member.id && member.fullName)
+      .map((member) => [member.id as number, member.fullName as string])
+  );
+}
+
+function formatDocumentType(
+  manualType?: string | null,
+  familyMemberId?: number | null,
+  familyMembersMap?: Map<number, string>
+) {
+  if (manualType === "family") {
+    return familyMemberId ? familyMembersMap?.get(familyMemberId) ?? "בן משפחה" : "בן משפחה";
+  }
+
   const labels: Record<string, string> = {
     insurance: "ביטוח",
     money: "כסף",
@@ -918,30 +937,43 @@ function formatDocumentType(manualType?: string | null) {
   return labels[manualType] ?? manualType;
 }
 
-function formatRelevantDocumentsSection(relevantDocuments: RelevantDocument[]) {
+function formatRelevantDocumentsSection(relevantDocuments: RelevantDocument[], familyMembers: AssistantFamilyMember[]) {
   if (!relevantDocuments.length) {
     return "אין מסמכים מסווגים שרלוונטיים במיוחד לשאלה הנוכחית.";
   }
 
+  const familyMembersMap = buildFamilyMemberNameMap(familyMembers);
   return relevantDocuments.map(({ document }) => {
-    return `- ${document.documentKey} | סוג מסמך: ${formatDocumentType(document.manualType)} | מקור: ${document.sourceType || "לא ידוע"}${document.sourceId ? ` | מקור מזהה: ${document.sourceId}` : ""}`;
+    return `- ${document.documentKey} | סוג מסמך: ${formatDocumentType(document.manualType, document.familyMemberId, familyMembersMap)} | מקור: ${document.sourceType || "לא ידוע"}${document.sourceId ? ` | מקור מזהה: ${document.sourceId}` : ""}`;
   }).join("\n");
 }
 
-function buildDocumentSummary(documentClassifications: AssistantDocumentClassification[]) {
+function buildDocumentSummary(
+  documentClassifications: AssistantDocumentClassification[],
+  familyMembers: AssistantFamilyMember[]
+) {
   if (!documentClassifications.length) {
     return "- אין עדיין מסמכים מסווגים";
   }
 
+  const familyMembersMap = buildFamilyMemberNameMap(familyMembers);
   const counts = documentClassifications.reduce<Record<string, number>>((acc, document) => {
-    const key = document.manualType || "other";
+    const key =
+      document.manualType === "family"
+        ? `family:${formatDocumentType(document.manualType, document.familyMemberId, familyMembersMap)}`
+        : document.manualType || "other";
     acc[key] = (acc[key] ?? 0) + 1;
     return acc;
   }, {});
 
   return Object.entries(counts)
     .sort((a, b) => b[1] - a[1])
-    .map(([type, count]) => `- ${formatDocumentType(type)}: ${count}`)
+    .map(([type, count]) => {
+      if (type.startsWith("family:")) {
+        return `- ${type.replace("family:", "")}: ${count}`;
+      }
+      return `- ${formatDocumentType(type)}: ${count}`;
+    })
     .join("\n");
 }
 
@@ -1306,7 +1338,7 @@ export function buildAssistantSystemPrompt(params: {
   };
 
   const policyPortfolioSnapshot = buildPolicyPortfolioSnapshot(completedAnalyses);
-  const documentSummary = buildDocumentSummary(params.documentClassifications);
+  const documentSummary = buildDocumentSummary(params.documentClassifications, params.familyMembers);
   const profileText = params.profile ? buildProfileContext(params.profile) || "לא הוזן פרופיל מפורט" : "לא הוזן פרופיל מפורט";
   const familyText = buildFamilyMembersContext(params.familyMembers);
 
@@ -1362,7 +1394,7 @@ ${formatRelevantInsuranceDiscoveriesSection(relevantInsuranceDiscoveries)}
 ${documentSummary}
 
 מסמכים מסווגים רלוונטיים:
-${formatRelevantDocumentsSection(relevantDocuments)}
+${formatRelevantDocumentsSection(relevantDocuments, params.familyMembers)}
 
 חיבורים:
 - Gmail מחובר: ${params.gmailConnections.length > 0 ? "כן" : "לא"}`;

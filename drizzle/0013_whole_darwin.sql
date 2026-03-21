@@ -1,0 +1,2 @@
+ALTER TABLE "document_classifications" ADD COLUMN "family_member_id" integer;--> statement-breakpoint
+CREATE INDEX "document_classifications_family_member_idx" ON "document_classifications" USING btree ("user_id","family_member_id");

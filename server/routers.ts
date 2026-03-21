@@ -242,6 +242,7 @@ function buildCategorySummaryPayload(analyses: any[]) {
       insurerName: analysis.analysisResult?.generalInfo?.insurerName ?? "לא מצוין בפוליסה",
       policyNumber: analysis.analysisResult?.generalInfo?.policyNumber ?? "לא מצוין בפוליסה",
       policyType: analysis.analysisResult?.generalInfo?.policyType ?? "לא מצוין בפוליסה",
+      premiumPaymentPeriod: analysis.analysisResult?.generalInfo?.premiumPaymentPeriod ?? "unknown",
       monthlyPremium: analysis.analysisResult?.generalInfo?.monthlyPremium ?? "לא מצוין בפוליסה",
       annualPremium: analysis.analysisResult?.generalInfo?.annualPremium ?? "לא מצוין בפוליסה",
       startDate: analysis.analysisResult?.generalInfo?.startDate ?? "לא מצוין בפוליסה",
@@ -1210,6 +1211,7 @@ export const appRouter = router({
         sourceType: z.enum(["analysis_file", "invoice_pdf"]),
         sourceId: z.string().max(128).nullable().optional(),
         manualType: z.enum(["insurance", "money", "health", "education", "family", "other"]),
+        familyMemberId: z.number().int().positive().nullable().optional(),
       }))
       .mutation(async ({ ctx, input }) => {
         if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
@@ -1219,7 +1221,7 @@ export const appRouter = router({
           action: "update_document_classification",
           resource: "document",
           resourceId: input.documentKey,
-          details: JSON.stringify({ sourceType: input.sourceType, manualType: input.manualType }),
+          details: JSON.stringify({ sourceType: input.sourceType, manualType: input.manualType, familyMemberId: input.familyMemberId ?? null }),
         });
         return { success: true, classification };
       }),
@@ -1232,6 +1234,7 @@ export const appRouter = router({
             sourceType: z.enum(["analysis_file", "invoice_pdf"]),
             sourceId: z.string().max(128).nullable().optional(),
             manualType: z.enum(["insurance", "money", "health", "education", "family", "other"]),
+            familyMemberId: z.number().int().positive().nullable().optional(),
           })
         ).min(1).max(200),
       }))
@@ -1713,6 +1716,11 @@ export const appRouter = router({
           sessionId: analysis.sessionId,
           files: analysis.files,
           status: analysis.status,
+          createdAt: analysis.createdAt,
+          startedAt: analysis.startedAt ?? null,
+          lastHeartbeatAt: analysis.lastHeartbeatAt ?? null,
+          updatedAt: analysis.updatedAt ?? null,
+          attemptCount: analysis.attemptCount ?? 0,
           result: analysis.analysisResult as PolicyAnalysis | null,
           errorMessage: analysis.errorMessage,
           insuranceCategory: analysis.insuranceCategory ?? null,

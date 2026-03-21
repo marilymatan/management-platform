@@ -23,6 +23,7 @@ describe("insuranceOverview", () => {
     expect(parseInsuranceMoneyValue("1.234,50")).toBe(1234.5);
     expect(parseInsuranceMoneyValue("2,450")).toBe(2450);
     expect(parseInsuranceMoneyValue("12,5")).toBe(12.5);
+    expect(parseInsuranceMoneyValue(4785)).toBe(4785);
     expect(parseInsuranceMoneyValue("")).toBe(0);
     expect(formatInsuranceCurrency(1234.5)).toBe("₪1,235");
   });
@@ -38,6 +39,7 @@ describe("insuranceOverview", () => {
     expect(shortYearDate?.getMonth()).toBe(2);
     expect(shortYearDate?.getDate()).toBe(15);
     expect(parseInsuranceDate("March 20, 2026")?.getFullYear()).toBe(2026);
+    expect(parseInsuranceDate(new Date("2026-03-20T00:00:00.000Z"))?.getFullYear()).toBe(2026);
     expect(parseInsuranceDate("לא מצוין בפוליסה")).toBeNull();
     expect(parseInsuranceDate("not-a-date")).toBeNull();
   });
@@ -284,5 +286,34 @@ describe("insuranceOverview", () => {
     expect(overview.insights.some((insight) => insight.title === "כיסוי חיובי" && insight.tone === "success")).toBe(true);
     expect(overview.insights.some((insight) => insight.title === "בדיקה כללית" && insight.tone === "info")).toBe(true);
     expect(overview.prioritizedPolicies[0].sessionId).toBe("health-1");
+  });
+
+  it("treats annual premiums as annual labels and monthly equivalents for rollups", () => {
+    const overview = buildInsuranceOverview([
+      {
+        sessionId: "car-annual-1",
+        status: "completed",
+        createdAt: new Date("2026-02-05T00:00:00.000Z"),
+        files: [{ name: "car.pdf" }],
+        analysisResult: {
+          generalInfo: {
+            policyName: "רכב חובה ומקיף",
+            insurerName: "איי.די.איי",
+            annualPremium: "4,785",
+            premiumPaymentPeriod: "annual",
+            policyType: "רכב",
+            insuranceCategory: "car",
+          },
+          coverages: [{ id: "c2", title: "גרירה", category: "רכב" }],
+          duplicateCoverages: [],
+          personalizedInsights: [],
+          summary: "פוליסת רכב שנתית",
+        },
+      },
+    ]);
+
+    expect(overview.totalMonthlyPremium).toBeCloseTo(398.75);
+    expect(overview.completedPolicies[0]?.premiumLabel).toBe("₪4,785 לשנה");
+    expect(overview.categorySummaries.car.highlight).toContain("לחודש");
   });
 });

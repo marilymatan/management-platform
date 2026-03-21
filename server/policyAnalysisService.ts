@@ -2,7 +2,7 @@ import { ENV } from "./_core/env";
 import { invokeLLM } from "./_core/llm";
 import { getUserProfile, logApiUsage } from "./db";
 import { storageRead } from "./storage";
-import type { PolicyAnalysis } from "@shared/insurance";
+import type { PolicyAnalysis, PremiumPaymentPeriod } from "@shared/insurance";
 
 const ANALYSIS_SYSTEM_PROMPT = `אתה מומחה לניתוח פוליסות ביטוח בעברית. תפקידך לנתח את הטקסט של פוליסת הביטוח ולחלץ ממנו מידע מובנה.
 
@@ -29,6 +29,7 @@ const ANALYSIS_SYSTEM_PROMPT = `אתה מומחה לניתוח פוליסות ב
     "policyNumber": "מספר פוליסה",
     "policyType": "סוג הפוליסה",
     "insuranceCategory": "health | life | car | home",
+    "premiumPaymentPeriod": "monthly | annual | unknown",
     "monthlyPremium": "פרמיה חודשית",
     "annualPremium": "פרמיה שנתית",
     "startDate": "תאריך תחילה",
@@ -65,6 +66,13 @@ const ANALYSIS_SYSTEM_PROMPT = `אתה מומחה לניתוח פוליסות ב
   * ביטוח דירה (home): "מבנה", "תכולה", "צד ג", "נזקי טבע", "צנרת", "אחר"
   חשוב: תמיד השתמש בקטגוריות מגוונות ומתאימות לתוכן. אל תסווג את כל הכיסויים לקטגוריה אחת — חלק אותם לפי תת-נושאים ברורים.
 - הקפד על דיוק בנתונים הכספיים
+- קבע premiumPaymentPeriod כך:
+  * "monthly" רק אם המסמך מציין במפורש חיוב חודשי, פרמיה חודשית, לחודש, או 12 תשלומים חודשיים
+  * "annual" רק אם המסמך מציין במפורש חיוב שנתי, פרמיה שנתית, לשנה, או מחיר לכל תקופת הביטוח
+  * "unknown" אם התקופה לא ברורה מספיק
+- אם premiumPaymentPeriod הוא "annual", אל תעתיק את אותו סכום ל-monthlyPremium
+- אם premiumPaymentPeriod הוא "monthly", אל תעתיק את אותו סכום ל-annualPremium
+- אם מופיע סכום אחד בלבד והתקופה לא ברורה, החזר premiumPaymentPeriod = "unknown" ואל תנחש תקופה
 - שמור על שפה ברורה ומובנת בעברית
 - החזר JSON תקין בלבד
 
@@ -89,6 +97,7 @@ const BATCH_MERGE_PROMPT = `אתה מומחה לניתוח פוליסות ביט
 - בדוק כיסויים כפולים בין קבוצות שונות, לא רק בתוך אותה קבוצה
 - כיסוי נחשב כפול כאשר שני כיסויים מכסים את אותו סוג טיפול/שירות
 - עבור insuranceCategory, בחר את הקטגוריה הנפוצה ביותר
+- עבור premiumPaymentPeriod, בחר את התקופה רק אם היא ברורה מהקבוצות; אחרת החזר "unknown"
 - שמור על שפה ברורה ומובנת בעברית
 - החזר JSON תקין בלבד`;
 
@@ -174,6 +183,55 @@ function parseLLMJson<T = any>(raw: string): T {
     cleaned = fenceMatch[1].trim();
   }
   return JSON.parse(cleaned);
+}
+
+const POLICY_NOT_SPECIFIED = "לא מצוין בפוליסה";
+
+function isMissingPolicyValue(value: string | null | undefined) {
+  if (!value) return true;
+  const normalized = value.trim();
+  return normalized.length === 0 || normalized === POLICY_NOT_SPECIFIED || normalized === "לא צוין בפוליסה";
+}
+
+function normalizePremiumGeneralInfo<T extends PolicyAnalysis["generalInfo"]>(generalInfo: T): T {
+  const normalized = {
+    ...generalInfo,
+    premiumPaymentPeriod:
+      generalInfo.premiumPaymentPeriod === "monthly" ||
+      generalInfo.premiumPaymentPeriod === "annual" ||
+      generalInfo.premiumPaymentPeriod === "unknown"
+        ? generalInfo.premiumPaymentPeriod
+        : ("unknown" as PremiumPaymentPeriod),
+  };
+
+  if (normalized.premiumPaymentPeriod === "annual") {
+    const annualSource = isMissingPolicyValue(normalized.annualPremium)
+      ? normalized.monthlyPremium
+      : normalized.annualPremium;
+    normalized.annualPremium = annualSource ?? POLICY_NOT_SPECIFIED;
+    if (isMissingPolicyValue(normalized.monthlyPremium) || normalized.monthlyPremium === annualSource) {
+      normalized.monthlyPremium = POLICY_NOT_SPECIFIED;
+    }
+  }
+
+  if (normalized.premiumPaymentPeriod === "monthly") {
+    const monthlySource = isMissingPolicyValue(normalized.monthlyPremium)
+      ? normalized.annualPremium
+      : normalized.monthlyPremium;
+    normalized.monthlyPremium = monthlySource ?? POLICY_NOT_SPECIFIED;
+    if (isMissingPolicyValue(normalized.annualPremium) || normalized.annualPremium === monthlySource) {
+      normalized.annualPremium = POLICY_NOT_SPECIFIED;
+    }
+  }
+
+  return normalized as T;
+}
+
+function normalizeAnalysisPremiums(result: PolicyAnalysis): PolicyAnalysis {
+  return {
+    ...result,
+    generalInfo: normalizePremiumGeneralInfo(result.generalInfo),
+  };
 }
 
 function buildProfileContext(profile: any): string {
@@ -275,6 +333,7 @@ const generalInfoSchema = {
     policyNumber: { type: "string" },
     policyType: { type: "string" },
     insuranceCategory: { type: "string", enum: ["health", "life", "car", "home"] },
+    premiumPaymentPeriod: { type: "string", enum: ["monthly", "annual", "unknown"] },
     monthlyPremium: { type: "string" },
     annualPremium: { type: "string" },
     startDate: { type: "string" },
@@ -282,7 +341,7 @@ const generalInfoSchema = {
     importantNotes: { type: "array", items: { type: "string" } },
     fineprint: { type: "array", items: { type: "string" } },
   },
-  required: ["policyName", "insurerName", "policyNumber", "policyType", "insuranceCategory", "monthlyPremium", "annualPremium", "startDate", "endDate", "importantNotes", "fineprint"],
+  required: ["policyName", "insurerName", "policyNumber", "policyType", "insuranceCategory", "premiumPaymentPeriod", "monthlyPremium", "annualPremium", "startDate", "endDate", "importantNotes", "fineprint"],
   additionalProperties: false,
 } as const;
 
@@ -359,7 +418,7 @@ async function runBatchAnalysis(sessionId: string, userId: number | null | undef
     response_format: analysisResponseFormat,
   });
   await logLlmUsage(sessionId, userId, response);
-  return parseLLMJson<PolicyAnalysis>(extractLLMContent(response));
+  return normalizeAnalysisPremiums(parseLLMJson<PolicyAnalysis>(extractLLMContent(response)));
 }
 
 export async function analyzePolicySession(analysis: AnalysisRecord) {
@@ -465,19 +524,19 @@ export async function analyzePolicySession(analysis: AnalysisRecord) {
         seenIds.add(duplicate.id);
         return true;
       });
-      analysisResult = {
+      analysisResult = normalizeAnalysisPremiums({
         coverages: allCoverages,
-        generalInfo: merged.generalInfo,
+        generalInfo: normalizePremiumGeneralInfo(merged.generalInfo),
         summary: merged.summary,
         duplicateCoverages: uniqueDuplicates,
-      };
+      });
     } catch {
-      analysisResult = {
+      analysisResult = normalizeAnalysisPremiums({
         coverages: allCoverages,
         generalInfo: batchResults[0].generalInfo,
         summary: batchSummariesText,
         duplicateCoverages: withinBatchDuplicates,
-      };
+      });
     }
   }
 

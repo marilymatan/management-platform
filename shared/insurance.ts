@@ -1,4 +1,5 @@
 export type InsuranceCategory = "health" | "life" | "car" | "home";
+export type PremiumPaymentPeriod = "monthly" | "annual" | "unknown";
 
 /** A single coverage/benefit found in the policy */
 export interface Coverage {
@@ -23,6 +24,7 @@ export interface GeneralInfo {
   policyNumber: string;
   policyType: string;
   insuranceCategory?: InsuranceCategory;
+  premiumPaymentPeriod?: PremiumPaymentPeriod;
   monthlyPremium: string;
   annualPremium: string;
   startDate: string;

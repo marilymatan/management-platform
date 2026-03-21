@@ -33,6 +33,7 @@ vi.mock("./db", () => {
         sourceType: "analysis_file" | "invoice_pdf";
         sourceId?: string | null;
         manualType: "insurance" | "money" | "health" | "education" | "family" | "other";
+        familyMemberId?: number | null;
       }
     ) => {
       const existingIndex = mockDocumentClassifications.findIndex(
@@ -45,6 +46,7 @@ vi.mock("./db", () => {
         sourceType: input.sourceType,
         sourceId: input.sourceId ?? null,
         manualType: input.manualType,
+        familyMemberId: input.familyMemberId ?? null,
         createdAt: existingIndex >= 0 ? mockDocumentClassifications[existingIndex].createdAt : new Date(),
         updatedAt: new Date(),
       };
@@ -325,6 +327,7 @@ describe("documents router", () => {
           sourceType: "invoice_pdf",
           sourceId: "55",
           manualType: "family",
+          familyMemberId: 2,
         },
       ],
     });
@@ -335,6 +338,7 @@ describe("documents router", () => {
     const items = await caller.documents.getClassifications();
     expect(items).toHaveLength(2);
     expect(items.find((item) => item.documentKey === "invoice-55")?.manualType).toBe("family");
+    expect(items.find((item) => item.documentKey === "invoice-55")?.familyMemberId).toBe(2);
   });
 
   it("rejects unauthenticated document classification access", async () => {

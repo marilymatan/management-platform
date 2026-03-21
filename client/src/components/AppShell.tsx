@@ -16,7 +16,7 @@ import {
   Map,
   PiggyBank,
   Bell,
-  Wallet,
+  Mail,
   FolderOpen,
   Settings,
   LogOut,
@@ -42,7 +42,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: "המשפחה שלי", icon: <Users className="size-5" />, path: "/family" },
   { label: "לומי", icon: <MessageSquare className="size-5" />, path: "/chat", matchPaths: ["/assistant"] },
   { label: "תזכורות", icon: <Bell className="size-5" />, path: "/reminders" },
-  { label: "הוצאות/הכנסות", icon: <Wallet className="size-5" />, path: "/money", matchPaths: ["/expenses"] },
+  { label: "סריקת מיילים", icon: <Mail className="size-5" />, path: "/money", matchPaths: ["/expenses"] },
   { label: "מסמכים", icon: <FolderOpen className="size-5" />, path: "/documents" },
   { label: "לוח בקרה", icon: <BarChart3 className="size-5" />, path: "/admin", adminOnly: true },
 ];

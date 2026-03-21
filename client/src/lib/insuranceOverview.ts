@@ -1,4 +1,8 @@
-import { inferInsuranceCategory, type InsuranceCategory } from "@shared/insurance";
+import {
+  inferInsuranceCategory,
+  type InsuranceCategory,
+  type PremiumPaymentPeriod,
+} from "@shared/insurance";
 
 type AnalysisLike = {
   sessionId: string;
@@ -10,10 +14,12 @@ type AnalysisLike = {
     generalInfo?: {
       policyName?: string;
       insurerName?: string;
-      monthlyPremium?: string;
-      endDate?: string;
+      monthlyPremium?: string | number | null;
+      annualPremium?: string | number | null;
+      endDate?: string | Date | null;
       insuranceCategory?: InsuranceCategory;
       policyType?: string;
+      premiumPaymentPeriod?: PremiumPaymentPeriod;
     };
     coverages?: unknown[];
     duplicateCoverages?: Array<unknown>;
@@ -26,6 +32,8 @@ type AnalysisLike = {
     summary?: string;
   } | null;
 };
+
+type AnalysisGeneralInfo = NonNullable<NonNullable<AnalysisLike["analysisResult"]>["generalInfo"]>;
 
 type ProfileLike = {
   ownsApartment?: boolean;
@@ -52,6 +60,8 @@ export type InsuranceHubPolicy = {
   policyName: string;
   insurerName: string;
   monthlyPremium: number;
+  annualPremium: number;
+  premiumPaymentPeriod: PremiumPaymentPeriod;
   premiumLabel: string;
   renewalDate: Date | null;
   daysUntilRenewal: number | null;
@@ -103,8 +113,25 @@ export function formatInsuranceCurrency(value: number) {
   return `₪${Math.round(value).toLocaleString("he-IL")}`;
 }
 
-export function parseInsuranceMoneyValue(raw?: string | null) {
+function isKnownPremiumPeriod(value: unknown): value is PremiumPaymentPeriod {
+  return value === "monthly" || value === "annual" || value === "unknown";
+}
+
+type ResolvedPremiumInfo = {
+  annualPremium: number;
+  monthlyPremium: number;
+  premiumLabel: string;
+  premiumPaymentPeriod: PremiumPaymentPeriod;
+};
+
+export function parseInsuranceMoneyValue(raw?: unknown) {
   if (!raw) return 0;
+  if (typeof raw === "number") {
+    return Number.isFinite(raw) ? raw : 0;
+  }
+  if (typeof raw !== "string") {
+    return 0;
+  }
   const cleaned = raw.replace(/[^0-9,.-]/g, "");
   if (!cleaned) return 0;
   const commaCount = cleaned.split(",").length - 1;
@@ -126,8 +153,14 @@ export function parseInsuranceMoneyValue(raw?: string | null) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-export function parseInsuranceDate(raw?: string | null) {
+export function parseInsuranceDate(raw?: unknown) {
   if (!raw || raw === "לא צוין בפוליסה" || raw === "לא מצוין בפוליסה") {
+    return null;
+  }
+  if (raw instanceof Date) {
+    return Number.isNaN(raw.getTime()) ? null : raw;
+  }
+  if (typeof raw !== "string") {
     return null;
   }
   const parts = raw.match(/(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})/);
@@ -143,6 +176,52 @@ export function parseInsuranceDate(raw?: string | null) {
   }
   const parsed = new Date(raw);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function resolvePremiumInfo(info?: AnalysisGeneralInfo): ResolvedPremiumInfo {
+  const monthlyPremium = parseInsuranceMoneyValue(info?.monthlyPremium);
+  const annualPremium = parseInsuranceMoneyValue(info?.annualPremium);
+  const premiumPaymentPeriod = isKnownPremiumPeriod(info?.premiumPaymentPeriod)
+    ? info.premiumPaymentPeriod
+    : annualPremium > 0 && monthlyPremium <= 0
+      ? "annual"
+      : monthlyPremium > 0
+        ? "monthly"
+        : "unknown";
+
+  if (premiumPaymentPeriod === "annual" && annualPremium > 0) {
+    return {
+      monthlyPremium: annualPremium / 12,
+      annualPremium,
+      premiumPaymentPeriod,
+      premiumLabel: `${formatInsuranceCurrency(annualPremium)} לשנה`,
+    };
+  }
+
+  if (monthlyPremium > 0) {
+    return {
+      monthlyPremium,
+      annualPremium,
+      premiumPaymentPeriod: premiumPaymentPeriod === "unknown" ? "monthly" : premiumPaymentPeriod,
+      premiumLabel: `${formatInsuranceCurrency(monthlyPremium)} לחודש`,
+    };
+  }
+
+  if (annualPremium > 0) {
+    return {
+      monthlyPremium: annualPremium / 12,
+      annualPremium,
+      premiumPaymentPeriod: "annual",
+      premiumLabel: `${formatInsuranceCurrency(annualPremium)} לשנה`,
+    };
+  }
+
+  return {
+    monthlyPremium: 0,
+    annualPremium: 0,
+    premiumPaymentPeriod,
+    premiumLabel: "לא זוהתה פרמיה",
+  };
 }
 
 export function resolveInsuranceCategory(analysis: AnalysisLike): InsuranceCategory {
@@ -188,7 +267,7 @@ export function buildInsuranceOverview(analyses: AnalysisLike[] | undefined, pro
     .filter((analysis) => analysis.status === "completed" && analysis.analysisResult)
     .map((analysis) => {
       const info = analysis.analysisResult?.generalInfo;
-      const monthlyPremium = parseInsuranceMoneyValue(info?.monthlyPremium);
+      const premiumInfo = resolvePremiumInfo(info);
       const renewalDate = parseInsuranceDate(info?.endDate);
       const daysUntilRenewal = renewalDate
         ? Math.ceil((renewalDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24))
@@ -198,8 +277,10 @@ export function buildInsuranceOverview(analyses: AnalysisLike[] | undefined, pro
         category: resolveInsuranceCategory(analysis),
         policyName: info?.policyName || "פוליסה",
         insurerName: info?.insurerName || "לא ידוע",
-        monthlyPremium,
-        premiumLabel: monthlyPremium > 0 ? formatInsuranceCurrency(monthlyPremium) : "לא זוהתה פרמיה",
+        monthlyPremium: premiumInfo.monthlyPremium,
+        annualPremium: premiumInfo.annualPremium,
+        premiumPaymentPeriod: premiumInfo.premiumPaymentPeriod,
+        premiumLabel: premiumInfo.premiumLabel,
         renewalDate,
         daysUntilRenewal,
         coverageCount: analysis.analysisResult?.coverages?.length ?? 0,

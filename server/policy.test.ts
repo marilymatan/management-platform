@@ -29,6 +29,11 @@ vi.mock("./db", () => ({
         userId: 1,
         files: [{ name: "test.pdf", size: 1024, fileKey: "policies/existing-session/test.pdf" }],
         status: "completed",
+        createdAt: new Date("2026-03-01T08:00:00.000Z"),
+        startedAt: new Date("2026-03-01T08:01:00.000Z"),
+        lastHeartbeatAt: new Date("2026-03-01T08:02:00.000Z"),
+        updatedAt: new Date("2026-03-01T08:03:00.000Z"),
+        attemptCount: 1,
         analysisResult: {
           coverages: [
             {
@@ -49,6 +54,7 @@ vi.mock("./db", () => ({
             insurerName: "חברת ביטוח לדוגמה",
             policyNumber: "12345",
             policyType: "ביטוח בריאות",
+            premiumPaymentPeriod: "monthly",
             monthlyPremium: "150 ש\"ח",
             annualPremium: "1,800 ש\"ח",
             startDate: "01/01/2025",
@@ -67,6 +73,11 @@ vi.mock("./db", () => ({
         userId: 1,
         files: [{ name: "test.pdf", size: 1024, fileKey: "policies/no-analysis/test.pdf" }],
         status: "pending",
+        createdAt: new Date("2026-03-01T08:00:00.000Z"),
+        startedAt: null,
+        lastHeartbeatAt: null,
+        updatedAt: new Date("2026-03-01T08:00:00.000Z"),
+        attemptCount: 0,
         analysisResult: null,
         errorMessage: null,
       };
@@ -77,6 +88,11 @@ vi.mock("./db", () => ({
         userId: 1,
         files: [{ name: "processing.pdf", size: 1024, fileKey: "policies/processing-session/test.pdf" }],
         status: "processing",
+        createdAt: new Date("2026-03-01T08:00:00.000Z"),
+        startedAt: new Date("2026-03-01T08:01:00.000Z"),
+        lastHeartbeatAt: new Date("2026-03-01T08:02:00.000Z"),
+        updatedAt: new Date("2026-03-01T08:03:00.000Z"),
+        attemptCount: 2,
         analysisResult: null,
         errorMessage: null,
       };
@@ -87,6 +103,11 @@ vi.mock("./db", () => ({
         userId: 1,
         files: [{ name: "error.pdf", size: 1024, fileKey: "policies/error-session/test.pdf" }],
         status: "error",
+        createdAt: new Date("2026-03-01T08:00:00.000Z"),
+        startedAt: new Date("2026-03-01T08:01:00.000Z"),
+        lastHeartbeatAt: new Date("2026-03-01T08:02:00.000Z"),
+        updatedAt: new Date("2026-03-01T08:03:00.000Z"),
+        attemptCount: 3,
         analysisResult: null,
         errorMessage: "Processing failed",
       };
@@ -247,6 +268,9 @@ describe("policy.getAnalysis", () => {
     expect(result).not.toBeNull();
     expect(result!.sessionId).toBe("existing-session");
     expect(result!.status).toBe("completed");
+    expect(result!.attemptCount).toBe(1);
+    expect(result!.startedAt).toEqual(new Date("2026-03-01T08:01:00.000Z"));
+    expect(result!.lastHeartbeatAt).toEqual(new Date("2026-03-01T08:02:00.000Z"));
     expect(result!.result).not.toBeNull();
     expect(result!.result!.coverages).toHaveLength(1);
     expect(result!.result!.coverages[0].title).toBe("ביקור רופא מומחה");

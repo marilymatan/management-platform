@@ -203,7 +203,19 @@ function normalizeProfile(profile?: InsuranceHubProfile | null) {
 }
 
 function getPolicyMonthlyPremium(analysis: InsuranceHubAnalysis) {
-  return parseInsuranceMoneyValue(analysis.analysisResult?.generalInfo?.monthlyPremium);
+  const info = analysis.analysisResult?.generalInfo;
+  const monthlyPremium = parseInsuranceMoneyValue(info?.monthlyPremium);
+  const annualPremium = parseInsuranceMoneyValue(info?.annualPremium);
+  if (info?.premiumPaymentPeriod === "annual" && annualPremium > 0) {
+    return annualPremium / 12;
+  }
+  if (monthlyPremium > 0) {
+    return monthlyPremium;
+  }
+  if (annualPremium > 0) {
+    return annualPremium / 12;
+  }
+  return 0;
 }
 
 function getPolicyProvider(analysis: InsuranceHubAnalysis) {
@@ -648,6 +660,7 @@ export function buildManualPolicyAnalysis(params: {
       policyNumber: "manual-entry",
       policyType: params.category,
       insuranceCategory: params.category,
+      premiumPaymentPeriod: params.monthlyPremium && params.monthlyPremium > 0 ? "monthly" : "unknown",
       monthlyPremium: premium,
       annualPremium: params.monthlyPremium && params.monthlyPremium > 0 ? formatInsuranceCurrency(params.monthlyPremium * 12) : "לא צוין",
       startDate: params.startDate || "לא צוין",

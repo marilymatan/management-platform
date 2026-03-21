@@ -183,14 +183,22 @@ export function GmailPolicyDiscovery({
             <p className="text-sm text-muted-foreground">
               אפשר לנסות שוב, או להמשיך להעלות פוליסות ידנית אם כבר יש קבצים זמינים.
             </p>
+            <div className="rounded-lg border border-border/70 bg-background/80 px-3 py-2">
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                אם המייל מפנה למסמך דרך כפתור, קישור חיצוני או אזור אישי, לומי לא תמיד יכולה להביא את ה־PDF לבד. במקרה כזה צריך לפתוח את המייל, להתחבר אם נדרש, ולהוריד את הקובץ ידנית.
+              </p>
+            </div>
             <Button variant="outline" size="sm" onClick={() => candidatesQuery.refetch()} className="gap-1.5">
               <RefreshCw className="size-4" />
               נסה שוב
             </Button>
           </div>
         ) : candidates.length === 0 ? (
-          <div className="rounded-xl border p-4 text-sm text-muted-foreground">
-            לא זוהו כרגע PDF-ים ביטוחיים ב-Gmail ב־365 הימים האחרונים. אפשר להעלות PDF ידנית או לנסות רענון בהמשך.
+          <div className="rounded-xl border p-4 space-y-2 text-sm text-muted-foreground">
+            <p>לא זוהו כרגע PDF-ים ביטוחיים ב-Gmail ב־365 הימים האחרונים. אפשר להעלות PDF ידנית או לנסות רענון בהמשך.</p>
+            <p className="text-xs leading-relaxed">
+              אם המייל מכיל רק כפתור כמו "לצפייה במסמך" או "להתחבר", צריך לפתוח אותו, להוריד את ה־PDF, ואז לייבא אותו לניתוח.
+            </p>
           </div>
         ) : (
           <>

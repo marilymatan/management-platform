@@ -6,6 +6,7 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import { FamilyCoverageGrid } from "@/components/family/FamilyCoverageGrid";
 import { trpc } from "@/lib/trpc";
 import { buildFamilyCoverageSnapshot } from "@/lib/familyCoverage";
+import { hasInsuranceMailAttachment, isInsuranceRelatedInvoice } from "@/lib/insuranceMail";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -263,10 +264,9 @@ export default function Family() {
   const profile = profileQuery.data;
   const members = (membersQuery.data ?? []) as FamilyMemberRecord[];
   const activePolicies = analysesQuery.data?.filter((analysis) => analysis.status === "completed") ?? [];
-  const moneyDocuments = invoicesQuery.data?.filter((invoice) => {
-    const extracted = invoice.extractedData as Record<string, unknown> | null;
-    return Boolean(extracted?.pdfUrl);
-  }) ?? [];
+  const insuranceMailDocuments = invoicesQuery.data?.filter(
+    (invoice) => isInsuranceRelatedInvoice(invoice) && hasInsuranceMailAttachment(invoice)
+  ) ?? [];
 
   const childMembers = useMemo(
     () => members.filter((member) => member.relation === "child"),
@@ -537,7 +537,7 @@ export default function Family() {
                   {profile?.ownsApartment ? "יש נכס בבעלות" : "לא סומן נכס בבעלות"}
                 </p>
                 <p className="text-sm text-muted-foreground">
-                  {moneyDocuments.length > 0 ? `${moneyDocuments.length} מסמכים כספיים זמינים` : "אין עדיין מסמכים כספיים מחוברים"}
+                  {insuranceMailDocuments.length > 0 ? `${insuranceMailDocuments.length} מסמכי מייל ביטוחיים זמינים` : "אין עדיין מסמכי מייל ביטוחיים מחוברים"}
                 </p>
               </CardContent>
             </Card>
@@ -749,7 +749,7 @@ export default function Family() {
               <div className="grid grid-cols-2 gap-3">
                 <div className="rounded-xl border border-border/60 bg-muted/20 p-3">
                   <p className="text-xs text-muted-foreground">מסמכים זמינים</p>
-                  <p className="text-xl font-bold">{moneyDocuments.length}</p>
+                  <p className="text-xl font-bold">{insuranceMailDocuments.length}</p>
                 </div>
                 <div className="rounded-xl border border-border/60 bg-muted/20 p-3">
                   <p className="text-xs text-muted-foreground">דגשי ביטוח</p>

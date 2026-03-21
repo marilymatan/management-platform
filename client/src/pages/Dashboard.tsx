@@ -213,8 +213,8 @@ export default function Dashboard() {
             <div className="size-10 rounded-xl bg-white/15 flex items-center justify-center mb-3">
               <Mail className="size-5 text-white" />
             </div>
-            <p className="text-base font-bold text-white">חשבוניות חכמות</p>
-            <p className="text-xs text-white/60 mt-1">סרוק את Gmail ומצא חשבוניות</p>
+            <p className="text-base font-bold text-white">מיילים ביטוחיים</p>
+            <p className="text-xs text-white/60 mt-1">סרוק את Gmail ומצא מסמכי ביטוח</p>
           </div>
           <ArrowLeft className="absolute left-4 bottom-5 size-5 text-white/30 group-hover:text-white/60 transition-colors" />
         </button>

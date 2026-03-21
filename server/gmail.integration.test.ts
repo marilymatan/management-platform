@@ -340,6 +340,49 @@ describe("HTML to text conversion", () => {
     expect(text).toContain("₪99.00");
     expect(text).toContain("₪148.00");
   });
+
+  it("extracts action links from HTML insurance emails", async () => {
+    const { extractEmailActionLinks } = await import("./gmail");
+    const html = `
+      <div>
+        <a href="https://my.fnx.co.il/login?return=document">
+          <span>לצפייה במסמך באפליקציית הפניקס</span>
+        </a>
+      </div>
+    `;
+
+    const links = extractEmailActionLinks(html);
+
+    expect(links).toEqual([
+      {
+        url: "https://my.fnx.co.il/login?return=document",
+        text: "לצפייה במסמך באפליקציית הפניקס",
+        likelyDocument: true,
+        requiresLogin: true,
+      },
+    ]);
+  });
+
+  it("prefers a direct PDF action link when multiple links exist", async () => {
+    const { pickPrimaryInsuranceActionLink } = await import("./gmail");
+
+    const primary = pickPrimaryInsuranceActionLink([
+      {
+        url: "https://portal.example.com/login",
+        text: "התחבר לאזור האישי",
+        likelyDocument: false,
+        requiresLogin: true,
+      },
+      {
+        url: "https://portal.example.com/documents/policy.pdf",
+        text: "הורד PDF",
+        likelyDocument: true,
+        requiresLogin: false,
+      },
+    ]);
+
+    expect(primary?.url).toBe("https://portal.example.com/documents/policy.pdf");
+  });
 });
 
 // ─── Provider detection tests ───────────────────────────────────────────────

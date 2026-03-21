@@ -16,7 +16,7 @@ function createTrpcSuccessResponse(data: unknown) {
   };
 }
 
-async function mockExpensesWithInsuranceDiscoveries(page: Page) {
+async function mockExpensesWithInsuranceDiscoveries(page: Page, discoveries?: unknown[]) {
   await page.route("**/api/trpc/**", async (route) => {
     const url = new URL(route.request().url());
     const procedureNames = url.pathname.replace("/api/trpc/", "").split(",");
@@ -50,7 +50,7 @@ async function mockExpensesWithInsuranceDiscoveries(page: Page) {
             url: "https://accounts.google.com/o/oauth2/auth",
           });
         case "gmail.getInsuranceDiscoveries":
-          return createTrpcSuccessResponse([
+          return createTrpcSuccessResponse(discoveries ?? [
             {
               id: 101,
               provider: "הראל",
@@ -92,5 +92,35 @@ test.describe("Gmail insurance discovery", () => {
     await expect(page.getByText("הראל", { exact: true })).toBeVisible();
     await expect(page.getByText("עדכון פרמיה לביטוח בריאות מהמייל.")).toBeVisible();
     await expect(page.getByText("כדאי לוודא שהחיוב תואם את הפוליסה")).toBeVisible();
+  });
+
+  test("shows external action guidance when the email only contains a portal link", async ({ page }) => {
+    await mockExpensesWithInsuranceDiscoveries(page, [
+      {
+        id: 202,
+        provider: "הפניקס",
+        insuranceCategory: "health",
+        artifactType: "policy_document",
+        confidence: 0.8,
+        premiumAmount: null,
+        policyNumber: null,
+        documentDate: new Date("2026-03-20T00:00:00.000Z"),
+        subject: "מסמך חדש ממתין עבורך",
+        summary: "זוהה מסמך ביטוחי שמחכה באזור האישי.",
+        actionHint: "צריך לפתוח את הקישור מהמייל, להתחבר לאזור האישי ולהוריד PDF כדי שנוכל לנתח.",
+        attachmentFilename: null,
+        attachmentUrl: null,
+        actionUrl: "https://my.fnx.co.il/login?return=document",
+        actionLabel: "לצפייה במסמך באפליקציית הפניקס",
+        requiresExternalAccess: true,
+        externalAccessMode: "portal_login",
+        extractedData: null,
+      },
+    ]);
+    await page.goto("/expenses");
+
+    await expect(page.getByText("המסמך נמצא מאחורי אזור אישי או התחברות.")).toBeVisible();
+    await expect(page.getByRole("button", { name: "פתח קישור והתחבר" })).toBeVisible();
+    await expect(page.getByText("ללא PDF מצורף, זוהה קישור במייל")).toBeVisible();
   });
 });

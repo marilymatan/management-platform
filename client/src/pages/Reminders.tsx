@@ -269,9 +269,9 @@ export default function Reminders() {
                 <Shield className="size-4" />
                 העלה פוליסה
               </Button>
-              <Button variant="outline" onClick={() => setLocation("/expenses")} className="gap-2">
+              <Button variant="outline" onClick={() => setLocation("/money")} className="gap-2">
                 <Wallet className="size-4" />
-                חבר Gmail
+                לסריקת מיילים
               </Button>
             </div>
           </CardContent>

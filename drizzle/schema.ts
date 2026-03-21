@@ -274,11 +274,13 @@ export const documentClassifications = pgTable("document_classifications", {
   sourceType: documentSourceTypeEnum("source_type").notNull(),
   sourceId: varchar("source_id", { length: 128 }),
   manualType: documentManualTypeEnum("manual_type").notNull(),
+  familyMemberId: integer("family_member_id"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull().$onUpdate(() => new Date()),
 }, (table) => ({
   userIdIdx: index("document_classifications_user_id_idx").on(table.userId),
   sourceIdx: index("document_classifications_source_idx").on(table.userId, table.sourceType, table.sourceId),
+  familyMemberIdx: index("document_classifications_family_member_idx").on(table.userId, table.familyMemberId),
   userDocumentUniq: uniqueIndex("document_classifications_user_document_uniq").on(table.userId, table.documentKey),
 }));
 

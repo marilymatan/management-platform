@@ -388,10 +388,10 @@ export default function Settings() {
                 </div>
               ) : (
                 <p className="mt-4 text-sm text-muted-foreground">
-                  עדיין לא חיברת חשבון Gmail. אפשר לעשות זאת ממסך ההוצאות כדי שלומי יתחיל לסרוק מיילים.
+                  עדיין לא חיברת חשבון Gmail. אפשר לעשות זאת ממסך סריקת המיילים כדי שלומי יתחיל לזהות מסמכי ביטוח.
                 </p>
               )}
-              <Button type="button" variant="link" className="h-auto p-0 mt-3 text-sm" onClick={() => setLocation("/expenses")}>
+              <Button type="button" variant="link" className="h-auto p-0 mt-3 text-sm" onClick={() => setLocation("/money")}>
                 {gmailConnectionStatus?.connected ? "ניהול חיבור Gmail" : "לחיבור Gmail"}
               </Button>
             </CardContent>

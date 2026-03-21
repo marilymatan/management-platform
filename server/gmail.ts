@@ -450,6 +450,8 @@ interface ScannedEmail {
   date: Date;
   /** Clean text body (HTML stripped) */
   body: string;
+  /** Action links extracted from the HTML body */
+  actionLinks: EmailActionLink[];
   /** Whether the email has PDF attachments */
   hasAttachment: boolean;
   /** PDF attachment info for download */
@@ -458,6 +460,112 @@ interface ScannedEmail {
     attachmentId: string;
     size: number;
   }>;
+}
+
+type EmailActionLink = {
+  url: string;
+  text: string;
+  likelyDocument: boolean;
+  requiresLogin: boolean;
+};
+
+const ACTION_LINK_LOGIN_PATTERNS = [
+  /התחבר/,
+  /כניסה/,
+  /אזור אישי/,
+  /איזור אישי/,
+  /\blog(?:in|on)\b/i,
+  /\bsign[ -]?in\b/i,
+  /\baccount\b/i,
+  /\bauth\b/i,
+];
+
+const ACTION_LINK_DOCUMENT_PATTERNS = [
+  /לצפייה/,
+  /צפיי/,
+  /מסמך/,
+  /מסמכים/,
+  /פוליס/,
+  /קובץ/,
+  /pdf/i,
+  /policy/i,
+  /document/i,
+  /download/i,
+  /statement/i,
+  /schedule/i,
+  /certificate/i,
+];
+
+function decodeHtmlEntities(value: string): string {
+  return value
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">");
+}
+
+function isSafeEmailActionUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "https:" || parsed.protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
+function normalizeActionLinkText(value: string): string {
+  return decodeHtmlEntities(value)
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export function extractEmailActionLinks(html: string): EmailActionLink[] {
+  if (!html.trim()) return [];
+
+  const links: EmailActionLink[] = [];
+  const seenUrls = new Set<string>();
+  const anchorRegex = /<a\b([^>]*)>([\s\S]*?)<\/a>/gi;
+
+  let match: RegExpExecArray | null;
+  while ((match = anchorRegex.exec(html)) !== null) {
+    const attrs = match[1] ?? "";
+    const innerHtml = match[2] ?? "";
+    const hrefMatch = attrs.match(/href\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s>]+))/i);
+    const rawHref = decodeHtmlEntities(hrefMatch?.[1] ?? hrefMatch?.[2] ?? hrefMatch?.[3] ?? "").trim();
+    if (!rawHref || !isSafeEmailActionUrl(rawHref) || seenUrls.has(rawHref)) continue;
+
+    const text = normalizeActionLinkText(innerHtml);
+    const combinedSignalText = `${text} ${rawHref}`;
+    const likelyDocument = ACTION_LINK_DOCUMENT_PATTERNS.some((pattern) => pattern.test(combinedSignalText));
+    const requiresLogin = ACTION_LINK_LOGIN_PATTERNS.some((pattern) => pattern.test(combinedSignalText));
+
+    links.push({
+      url: rawHref,
+      text: text || "פתח קישור",
+      likelyDocument: likelyDocument || /\.pdf(?:[?#].*)?$/i.test(rawHref),
+      requiresLogin,
+    });
+    seenUrls.add(rawHref);
+  }
+
+  return links;
+}
+
+export function pickPrimaryInsuranceActionLink(links: EmailActionLink[]): EmailActionLink | null {
+  if (links.length === 0) return null;
+
+  return [...links]
+    .filter((link) => link.likelyDocument || link.requiresLogin)
+    .sort((a, b) => {
+      const score = (link: EmailActionLink) =>
+        (link.likelyDocument ? 4 : 0)
+        + (link.requiresLogin ? 2 : 0)
+        + (/\.pdf(?:[?#].*)?$/i.test(link.url) ? 3 : 0);
+      return score(b) - score(a);
+    })[0] ?? null;
 }
 
 async function fetchRecentEmails(
@@ -498,6 +606,7 @@ async function fetchRecentEmails(
       // ─── Extract body text ─────────────────────────────────────────────
       let plainTextBody = "";
       let htmlBody = "";
+      let actionLinks: EmailActionLink[] = [];
 
       type PayloadParts = NonNullable<typeof msgRes.data.payload>["parts"];
 
@@ -523,6 +632,10 @@ async function fetchRecentEmails(
         htmlBody = Buffer.from(msgRes.data.payload.body.data, "base64").toString("utf8");
       } else if (msgRes.data.payload?.parts) {
         extractBodies(msgRes.data.payload.parts);
+      }
+
+      if (htmlBody.trim()) {
+        actionLinks = extractEmailActionLinks(htmlBody);
       }
 
       // Prefer plain text; if only HTML available, convert it
@@ -574,6 +687,7 @@ async function fetchRecentEmails(
         from,
         date: new Date(dateStr),
         body: body.slice(0, 5000), // Limit body size for AI
+        actionLinks,
         hasAttachment: pdfAttachments.length > 0,
         pdfAttachments,
       });
@@ -965,6 +1079,7 @@ export async function scanGmailForInvoices(
         .limit(1);
 
       const detectedProvider = detectProvider(email.subject, email.from, email.body);
+      const primaryActionLink = pickPrimaryInsuranceActionLink(email.actionLinks);
       const [existingArtifact] = await db
         .select({ id: insuranceArtifacts.id })
         .from(insuranceArtifacts)
@@ -1117,6 +1232,15 @@ export async function scanGmailForInvoices(
           detectedProvider,
           attachmentFilename: email.pdfAttachments[0]?.filename ?? null,
         });
+        const requiresExternalAccess = !pdfFileKey && Boolean(primaryActionLink);
+        const externalAccessMode = requiresExternalAccess
+          ? (primaryActionLink?.requiresLogin ? "portal_login" : "external_link")
+          : null;
+        const discoveryActionHint = requiresExternalAccess
+          ? primaryActionLink?.requiresLogin
+            ? "צריך לפתוח את הקישור מהמייל, להתחבר לאזור האישי ולהוריד PDF כדי שנוכל לנתח."
+            : "צריך לפתוח את הקישור מהמייל ולהוריד PDF כדי שנוכל לנתח את המסמך."
+          : discovery.actionHint;
         const renewalDate = discovery.renewalDate ? new Date(discovery.renewalDate) : null;
         const documentDate =
           renewalDate && !Number.isNaN(renewalDate.getTime())
@@ -1136,6 +1260,10 @@ export async function scanGmailForInvoices(
           fromEmail: email.from,
           attachmentFilename: email.pdfAttachments[0]?.filename ?? null,
           attachmentFileKey: pdfFileKey,
+          actionUrl: primaryActionLink?.url ?? null,
+          actionLabel: primaryActionLink?.text ?? null,
+          requiresExternalAccess,
+          externalAccessMode,
         };
 
         await db.insert(insuranceArtifacts).values({
@@ -1152,7 +1280,7 @@ export async function scanGmailForInvoices(
           documentDate,
           subject: encryptField(email.subject),
           summary: encryptField(discovery.summary),
-          actionHint: encryptField(discovery.actionHint),
+          actionHint: encryptField(discoveryActionHint),
           attachmentFilename: email.pdfAttachments[0]?.filename ?? null,
           attachmentFileKey: pdfFileKey,
           extractedData: encryptJson(discoveryPayload),
@@ -1164,7 +1292,7 @@ export async function scanGmailForInvoices(
           insuranceCategory: discovery.insuranceCategory,
           artifactType: discovery.artifactType,
           summary: discovery.summary,
-          actionHint: discovery.actionHint,
+          actionHint: discoveryActionHint,
           policyNumber: discovery.policyNumber,
           monthlyPremium: discovery.monthlyPremium,
         });
@@ -1342,6 +1470,13 @@ export async function getInsuranceDiscoveries(userId: number, limit: number = 20
 
   return rows.map((row) => {
     const extractedData = row.extractedData ? decryptJson<Record<string, unknown>>(row.extractedData) : null;
+    const actionUrl = typeof extractedData?.actionUrl === "string" ? extractedData.actionUrl : null;
+    const actionLabel = typeof extractedData?.actionLabel === "string" ? extractedData.actionLabel : null;
+    const requiresExternalAccess = extractedData?.requiresExternalAccess === true;
+    const externalAccessMode =
+      extractedData?.externalAccessMode === "portal_login" || extractedData?.externalAccessMode === "external_link"
+        ? extractedData.externalAccessMode
+        : null;
 
     return {
       ...row,
@@ -1352,6 +1487,10 @@ export async function getInsuranceDiscoveries(userId: number, limit: number = 20
       summary: row.summary ? decryptField(row.summary) : null,
       actionHint: row.actionHint ? decryptField(row.actionHint) : null,
       attachmentUrl: row.attachmentFileKey ? generateSignedFileUrl(row.attachmentFileKey) : null,
+      actionUrl,
+      actionLabel,
+      requiresExternalAccess,
+      externalAccessMode,
       extractedData,
     };
   });

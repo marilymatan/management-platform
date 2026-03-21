@@ -25,7 +25,7 @@ const toneClasses = {
 
 const systemMessage: Message = {
   role: "system",
-  content: "אתה לומי, עוזר אישי חכם לביטוחים, למשפחה, למסמכים ולחיובים של משק הבית.",
+  content: "אתה לומי, עוזר אישי חכם לביטוחים, למשפחה, למסמכים ולמיילים הביטוחיים של הבית.",
 };
 
 export default function Assistant() {
@@ -116,7 +116,7 @@ export default function Assistant() {
             <div>
               <h1 className="text-2xl font-bold tracking-tight">לומי</h1>
               <p className="text-sm text-muted-foreground mt-0.5">
-                שאל אותי כל דבר על הביטוחים, הילדים, המסמכים והחיובים של הבית
+                שאל אותי כל דבר על הביטוחים, הילדים, המסמכים והמיילים הביטוחיים של הבית
               </p>
             </div>
           </div>

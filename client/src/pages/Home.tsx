@@ -65,6 +65,10 @@ function resolveSelectedFileFilter(result: PolicyAnalysis | null, requestedFileF
   return availableSourceFiles.includes(requestedFileFilter) ? requestedFileFilter : null;
 }
 
+function hasSpecifiedPolicyValue(value?: string | null) {
+  return Boolean(value && value !== "לא צוין בפוליסה" && value !== "לא מצוין בפוליסה");
+}
+
 export default function Home() {
   useAuth({ redirectOnUnauthenticated: true });
   const [, setLocation] = useLocation();
@@ -227,6 +231,26 @@ export default function Home() {
   }, [requestedSessionId]);
 
   const analysisStatus = getAnalysisQuery.data?.status ?? null;
+  const heroPremiumLabel = analysisResult
+    ? (() => {
+        const info = analysisResult.generalInfo;
+        if (info.premiumPaymentPeriod === "annual" && hasSpecifiedPolicyValue(info.annualPremium)) {
+          return `${info.annualPremium} לשנה`;
+        }
+        if (hasSpecifiedPolicyValue(info.monthlyPremium)) {
+          return `${info.monthlyPremium} לחודש`;
+        }
+        if (hasSpecifiedPolicyValue(info.annualPremium)) {
+          return `${info.annualPremium} לשנה`;
+        }
+        return null;
+      })()
+    : null;
+  const isSavedAnalysisStale =
+    isViewingSavedAnalysis &&
+    !analysisResult &&
+    (analysisStatus === "pending" || analysisStatus === "processing") &&
+    getAnalysisPollInterval(getAnalysisQuery.data, { nowMs: Date.now() }) === false;
   const currentStep = analysisResult ? 2 : 0;
   const isSavedAnalysisLoading =
     isViewingSavedAnalysis &&
@@ -236,12 +260,14 @@ export default function Home() {
   const isSavedAnalysisPending =
     isViewingSavedAnalysis &&
     !analysisResult &&
+    !isSavedAnalysisStale &&
     (analysisStatus === "pending" || analysisStatus === "processing");
   const hasSavedAnalysisError =
     isViewingSavedAnalysis &&
     !analysisResult &&
     !isSavedAnalysisLoading &&
     !isSavedAnalysisPending &&
+    !isSavedAnalysisStale &&
     Boolean(getAnalysisQuery.error || analysisStatus === "error" || !getAnalysisQuery.data);
 
   return (
@@ -395,6 +421,42 @@ export default function Home() {
         </div>
       )}
 
+      {isSavedAnalysisStale && (
+        <div className="page-container">
+          <div className="max-w-2xl mx-auto">
+            <Card className="border-amber-200 bg-amber-50/70 animate-fade-in-up" data-testid="policy-analysis-stale">
+              <CardContent className="py-12 text-center">
+                <div className="relative size-14 mx-auto mb-4">
+                  <div className="absolute inset-0 rounded-full border-2 border-amber-200" />
+                  <Sparkles className="absolute inset-0 m-auto size-6 text-amber-600" />
+                </div>
+                <p className="text-base font-semibold text-foreground">נראה שהסריקה נתקעה בדרך</p>
+                <p className="text-sm text-muted-foreground mt-2">
+                  לומי לא קיבל עדכון חדש מהעיבוד בזמן הצפוי. אפשר להחזיר את הסריקה לתור ולנסות שוב.
+                </p>
+                {getAnalysisQuery.data?.attemptCount ? (
+                  <p className="text-xs text-muted-foreground mt-3">
+                    ניסיון עיבוד אחרון: {getAnalysisQuery.data.attemptCount}
+                  </p>
+                ) : null}
+                <div className="flex items-center justify-center gap-3 mt-6">
+                  <Button variant="outline" onClick={() => setLocation("/insurance")}>
+                    חזרה לביטוחים
+                  </Button>
+                  <Button
+                    onClick={handleRetryAnalysis}
+                    disabled={analyzeMutation.isPending}
+                    data-testid="policy-analysis-retry-stale"
+                  >
+                    {analyzeMutation.isPending ? "מחזיר לעיבוד..." : "הפעל עיבוד מחדש"}
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </div>
+      )}
+
       {hasSavedAnalysisError && (
         <div className="page-container">
           <div className="max-w-2xl mx-auto">
@@ -485,10 +547,10 @@ export default function Home() {
                         {analysisResult.coverages.length} כיסויים
                       </span>
                     )}
-                    {analysisResult.generalInfo.monthlyPremium && analysisResult.generalInfo.monthlyPremium !== "לא צוין בפוליסה" && (
+                    {heroPremiumLabel && (
                       <span className="inline-flex items-center gap-1.5 rounded-full bg-white/10 backdrop-blur-sm px-3 py-1 text-xs font-medium text-blue-100">
                         <Banknote className="size-3" />
-                        {analysisResult.generalInfo.monthlyPremium}
+                        {heroPremiumLabel}
                       </span>
                     )}
                     {analysisResult.generalInfo.endDate && analysisResult.generalInfo.endDate !== "לא צוין בפוליסה" && (

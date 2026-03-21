@@ -164,7 +164,7 @@ export function OnboardingWizard({ userName, onCompleted }: OnboardingWizardProp
                 </div>
                 <h1 className="text-2xl font-bold mt-3">לומי מנהלת את הביטוח המשפחתי שלך</h1>
                 <p className="text-sm text-muted-foreground mt-2">
-                  בתוך כמה צעדים קצרים נקבל תמונה ראשונית של הכיסוי, החיובים והזדמנויות החיסכון.
+                  בתוך כמה צעדים קצרים נקבל תמונה ראשונית של הכיסוי, המיילים הביטוחיים והזדמנויות החיסכון.
                 </p>
               </div>
               <Badge variant="outline">שלב {step + 1} מתוך {TOTAL_STEPS}</Badge>
@@ -197,7 +197,7 @@ export function OnboardingWizard({ userName, onCompleted }: OnboardingWizardProp
                   <h2 className="text-lg font-semibold">חיבור Gmail וגילוי אוטומטי</h2>
                 </div>
                 <p className="text-sm text-muted-foreground">
-                  החיבור מאפשר ללומי לזהות חיובי ביטוח, חידושים ומסמכי פוליסה בלי להתחיל באיסוף ידני.
+                  החיבור מאפשר ללומי לזהות פרמיות, חידושים ומסמכי פוליסה בלי להתחיל באיסוף ידני.
                 </p>
                 <div className="flex items-center gap-2 flex-wrap">
                   <Badge variant="outline">
@@ -298,7 +298,7 @@ export function OnboardingWizard({ userName, onCompleted }: OnboardingWizardProp
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <Card>
                   <CardContent className="pt-5 pb-4">
-                    <p className="text-[11px] text-muted-foreground">חיובי ביטוח שזוהו</p>
+                    <p className="text-[11px] text-muted-foreground">פרמיות שזוהו</p>
                     <p className="text-2xl font-bold mt-1">{discoveredInsurancePayments}</p>
                   </CardContent>
                 </Card>

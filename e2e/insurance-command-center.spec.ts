@@ -125,6 +125,54 @@ const monthlySummary = [
   },
 ];
 
+const insuranceMapSnapshot = {
+  householdSize: 3,
+  categoriesWithData: 2,
+  missingCount: 5,
+  reviewCount: 4,
+  rows: [
+    {
+      id: "primary-user",
+      fullName: "בעל/ת החשבון",
+      relationLabel: "ראש המשפחה",
+      hint: "הקשר הראשי של לומי לביטוחים ולמסמכים",
+      kind: "primary",
+      cells: [
+        { category: "health", label: "ביטוחי בריאות", status: "household_covered", summary: "יש מסמך או פוליסה מזוהים בקטגוריית ביטוחי בריאות" },
+        { category: "life", label: "ביטוחי חיים", status: "missing", summary: "עדיין לא זוהה מסמך בקטגוריית ביטוחי חיים" },
+        { category: "car", label: "ביטוחי רכב", status: "missing", summary: "עדיין לא זוהה מסמך בקטגוריית ביטוחי רכב" },
+        { category: "home", label: "ביטוחי דירה", status: "household_covered", summary: "יש מסמך או פוליסה מזוהים בקטגוריית ביטוחי דירה" },
+      ],
+    },
+    {
+      id: "member-10",
+      fullName: "רן ישראלי",
+      relationLabel: "בן/בת זוג",
+      hint: "כדאי לבדוק כיסוי חיים",
+      kind: "member",
+      cells: [
+        { category: "health", label: "ביטוחי בריאות", status: "needs_review", summary: "יש מסמכים בקטגוריית ביטוחי בריאות, אבל צריך לוודא את השיוך האישי" },
+        { category: "life", label: "ביטוחי חיים", status: "missing", summary: "לא זוהה עדיין מסמך שמאפשר לבדוק את ביטוחי חיים עבור רן ישראלי" },
+        { category: "car", label: "ביטוחי רכב", status: "missing", summary: "לא זוהה עדיין מסמך שמאפשר לבדוק את ביטוחי רכב עבור רן ישראלי" },
+        { category: "home", label: "ביטוחי דירה", status: "needs_review", summary: "יש מסמכים בקטגוריית ביטוחי דירה, אבל צריך לוודא את השיוך האישי" },
+      ],
+    },
+    {
+      id: "member-11",
+      fullName: "נועה ישראלי",
+      relationLabel: "ילד/ה",
+      hint: "גיל 9",
+      kind: "member",
+      cells: [
+        { category: "health", label: "ביטוחי בריאות", status: "needs_review", summary: "יש מסמכים בקטגוריית ביטוחי בריאות, אבל צריך לוודא את השיוך האישי" },
+        { category: "life", label: "ביטוחי חיים", status: "missing", summary: "לא זוהה עדיין מסמך שמאפשר לבדוק את ביטוחי חיים עבור נועה ישראלי" },
+        { category: "car", label: "ביטוחי רכב", status: "not_relevant", summary: "כרגע לא עולה צורך מובהק בקטגוריה הזאת" },
+        { category: "home", label: "ביטוחי דירה", status: "needs_review", summary: "יש מסמכים בקטגוריית ביטוחי דירה, אבל צריך לוודא את השיוך האישי" },
+      ],
+    },
+  ],
+};
+
 function createTrpcSuccessResponse(data: unknown) {
   return {
     result: {
@@ -153,6 +201,8 @@ async function mockAuthenticatedApp(page: Page) {
           return createTrpcSuccessResponse(invoices);
         case "family.list":
           return createTrpcSuccessResponse(members);
+        case "insuranceMap.get":
+          return createTrpcSuccessResponse(insuranceMapSnapshot);
         case "gmail.connectionStatus":
           return createTrpcSuccessResponse({
             connected: true,
@@ -194,5 +244,14 @@ test.describe("Insurance command center", () => {
     await expect(page.getByText("נועה ישראלי", { exact: true }).first()).toBeVisible();
     await expect(page.getByText("לבדיקה", { exact: true }).first()).toBeVisible();
     await expect(page.getByText("חסר מידע", { exact: true }).first()).toBeVisible();
+  });
+
+  test("renders the dedicated insurance map route", async ({ page }) => {
+    await page.goto("/insurance-map");
+    await expect(page.getByTestId("family-insurance-map-page")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole("heading", { name: "תמונה אחת של כל הכיסויים בבית" })).toBeVisible();
+    await expect(page.getByText("בעל/ת החשבון")).toBeVisible();
+    await expect(page.getByText("רן ישראלי", { exact: true }).first()).toBeVisible();
+    await expect(page.getByText("נועה ישראלי", { exact: true }).first()).toBeVisible();
   });
 });
