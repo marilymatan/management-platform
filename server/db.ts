@@ -329,17 +329,17 @@ export async function claimNextPendingAnalysis(workerId: string, staleBefore: Da
     )
     UPDATE ${analyses}
     SET
-      ${analyses.status} = 'processing',
-      ${analyses.attemptCount} = ${analyses.attemptCount} + 1,
-      ${analyses.processedFileCount} = 0,
-      ${analyses.activeBatchFileCount} = 0,
-      ${analyses.lockedBy} = ${workerId},
-      ${analyses.lastHeartbeatAt} = ${now},
-      ${analyses.startedAt} = COALESCE(${analyses.startedAt}, ${now}),
-      ${analyses.completedAt} = NULL,
-      ${analyses.nextRetryAt} = NULL,
-      ${analyses.errorMessage} = NULL,
-      ${analyses.updatedAt} = ${now}
+      "status" = 'processing',
+      "attempt_count" = ${analyses.attemptCount} + 1,
+      "processed_file_count" = 0,
+      "active_batch_file_count" = 0,
+      "locked_by" = ${workerId},
+      "last_heartbeat_at" = ${now},
+      "started_at" = COALESCE(${analyses.startedAt}, ${now}),
+      "completed_at" = NULL,
+      "next_retry_at" = NULL,
+      "error_message" = NULL,
+      "updated_at" = ${now}
     FROM candidate
     WHERE ${analyses.id} = candidate.id
     RETURNING *
