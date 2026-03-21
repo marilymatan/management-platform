@@ -182,13 +182,6 @@ const assistantHomeContext = {
     "מה דורש טיפול עכשיו?",
     "איזו פוליסה כדאי לפתוח קודם?",
   ],
-  highlights: [
-    {
-      title: "חידוש בריאות מתקרב",
-      description: "לבדוק את תנאי החידוש של בריאות משפחתית לפני מאי.",
-      tone: "warning" as const,
-    },
-  ],
 };
 
 const dashboardSummary = {
@@ -287,12 +280,27 @@ test.describe("Insurance command center", () => {
     await page.goto("/");
     await expect(page.getByTestId("insurance-command-center")).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText("הבית של לומי")).toBeVisible();
-    await expect(page.getByTestId("home-lumi-chat")).toBeVisible();
     await expect(page.getByTestId("home-alerts-preview")).toBeVisible();
     await expect(page.getByText("תקציר משפחתי")).toBeVisible();
     await expect(page.getByText("פרמיה חודשית מזוהה")).toBeVisible();
     await expect(page.getByText("שיוכים לבדיקה", { exact: true }).first()).toBeVisible();
+    await expect(page.getByText("גילוי פוליסות אוטומטי")).toHaveCount(0);
+    await expect(page.getByText("לומי בתוך הבית")).toHaveCount(0);
     await expect(page.locator("[data-testid='monthly-report-card']")).toHaveCount(0);
+  });
+
+  test("opens the focused lumi chat page from the dashboard", async ({ page }) => {
+    await page.goto("/");
+    await page.getByRole("button", { name: "שאל את לומי" }).click();
+    await expect(page).toHaveURL(/\/chat$/);
+    await expect(page.getByTestId("assistant-page")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId("assistant-chat-shell")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "לומי" })).toBeVisible();
+    await expect(page.getByText("2 פוליסות פעילות")).toBeVisible();
+    await expect(page.getByText("תובנות אחרונות")).toHaveCount(0);
+    await expect(page.getByText("עבור במהירות לעמודים החשובים")).toHaveCount(0);
+    await expect(page.locator("aside nav button").nth(0)).toContainText("בית");
+    await expect(page.locator("aside nav button").nth(1)).toContainText("לומי");
   });
 
   test("renders the alerts center with findings from scans", async ({ page }) => {

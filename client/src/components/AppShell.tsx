@@ -36,11 +36,11 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { label: "בית", icon: <LayoutDashboard className="size-5" />, path: "/", matchPaths: ["/dashboard"] },
+  { label: "לומי", icon: <MessageSquare className="size-5" />, path: "/chat", matchPaths: ["/assistant"] },
   { label: "ביטוחים", icon: <Shield className="size-5" />, path: "/insurance" },
   { label: "מפת ביטוח", icon: <Map className="size-5" />, path: "/insurance-map" },
   { label: "חיסכון ופעולות", icon: <PiggyBank className="size-5" />, path: "/savings" },
   { label: "המשפחה שלי", icon: <Users className="size-5" />, path: "/family" },
-  { label: "לומי", icon: <MessageSquare className="size-5" />, path: "/chat", matchPaths: ["/assistant"] },
   { label: "התראות", icon: <Bell className="size-5" />, path: "/alerts", matchPaths: ["/reminders"] },
   { label: "סריקת מיילים", icon: <Mail className="size-5" />, path: "/money", matchPaths: ["/expenses"] },
   { label: "מסמכים", icon: <FolderOpen className="size-5" />, path: "/documents" },

@@ -319,7 +319,6 @@ describe("assistant.getHomeContext", () => {
     const result = await caller.assistant.getHomeContext();
 
     expect(result.chips.some((chip) => chip.label.includes("גילויי ביטוח מהמייל"))).toBe(true);
-    expect(result.highlights.some((highlight) => highlight.title.includes("חידוש ביטוחי"))).toBe(true);
     expect(result.suggestedPrompts).toContain("יש חידוש ביטוחי מהמייל שכדאי לטפל בו עכשיו?");
   });
 });
