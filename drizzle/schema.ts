@@ -120,6 +120,33 @@ export const gmailConnections = pgTable("gmail_connections", {
 export type GmailConnection = typeof gmailConnections.$inferSelect;
 export type InsertGmailConnection = typeof gmailConnections.$inferInsert;
 
+export const gmailScanJobs = pgTable("gmail_scan_jobs", {
+  id: serial("id").primaryKey(),
+  jobId: varchar("job_id", { length: 64 }).notNull(),
+  userId: integer("user_id").notNull(),
+  daysBack: integer("days_back").notNull(),
+  clearExisting: boolean("clear_existing").default(false).notNull(),
+  status: analysisStatusEnum("status").default("pending").notNull(),
+  attemptCount: integer("attempt_count").default(0).notNull(),
+  lockedBy: varchar("locked_by", { length: 128 }),
+  lastHeartbeatAt: timestamp("last_heartbeat_at"),
+  startedAt: timestamp("started_at"),
+  completedAt: timestamp("completed_at"),
+  nextRetryAt: timestamp("next_retry_at"),
+  result: text("result"),
+  errorMessage: text("error_message"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull().$onUpdate(() => new Date()),
+}, (table) => ({
+  userIdIdx: index("gmail_scan_jobs_user_id_idx").on(table.userId, table.createdAt),
+  statusIdx: index("gmail_scan_jobs_status_idx").on(table.status, table.nextRetryAt, table.createdAt),
+  userStatusIdx: index("gmail_scan_jobs_user_status_idx").on(table.userId, table.status, table.createdAt),
+  jobIdUniq: uniqueIndex("gmail_scan_jobs_job_id_uniq").on(table.jobId),
+}));
+
+export type GmailScanJob = typeof gmailScanJobs.$inferSelect;
+export type InsertGmailScanJob = typeof gmailScanJobs.$inferInsert;
+
 export const smartInvoices = pgTable("smart_invoices", {
   id: serial("id").primaryKey(),
   userId: integer("user_id").notNull(),

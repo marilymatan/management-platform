@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   ensureAnalysisQueueCompatibility,
+  ensureGmailScanJobsCompatibility,
   ensureInsuranceArtifactsCompatibility,
   ensureInsuranceCategoryCompatibility,
   ensureSavingsHubCompatibility,
@@ -179,6 +180,44 @@ describe("schemaCompatibility", () => {
     ).toBe(true);
   });
 
+  it("creates gmail_scan_jobs and its indexes when the schema is behind", async () => {
+    const db = createDb();
+    db.execute
+      .mockResolvedValueOnce(countResult(0))
+      .mockResolvedValueOnce(countResult(0))
+      .mockResolvedValueOnce(countResult(0))
+      .mockResolvedValueOnce(countResult(0))
+      .mockResolvedValueOnce(countResult(0))
+      .mockResolvedValue({ rows: [] });
+
+    await ensureGmailScanJobsCompatibility(db);
+
+    const statements = db.execute.mock.calls.map(([query]) => queryText(query));
+    expect(
+      statements.some((statement) => statement.includes('CREATE TABLE IF NOT EXISTS "gmail_scan_jobs"')),
+    ).toBe(true);
+    expect(
+      statements.some((statement) =>
+        statement.includes('CREATE INDEX IF NOT EXISTS "gmail_scan_jobs_user_id_idx" ON "gmail_scan_jobs"'),
+      ),
+    ).toBe(true);
+    expect(
+      statements.some((statement) =>
+        statement.includes('CREATE INDEX IF NOT EXISTS "gmail_scan_jobs_status_idx" ON "gmail_scan_jobs"'),
+      ),
+    ).toBe(true);
+    expect(
+      statements.some((statement) =>
+        statement.includes('CREATE INDEX IF NOT EXISTS "gmail_scan_jobs_user_status_idx" ON "gmail_scan_jobs"'),
+      ),
+    ).toBe(true);
+    expect(
+      statements.some((statement) =>
+        statement.includes('CREATE UNIQUE INDEX IF NOT EXISTS "gmail_scan_jobs_job_id_uniq" ON "gmail_scan_jobs"'),
+      ),
+    ).toBe(true);
+  });
+
   it("creates savings hub tables and indexes when the schema is behind", async () => {
     const db = createDb();
     db.execute
@@ -229,6 +268,8 @@ describe("schemaCompatibility", () => {
       .mockResolvedValueOnce(countResult(0))
       .mockResolvedValueOnce(countResult(0))
       .mockResolvedValueOnce(countResult(0))
+      .mockResolvedValueOnce(countResult(0))
+      .mockResolvedValueOnce(countResult(0))
       .mockResolvedValue({ rows: [] });
 
     await ensureUserProfileCompatibility(db);
@@ -246,11 +287,19 @@ describe("schemaCompatibility", () => {
     expect(statements).toContain(
       'ALTER TABLE "user_profiles" ADD COLUMN IF NOT EXISTS "business_email_domains" text',
     );
+    expect(statements).toContain(
+      'ALTER TABLE "user_profiles" ADD COLUMN IF NOT EXISTS "email_scan_senders" text',
+    );
+    expect(statements).toContain(
+      'ALTER TABLE "user_profiles" ADD COLUMN IF NOT EXISTS "email_scan_keywords" text',
+    );
   });
 
   it("skips user profile schema DDL when the required columns already exist", async () => {
     const db = createDb();
     db.execute
+      .mockResolvedValueOnce(countResult(1))
+      .mockResolvedValueOnce(countResult(1))
       .mockResolvedValueOnce(countResult(1))
       .mockResolvedValueOnce(countResult(1))
       .mockResolvedValueOnce(countResult(1))

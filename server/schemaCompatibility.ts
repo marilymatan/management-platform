@@ -303,6 +303,18 @@ export async function getAppliedMigrationTags(db: SchemaCompatibilityDb, tags: s
         hasColumn(db, "user_profiles", "email_scan_keywords"),
       ]);
       if (checks.every(Boolean)) applied.add(tag);
+      continue;
+    }
+
+    if (tag === "0015_parallel_pet_avengers") {
+      const checks = await Promise.all([
+        hasTable(db, "gmail_scan_jobs"),
+        hasIndex(db, "gmail_scan_jobs_user_id_idx"),
+        hasIndex(db, "gmail_scan_jobs_status_idx"),
+        hasIndex(db, "gmail_scan_jobs_user_status_idx"),
+        hasIndex(db, "gmail_scan_jobs_job_id_uniq"),
+      ]);
+      if (checks.every(Boolean)) applied.add(tag);
     }
   }
 
@@ -599,10 +611,64 @@ export async function ensureInsuranceArtifactsCompatibility(db: SchemaCompatibil
   }
 }
 
+export async function ensureGmailScanJobsCompatibility(db: SchemaCompatibilityDb) {
+  const hasGmailScanJobsTable = await hasTable(db, "gmail_scan_jobs");
+
+  if (!hasGmailScanJobsTable) {
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "gmail_scan_jobs" (
+        "id" serial PRIMARY KEY NOT NULL,
+        "job_id" varchar(64) NOT NULL,
+        "user_id" integer NOT NULL,
+        "days_back" integer NOT NULL,
+        "clear_existing" boolean DEFAULT false NOT NULL,
+        "status" "analysis_status" DEFAULT 'pending' NOT NULL,
+        "attempt_count" integer DEFAULT 0 NOT NULL,
+        "locked_by" varchar(128),
+        "last_heartbeat_at" timestamp,
+        "started_at" timestamp,
+        "completed_at" timestamp,
+        "next_retry_at" timestamp,
+        "result" text,
+        "error_message" text,
+        "created_at" timestamp DEFAULT now() NOT NULL,
+        "updated_at" timestamp DEFAULT now() NOT NULL
+      )
+    `);
+  }
+
+  const hasUserIdIndex = await hasIndex(db, "gmail_scan_jobs_user_id_idx");
+  const hasStatusIndex = await hasIndex(db, "gmail_scan_jobs_status_idx");
+  const hasUserStatusIndex = await hasIndex(db, "gmail_scan_jobs_user_status_idx");
+  const hasJobIdUniqueIndex = await hasIndex(db, "gmail_scan_jobs_job_id_uniq");
+
+  if (!hasUserIdIndex) {
+    await db.execute(
+      sql`CREATE INDEX IF NOT EXISTS "gmail_scan_jobs_user_id_idx" ON "gmail_scan_jobs" USING btree ("user_id","created_at")`,
+    );
+  }
+  if (!hasStatusIndex) {
+    await db.execute(
+      sql`CREATE INDEX IF NOT EXISTS "gmail_scan_jobs_status_idx" ON "gmail_scan_jobs" USING btree ("status","next_retry_at","created_at")`,
+    );
+  }
+  if (!hasUserStatusIndex) {
+    await db.execute(
+      sql`CREATE INDEX IF NOT EXISTS "gmail_scan_jobs_user_status_idx" ON "gmail_scan_jobs" USING btree ("user_id","status","created_at")`,
+    );
+  }
+  if (!hasJobIdUniqueIndex) {
+    await db.execute(
+      sql`CREATE UNIQUE INDEX IF NOT EXISTS "gmail_scan_jobs_job_id_uniq" ON "gmail_scan_jobs" USING btree ("job_id")`,
+    );
+  }
+}
+
 export async function ensureLegacySchemaCompatibility(db: SchemaCompatibilityDb) {
   await ensureInsuranceCategoryCompatibility(db);
   await ensureUserProfileCompatibility(db);
   await ensureAnalysisQueueCompatibility(db);
   await ensureInsuranceArtifactsCompatibility(db);
+  await ensureGmailScanJobsCompatibility(db);
   await ensureSavingsHubCompatibility(db);
 }

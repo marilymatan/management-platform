@@ -15,6 +15,7 @@ import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
 import { policyAnalysisWorker } from "../policyAnalysisWorker";
+import { gmailScanWorker } from "../gmailScanWorker";
 import { registerPolicyUploadRoute } from "../policyUploadRoute";
 import { registerSecurityMiddleware } from "../security";
 import { ENV } from "./env";
@@ -157,6 +158,7 @@ async function startServer() {
   const port = parseInt(process.env.PORT || "3000");
 
   policyAnalysisWorker.start();
+  gmailScanWorker.start();
 
   server.listen(port, "0.0.0.0", () => {
     console.log(`[Boot] Server running on http://0.0.0.0:${port}/`);

@@ -3,6 +3,7 @@ import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { policyAnalysisWorker } from "./policyAnalysisWorker";
+import { gmailScanWorker } from "./gmailScanWorker";
 import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
 import { z } from "zod";
 import { nanoid } from "nanoid";
@@ -57,8 +58,13 @@ import {
   disconnectGmail,
   getInsuranceDiscoveries as listInsuranceDiscoveries,
   importPolicyPdfFromGmail,
-  scanGmailForInvoices,
 } from "./gmail";
+import {
+  createGmailScanJob,
+  getActiveGmailScanJob,
+  getGmailScanJobByJobId,
+  getLatestGmailScanJob,
+} from "./gmailScanQueue";
 import { getDb } from "./db";
 import {
   smartInvoices,
@@ -114,6 +120,56 @@ function normalizeReturnTo(value?: string | null) {
     return "/expenses";
   }
   return value;
+}
+
+async function queueBackgroundGmailScan(params: {
+  userId: number;
+  daysBack: number;
+  clearExisting?: boolean;
+  rejectIfActive?: boolean;
+}) {
+  const connections = await getAllGmailConnections(params.userId);
+  if (connections.length === 0) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "יש לחבר קודם חשבון Gmail",
+    });
+  }
+
+  const activeJob = await getActiveGmailScanJob(params.userId);
+  if (activeJob) {
+    if (params.rejectIfActive) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: "כבר קיימת סריקה פעילה ברקע",
+      });
+    }
+    return {
+      job: activeJob,
+      queued: false,
+      reusedExistingJob: true,
+    };
+  }
+
+  const job = await createGmailScanJob({
+    userId: params.userId,
+    daysBack: params.daysBack,
+    clearExisting: params.clearExisting ?? false,
+  });
+  if (!job) {
+    throw new TRPCError({
+      code: "INTERNAL_SERVER_ERROR",
+      message: "לא הצלחנו ליצור משימת סריקה",
+    });
+  }
+
+  gmailScanWorker.nudge();
+
+  return {
+    job,
+    queued: true,
+    reusedExistingJob: false,
+  };
 }
 
 function extractLLMContent(response: any): string {
@@ -1264,20 +1320,45 @@ export const appRouter = router({
 
     checkForChanges: protectedProcedure
       .input(z.object({
-        daysBack: z.number().min(1).max(90).default(30),
+        daysBack: z.number().min(1).max(365).default(30),
         scanFirst: z.boolean().default(false),
       }))
       .mutation(async ({ ctx, input }) => {
         if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
+        let queuedScanJobId: string | null = null;
+        let reusedExistingJob = false;
         if (input.scanFirst) {
-          await scanGmailForInvoices(ctx.user.id, input.daysBack);
+          const scanRequest = await queueBackgroundGmailScan({
+            userId: ctx.user.id,
+            daysBack: input.daysBack,
+          });
+          queuedScanJobId = scanRequest.job.jobId;
+          reusedExistingJob = scanRequest.reusedExistingJob;
+          if (scanRequest.queued) {
+            await audit({
+              userId: ctx.user.id,
+              action: "queue_gmail_scan",
+              resource: "gmail",
+              resourceId: scanRequest.job.jobId,
+              details: JSON.stringify({
+                daysBack: input.daysBack,
+                clearExisting: false,
+                source: "monitoring",
+              }),
+            });
+          }
         }
         const state = await buildAndSyncUserHubState(ctx.user.id);
         await audit({
           userId: ctx.user.id,
           action: "monitor_insurance_changes",
           resource: "monitoring",
-          details: JSON.stringify({ daysBack: input.daysBack, scanFirst: input.scanFirst }),
+          details: JSON.stringify({
+            daysBack: input.daysBack,
+            scanFirst: input.scanFirst,
+            queuedScanJobId,
+            reusedExistingJob,
+          }),
         });
         return state.monthlyReport;
       }),
@@ -1797,6 +1878,22 @@ ${JSON.stringify(payload, null, 2)}`,
       };
     }),
 
+    getScanStatus: protectedProcedure
+      .input(
+        z
+          .object({
+            jobId: z.string().min(1).max(64).optional(),
+          })
+          .optional(),
+      )
+      .query(async ({ ctx, input }) => {
+        if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
+        if (input?.jobId) {
+          return getGmailScanJobByJobId(ctx.user.id, input.jobId);
+        }
+        return getLatestGmailScanJob(ctx.user.id);
+      }),
+
     disconnect: protectedProcedure
       .input(z.object({ connectionId: z.number() }))
       .mutation(async ({ ctx, input }) => {
@@ -1813,18 +1910,30 @@ ${JSON.stringify(payload, null, 2)}`,
 
     /** Trigger on-demand email scan */
     scan: protectedProcedure
-      .input(z.object({ daysBack: z.number().min(1).max(90).default(7) }))
+      .input(z.object({ daysBack: z.number().min(1).max(365).default(7) }))
       .mutation(async ({ ctx, input }) => {
         if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
-        const result = await scanGmailForInvoices(ctx.user.id, input.daysBack);
-        // Audit log
-        await audit({
+        const scanRequest = await queueBackgroundGmailScan({
           userId: ctx.user.id,
-          action: "scan_gmail",
-          resource: "gmail",
-          details: JSON.stringify({ daysBack: input.daysBack, ...result }),
+          daysBack: input.daysBack,
         });
-        return result;
+        if (scanRequest.queued) {
+          await audit({
+            userId: ctx.user.id,
+            action: "queue_gmail_scan",
+            resource: "gmail",
+            resourceId: scanRequest.job.jobId,
+            details: JSON.stringify({
+              daysBack: input.daysBack,
+              clearExisting: false,
+              source: "gmail_scan_page",
+            }),
+          });
+        }
+        return {
+          job: scanRequest.job,
+          reusedExistingJob: scanRequest.reusedExistingJob,
+        };
       }),
 
     getInvoices: protectedProcedure
@@ -1920,24 +2029,30 @@ ${JSON.stringify(payload, null, 2)}`,
 
     /** Clear all invoices and rescan from scratch */
     clearAndRescan: protectedProcedure
-      .input(z.object({ daysBack: z.number().min(1).max(90).default(7) }))
+      .input(z.object({ daysBack: z.number().min(1).max(365).default(7) }))
       .mutation(async ({ ctx, input }) => {
         if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
-        const db = await getDb();
-        if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
-        // Delete all existing invoices for this user
-        await db.delete(smartInvoices).where(eq(smartInvoices.userId, ctx.user.id));
-        await db.delete(insuranceArtifacts).where(eq(insuranceArtifacts.userId, ctx.user.id));
-        // Audit log
+        const scanRequest = await queueBackgroundGmailScan({
+          userId: ctx.user.id,
+          daysBack: input.daysBack,
+          clearExisting: true,
+          rejectIfActive: true,
+        });
         await audit({
           userId: ctx.user.id,
-          action: "clear_invoices",
-          resource: "invoice",
-          details: JSON.stringify({ daysBack: input.daysBack }),
+          action: "queue_gmail_scan",
+          resource: "gmail",
+          resourceId: scanRequest.job.jobId,
+          details: JSON.stringify({
+            daysBack: input.daysBack,
+            clearExisting: true,
+            source: "clear_and_rescan",
+          }),
         });
-        // Rescan with the improved parser
-        const result = await scanGmailForInvoices(ctx.user.id, input.daysBack);
-        return result;
+        return {
+          job: scanRequest.job,
+          reusedExistingJob: scanRequest.reusedExistingJob,
+        };
       }),
 
     addManualExpense: protectedProcedure

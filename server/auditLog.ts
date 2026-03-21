@@ -30,6 +30,7 @@ export type AuditAction =
   // Gmail operations
   | "connect_gmail"
   | "disconnect_gmail"
+  | "queue_gmail_scan"
   | "scan_gmail"
   | "clear_invoices"
   | "import_policy_from_gmail"

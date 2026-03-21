@@ -3,6 +3,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Route, Switch, useLocation } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
+import { PendingGmailScanNotifications } from "./components/PendingGmailScanNotifications";
 import { PendingScanNotifications } from "./components/PendingScanNotifications";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { useAuth } from "@/_core/hooks/useAuth";
@@ -123,6 +124,7 @@ function App() {
       <ThemeProvider defaultTheme="light">
         <TooltipProvider>
           <Toaster />
+          <PendingGmailScanNotifications />
           <PendingScanNotifications />
           <Router />
         </TooltipProvider>

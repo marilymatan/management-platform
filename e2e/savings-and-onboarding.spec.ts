@@ -326,13 +326,12 @@ async function mockOnboarding(page: Page) {
           return createTrpcSuccessResponse([]);
         case "gmail.scan":
           return createTrpcSuccessResponse({
-            scanned: 0,
-            found: 0,
-            saved: 0,
-            discoveriesFound: 0,
-            discoveriesSaved: 0,
-            invoices: [],
-            discoveries: [],
+            reusedExistingJob: false,
+            job: {
+              jobId: "scan-job-1",
+              status: "pending",
+              clearExisting: false,
+            },
           });
         case "profile.update":
           return createTrpcSuccessResponse({

@@ -16,7 +16,12 @@ function createTrpcSuccessResponse(data: unknown) {
   };
 }
 
-async function mockExpensesWithInsuranceDiscoveries(page: Page, discoveries?: unknown[], invoices?: unknown[]) {
+async function mockExpensesWithInsuranceDiscoveries(
+  page: Page,
+  discoveries?: unknown[],
+  invoices?: unknown[],
+  scanStatus?: unknown | null,
+) {
   await page.route("**/api/trpc/**", async (route) => {
     const url = new URL(route.request().url());
     const procedureNames = url.pathname.replace("/api/trpc/", "").split(",");
@@ -62,6 +67,8 @@ async function mockExpensesWithInsuranceDiscoveries(page: Page, discoveries?: un
           return createTrpcSuccessResponse({
             url: "https://accounts.google.com/o/oauth2/auth",
           });
+        case "gmail.getScanStatus":
+          return createTrpcSuccessResponse(scanStatus ?? null);
         case "gmail.getInsuranceDiscoveries":
           return createTrpcSuccessResponse(discoveries ?? [
             {
@@ -138,5 +145,25 @@ test.describe("Gmail insurance discovery", () => {
     await expect(page.getByText("המסמך נמצא מאחורי אזור אישי או התחברות.")).toBeVisible();
     await expect(page.getByRole("button", { name: "פתח קישור והתחבר" })).toBeVisible();
     await expect(page.getByText("ללא PDF מצורף, זוהה קישור במייל")).toBeVisible();
+  });
+
+  test("shows background scan status while a Gmail scan is running", async ({ page }) => {
+    await mockExpensesWithInsuranceDiscoveries(
+      page,
+      undefined,
+      undefined,
+      {
+        jobId: "job-123",
+        status: "processing",
+        clearExisting: false,
+        result: null,
+        errorMessage: null,
+      },
+    );
+    await page.goto("/expenses");
+
+    await expect(page.getByTestId("gmail-scan-status")).toBeVisible();
+    await expect(page.getByText("סריקת Gmail רצה ברקע")).toBeVisible();
+    await expect(page.getByRole("button", { name: "סורק..." })).toBeDisabled();
   });
 });

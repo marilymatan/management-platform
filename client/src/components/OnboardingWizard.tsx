@@ -19,25 +19,40 @@ type OnboardingWizardProps = {
 
 const TOTAL_STEPS = 5;
 
+type GmailScanJob = {
+  status: string;
+};
+
+function isGmailScanActive(status?: string | null) {
+  return status === "pending" || status === "processing";
+}
+
 export function OnboardingWizard({ userName, onCompleted }: OnboardingWizardProps) {
   const utils = trpc.useUtils();
   const profileQuery = trpc.profile.get.useQuery();
   const connectionStatusQuery = trpc.gmail.connectionStatus.useQuery();
+  const scanStatusQuery = trpc.gmail.getScanStatus.useQuery(undefined, {
+    enabled: Boolean(connectionStatusQuery.data?.connected),
+    refetchInterval: (query) => {
+      const job = query.state.data as GmailScanJob | undefined;
+      return job && isGmailScanActive(job.status) ? 3000 : false;
+    },
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
+    staleTime: 0,
+  });
   const invoicesQuery = trpc.gmail.getInvoices.useQuery({ limit: 20 });
   const discoveriesQuery = trpc.gmail.getInsuranceDiscoveries.useQuery({ limit: 20 });
   const dashboardQuery = trpc.insuranceScore.getDashboard.useQuery();
   const savingsQuery = trpc.savings.getReport.useQuery();
   const scanMutation = trpc.gmail.scan.useMutation({
-    onSuccess: async () => {
-      await Promise.all([
-        utils.gmail.getInvoices.invalidate(),
-        utils.gmail.getInsuranceDiscoveries.invalidate(),
-        utils.gmail.discoverPolicies.invalidate(),
-        utils.monitoring.getMonthlyReport.invalidate(),
-        utils.savings.getReport.invalidate(),
-        utils.insuranceScore.getDashboard.invalidate(),
-      ]);
-      toast.success("סריקת Gmail הושלמה");
+    onSuccess: async (result) => {
+      await utils.gmail.getScanStatus.invalidate();
+      toast.success(
+        result.reusedExistingJob
+          ? "כבר קיימת סריקה פעילה ברקע"
+          : "סריקת Gmail התחילה ברקע",
+      );
     },
     onError: (error) => {
       toast.error(error.message);
@@ -94,7 +109,12 @@ export function OnboardingWizard({ userName, onCompleted }: OnboardingWizardProp
   }, [profileQuery.data]);
 
   useEffect(() => {
-    if (!connectionStatusQuery.data?.connected || scanStarted || scanMutation.isPending) {
+    if (
+      !connectionStatusQuery.data?.connected
+      || scanStarted
+      || scanMutation.isPending
+      || isGmailScanActive(scanStatusQuery.data?.status)
+    ) {
       return;
     }
     if ((invoicesQuery.data?.length ?? 0) > 0 || (discoveriesQuery.data?.length ?? 0) > 0) {
@@ -107,6 +127,7 @@ export function OnboardingWizard({ userName, onCompleted }: OnboardingWizardProp
     discoveriesQuery.data?.length,
     invoicesQuery.data?.length,
     scanMutation,
+    scanStatusQuery.data?.status,
     scanStarted,
   ]);
 
@@ -203,10 +224,10 @@ export function OnboardingWizard({ userName, onCompleted }: OnboardingWizardProp
                   <Badge variant="outline">
                     {connectionStatusQuery.data?.connected ? "Gmail מחובר" : "Gmail עדיין לא מחובר"}
                   </Badge>
-                  {scanMutation.isPending && (
+                  {isGmailScanActive(scanStatusQuery.data?.status) && (
                     <Badge variant="outline" className="gap-1.5">
                       <Loader2 className="size-3.5 animate-spin" />
-                      סריקה ראשונית רצה
+                      סריקה ראשונית רצה ברקע
                     </Badge>
                   )}
                 </div>

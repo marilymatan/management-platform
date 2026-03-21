@@ -88,6 +88,18 @@ type InsuranceMailDocument = {
   extractedData?: unknown;
 };
 
+type GmailScanJob = {
+  jobId: string;
+  status: string;
+  clearExisting?: boolean | null;
+  errorMessage?: string | null;
+  result?: {
+    scanned?: number | null;
+    saved?: number | null;
+    discoveriesSaved?: number | null;
+  } | null;
+};
+
 function buildDiscoverySearchText(item: InsuranceDiscovery) {
   return [
     item.provider,
@@ -104,10 +116,13 @@ function buildDiscoverySearchText(item: InsuranceDiscovery) {
     .toLowerCase();
 }
 
+function isGmailScanActive(status?: string | null) {
+  return status === "pending" || status === "processing";
+}
+
 export default function SmartInvoices() {
   const { user, loading: authLoading } = useAuth();
   const [, navigate] = useLocation();
-  const [isScanning, setIsScanning] = useState(false);
   const [scanDays, setScanDays] = useState(30);
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -121,6 +136,17 @@ export default function SmartInvoices() {
 
   const { data: insuranceDiscoveries, isLoading: discoveriesLoading, error: discoveriesError } =
     trpc.gmail.getInsuranceDiscoveries.useQuery({ limit: 40 }, { enabled: !!user, retry: 2 });
+
+  const { data: scanStatus } = trpc.gmail.getScanStatus.useQuery(undefined, {
+    enabled: !!user,
+    refetchInterval: (query) => {
+      const job = query.state.data as GmailScanJob | undefined;
+      return job && isGmailScanActive(job.status) ? 3000 : false;
+    },
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
+    staleTime: 0,
+  });
 
   const { data: authUrlData } = trpc.gmail.getAuthUrl.useQuery({}, { enabled: !!user });
 
@@ -137,36 +163,24 @@ export default function SmartInvoices() {
 
   const scanMutation = trpc.gmail.scan.useMutation({
     onSuccess: async (result) => {
-      setIsScanning(false);
+      await utils.gmail.getScanStatus.invalidate();
       toast.success(
-        `הסריקה הושלמה: נסרקו ${result.scanned} מיילים, נשמרו ${result.saved} פריטים מהמייל וזוהו ${result.discoveriesSaved} ממצאים ביטוחיים.`
+        result.reusedExistingJob
+          ? "כבר קיימת סריקה פעילה ברקע"
+          : "הסריקה התחילה ברקע. אפשר להמשיך לעבוד ולחזור כשהיא תסתיים.",
       );
-      await Promise.all([
-        utils.gmail.getInvoices.invalidate(),
-        utils.gmail.getInsuranceDiscoveries.invalidate(),
-        utils.gmail.connectionStatus.invalidate(),
-      ]);
     },
     onError: (err) => {
-      setIsScanning(false);
       toast.error(`שגיאה בסריקה: ${err.message}`);
     },
   });
 
   const clearAndRescanMutation = trpc.gmail.clearAndRescan.useMutation({
-    onSuccess: async (result) => {
-      setIsScanning(false);
-      toast.success(
-        `הסריקה מחדש הושלמה: נשמרו ${result.saved} פריטים מהמייל וזוהו ${result.discoveriesSaved} ממצאים ביטוחיים.`
-      );
-      await Promise.all([
-        utils.gmail.getInvoices.invalidate(),
-        utils.gmail.getInsuranceDiscoveries.invalidate(),
-        utils.gmail.connectionStatus.invalidate(),
-      ]);
+    onSuccess: async () => {
+      await utils.gmail.getScanStatus.invalidate();
+      toast.success("הסריקה מחדש התחילה ברקע. הנתונים יתעדכנו כשהתהליך יסתיים.");
     },
     onError: (err) => {
-      setIsScanning(false);
       toast.error(`שגיאה בסריקה מחדש: ${err.message}`);
     },
   });
@@ -238,6 +252,11 @@ export default function SmartInvoices() {
     premiums: discoveryItems.filter((item) => item.artifactType === "premium_notice").length,
   }), [connectionStatus?.connections.length, discoveryItems, insuranceMailDocuments.length]);
 
+  const isScanning =
+    scanMutation.isPending
+    || clearAndRescanMutation.isPending
+    || isGmailScanActive(scanStatus?.status);
+
   function handleConnect() {
     if (authUrlData?.url) {
       window.location.href = authUrlData.url;
@@ -245,7 +264,6 @@ export default function SmartInvoices() {
   }
 
   function handleScan() {
-    setIsScanning(true);
     scanMutation.mutate({ daysBack: scanDays });
   }
 
@@ -389,6 +407,54 @@ export default function SmartInvoices() {
                   חבר חשבון נוסף
                 </button>
               </div>
+              {scanStatus && (
+                <div
+                  className={`mx-4 mb-3 rounded-xl border px-4 py-3 text-sm ${
+                    isGmailScanActive(scanStatus.status)
+                      ? "border-primary/20 bg-primary/5"
+                      : scanStatus.status === "error"
+                        ? "border-destructive/20 bg-destructive/5"
+                        : "border-emerald-200/70 bg-emerald-50/70"
+                  }`}
+                  data-testid="gmail-scan-status"
+                >
+                  <div className="flex items-start gap-3">
+                    {isGmailScanActive(scanStatus.status) ? (
+                      <Loader2 className="size-4 animate-spin text-primary shrink-0 mt-0.5" />
+                    ) : (
+                      <RefreshCw
+                        className={`size-4 shrink-0 mt-0.5 ${
+                          scanStatus.status === "error"
+                            ? "text-destructive"
+                            : "text-emerald-600"
+                        }`}
+                      />
+                    )}
+                    <div className="space-y-1">
+                      <p className="font-medium text-foreground">
+                        {isGmailScanActive(scanStatus.status)
+                          ? scanStatus.clearExisting
+                            ? "סריקה מחדש רצה ברקע"
+                            : "סריקת Gmail רצה ברקע"
+                          : scanStatus.status === "error"
+                            ? "הסריקה האחרונה נכשלה"
+                            : scanStatus.clearExisting
+                              ? "הסריקה מחדש האחרונה הושלמה"
+                              : "הסריקה האחרונה הושלמה"}
+                      </p>
+                      <p className="text-muted-foreground leading-relaxed">
+                        {isGmailScanActive(scanStatus.status)
+                          ? "אפשר להמשיך לעבוד בזמן שלומי סורקת את המיילים. הממצאים יתעדכנו אוטומטית כשהתהליך יסתיים."
+                          : scanStatus.status === "error"
+                            ? scanStatus.errorMessage || "לא הצלחנו להשלים את הסריקה."
+                            : scanStatus.result
+                              ? `נסרקו ${scanStatus.result.scanned ?? 0} מיילים, נשמרו ${scanStatus.result.saved ?? 0} פריטים וזוהו ${scanStatus.result.discoveriesSaved ?? 0} ממצאים ביטוחיים.`
+                              : "סריקת Gmail הושלמה."}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
               <div className="flex items-center gap-2 px-4 py-3 bg-muted/30 border-t flex-wrap">
                 <select
                   value={scanDays}
@@ -421,7 +487,6 @@ export default function SmartInvoices() {
                     size="sm"
                     onClick={() => {
                       if (confirm("האם למחוק את ממצאי המייל הקיימים ולסרוק מחדש?")) {
-                        setIsScanning(true);
                         clearAndRescanMutation.mutate({ daysBack: scanDays });
                       }
                     }}

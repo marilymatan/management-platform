@@ -55,6 +55,10 @@ type DashboardActionItem = {
   tone: DashboardActionTone;
 };
 
+type GmailScanJob = {
+  status: string;
+};
+
 function HealthScoreRing({ score }: { score: number }) {
   const radius = 40;
   const circumference = 2 * Math.PI * radius;
@@ -109,6 +113,10 @@ function getActionToneClasses(tone: DashboardActionTone) {
   return "border-primary/20 bg-primary/5";
 }
 
+function isGmailScanActive(status?: string | null) {
+  return status === "pending" || status === "processing";
+}
+
 export default function LumiDashboard() {
   const { user } = useAuth({ redirectOnUnauthenticated: true });
   const [, setLocation] = useLocation();
@@ -132,6 +140,16 @@ export default function LumiDashboard() {
   const { data: gmailStatus } = trpc.gmail.connectionStatus.useQuery(undefined, {
     enabled: !!user,
   });
+  const { data: gmailScanStatus } = trpc.gmail.getScanStatus.useQuery(undefined, {
+    enabled: !!user,
+    refetchInterval: (query) => {
+      const job = query.state.data as GmailScanJob | undefined;
+      return job && isGmailScanActive(job.status) ? 3000 : false;
+    },
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
+    staleTime: 0,
+  });
   const { data: insuranceDiscoveries } = trpc.gmail.getInsuranceDiscoveries.useQuery({ limit: 10 }, {
     enabled: !!user,
   });
@@ -151,8 +169,9 @@ export default function LumiDashboard() {
         utils.savings.getReport.invalidate(),
         utils.actions.list.invalidate(),
         utils.insuranceScore.getDashboard.invalidate(),
+        utils.gmail.getScanStatus.invalidate(),
       ]);
-      toast.success("הבדיקה החודשית עודכנה");
+      toast.success("בדיקת שינויי המייל התחילה ברקע");
     },
     onError: (error) => {
       toast.error(error.message);
@@ -563,7 +582,7 @@ export default function LumiDashboard() {
 
       <MonthlyReportCard
         report={monitoringReport}
-        isRefreshing={monitoringRefreshMutation.isPending}
+        isRefreshing={monitoringRefreshMutation.isPending || isGmailScanActive(gmailScanStatus?.status)}
         onRefresh={() => monitoringRefreshMutation.mutate({ daysBack: 120, scanFirst: true })}
         onOpenSavings={() => setLocation("/savings")}
       />
