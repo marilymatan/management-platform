@@ -23,6 +23,7 @@ import { verifyFileSignature } from "../storage";
 import {
   ensureLegacySchemaCompatibility,
   getAppliedMigrationTags,
+  getMissingMigrationTrackingEntries,
   hasExistingCoreSchema,
   shouldSyncMigrationTracking,
 } from "../schemaCompatibility";
@@ -56,31 +57,49 @@ async function runMigrations() {
         .createHash("sha256")
         .update(fs.readFileSync(migrationPath))
         .digest("hex");
-      return { hash, when: entry.when };
+      return { tag: entry.tag, hash, when: entry.when };
     });
 
     const tracked = await db.execute(
-      sql`SELECT count(*)::int as cnt FROM "drizzle"."__drizzle_migrations"`
+      sql`SELECT hash FROM "drizzle"."__drizzle_migrations"`
     );
-    const trackedCount = ((tracked.rows[0] as any)?.cnt ?? 0);
+    const trackedCount = tracked.rows.length;
+    const trackedHashes = new Set(
+      tracked.rows
+        .map((row) => {
+          const hash = (row as { hash?: unknown }).hash;
+          return typeof hash === "string" ? hash : null;
+        })
+        .filter((hash): hash is string => Boolean(hash)),
+    );
 
     const existingCoreSchema = await hasExistingCoreSchema(db);
 
-    if (shouldSyncMigrationTracking(trackedCount, existingCoreSchema)) {
+    if (existingCoreSchema) {
       const appliedMigrationTags = await getAppliedMigrationTags(
         db,
         migrationJournal.entries.map((entry) => entry.tag),
       );
-      const syncedMigrations = allMigrations.filter((_, index) =>
-        appliedMigrationTags.has(migrationJournal.entries[index].tag),
+      const missingTrackedMigrations = getMissingMigrationTrackingEntries(
+        allMigrations,
+        appliedMigrationTags,
+        trackedHashes,
       );
-      await db.execute(sql`TRUNCATE "drizzle"."__drizzle_migrations"`);
-      for (const m of syncedMigrations) {
-        await db.execute(
-          sql`INSERT INTO "drizzle"."__drizzle_migrations" ("hash", "created_at") VALUES (${m.hash}, ${m.when})`
+      if (missingTrackedMigrations.length > 0) {
+        if (shouldSyncMigrationTracking(trackedCount, existingCoreSchema)) {
+          await db.execute(sql`TRUNCATE "drizzle"."__drizzle_migrations"`);
+        }
+        for (const m of missingTrackedMigrations) {
+          await db.execute(
+            sql`INSERT INTO "drizzle"."__drizzle_migrations" ("hash", "created_at") VALUES (${m.hash}, ${m.when})`
+          );
+        }
+        console.log(
+          trackedCount === 0
+            ? "[Migrate] Synced migration tracking (" + missingTrackedMigrations.length + " migrations)"
+            : "[Migrate] Backfilled migration tracking (" + missingTrackedMigrations.length + " migrations)",
         );
       }
-      console.log("[Migrate] Synced migration tracking (" + syncedMigrations.length + " migrations)");
     }
 
     const migrationsFolder = path.resolve(process.cwd(), "drizzle");

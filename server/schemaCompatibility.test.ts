@@ -7,6 +7,7 @@ import {
   ensureSavingsHubCompatibility,
   ensureUserProfileCompatibility,
   getAppliedMigrationTags,
+  getMissingMigrationTrackingEntries,
   shouldSyncMigrationTracking,
   type SchemaCompatibilityDb,
 } from "./schemaCompatibility";
@@ -39,6 +40,22 @@ describe("schemaCompatibility", () => {
     expect(shouldSyncMigrationTracking(0, true)).toBe(true);
     expect(shouldSyncMigrationTracking(0, false)).toBe(false);
     expect(shouldSyncMigrationTracking(3, true)).toBe(false);
+  });
+
+  it("selects only applied migrations missing from tracking", () => {
+    expect(
+      getMissingMigrationTrackingEntries(
+        [
+          { tag: "0013_whole_darwin", hash: "hash-13", when: 13 },
+          { tag: "0014_clean_stature", hash: "hash-14", when: 14 },
+          { tag: "0015_parallel_pet_avengers", hash: "hash-15", when: 15 },
+        ],
+        new Set(["0013_whole_darwin", "0014_clean_stature"]),
+        new Set(["hash-13"]),
+      ),
+    ).toEqual([
+      { tag: "0014_clean_stature", hash: "hash-14", when: 14 },
+    ]);
   });
 
   it("adds missing analysis queue columns and index when the schema is behind", async () => {
