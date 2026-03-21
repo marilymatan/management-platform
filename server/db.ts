@@ -1,4 +1,4 @@
-import { eq, desc, sql, and, asc } from "drizzle-orm";
+import { eq, desc, sql, and, asc, inArray } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import pg from "pg";
 import { InsertUser, users, analyses, chatMessages, apiUsageLogs, userProfiles, gmailConnections, smartInvoices, auditLogs, familyMembers, documentClassifications, categorySummaryCache, type InsertAnalysis, type InsertChatMessage, type InsertApiUsageLog, type InsertUserProfile, type InsertFamilyMember, type InsertDocumentClassification, type InsertCategorySummaryCache } from "../drizzle/schema";
@@ -549,6 +549,21 @@ export async function deleteAnalysis(sessionId: string, userId: number) {
     files: analysis.files as Array<string | { fileKey?: string | null }> | null | undefined,
     deleteStoredFile: storageDelete,
   });
+}
+
+export async function deleteInFlightAnalysesForUser(userId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const rows = await db
+    .select({ sessionId: analyses.sessionId })
+    .from(analyses)
+    .where(and(eq(analyses.userId, userId), inArray(analyses.status, ["pending", "processing"])));
+  const deletedSessionIds: string[] = [];
+  for (const row of rows) {
+    await deleteAnalysis(row.sessionId, userId);
+    deletedSessionIds.push(row.sessionId);
+  }
+  return { deletedSessionIds };
 }
 
 const MODEL_COST_PER_1K_TOKENS: Record<string, number> = {

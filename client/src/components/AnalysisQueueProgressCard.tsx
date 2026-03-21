@@ -9,6 +9,9 @@ interface AnalysisQueueProgressCardProps {
   analyses: InFlightAnalysisLike[];
   onOpenStatus?: () => void;
   actionLabel?: string;
+  onClearQueue?: () => void;
+  clearQueuePending?: boolean;
+  clearQueueLabel?: string;
   className?: string;
 }
 
@@ -16,6 +19,9 @@ export function AnalysisQueueProgressCard({
   analyses,
   onOpenStatus,
   actionLabel = "פתח סטטוס",
+  onClearQueue,
+  clearQueuePending = false,
+  clearQueueLabel = "נקה תור",
   className,
 }: AnalysisQueueProgressCardProps) {
   const summary = summarizeAnalysisQueue(analyses);
@@ -71,15 +77,29 @@ export function AnalysisQueueProgressCard({
             )}
           </div>
 
-          {onOpenStatus ? (
-            <Button
-              variant="outline"
-              onClick={onOpenStatus}
-              className="shrink-0"
-            >
-              {actionLabel}
-            </Button>
-          ) : null}
+          <div className="flex flex-col gap-2 shrink-0 sm:flex-row sm:items-center">
+            {onClearQueue ? (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={onClearQueue}
+                disabled={clearQueuePending}
+                className="border-destructive/30 text-destructive hover:bg-destructive/10"
+                data-testid="analysis-queue-clear-button"
+              >
+                {clearQueueLabel}
+              </Button>
+            ) : null}
+            {onOpenStatus ? (
+              <Button
+                variant="outline"
+                onClick={onOpenStatus}
+                className="shrink-0"
+              >
+                {actionLabel}
+              </Button>
+            ) : null}
+          </div>
         </div>
       </CardContent>
     </Card>

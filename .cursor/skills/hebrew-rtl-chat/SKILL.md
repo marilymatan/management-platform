@@ -38,3 +38,7 @@ Use LRM (U+200E) / RLM (U+200F) around embedded English in Hebrew when order bre
 ## Exception
 
 Skip the RTL wrapper only if the user explicitly requests all-LTR for that turn.
+
+## Composer 2 and similar models
+
+Some models (notably **Composer 2**) mishandle HTML in chat: `<div dir="rtl">` can leave visible `</div>`, break lists, or scramble bidi next to `**` and inline `` ` ``. **Fallback:** omit the wrapper for that turn; start Hebrew paragraphs and list items with **RLM** (`‏`); keep code fences unwrapped; use **LRM/RLM** around short English fragments when needed. Use the full `<div>` wrapper when the client renders it correctly.

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { appRouter } from "./routers";
 import type { TrpcContext } from "./_core/context";
-import { createAnalysis, resetAnalysisForRetry } from "./db";
+import { createAnalysis, resetAnalysisForRetry, deleteInFlightAnalysesForUser } from "./db";
 import { policyAnalysisWorker } from "./policyAnalysisWorker";
 
 // Mock storage
@@ -118,6 +118,7 @@ vi.mock("./db", () => ({
   resetAnalysisForRetry: vi.fn().mockResolvedValue(undefined),
   addChatMessage: vi.fn(),
   getChatHistory: vi.fn().mockResolvedValue([]),
+  deleteInFlightAnalysesForUser: vi.fn().mockResolvedValue({ deletedSessionIds: [] }),
 }));
 
 vi.mock("./policyAnalysisWorker", () => ({
@@ -165,6 +166,8 @@ beforeEach(() => {
   vi.mocked(createAnalysis).mockClear();
   vi.mocked(policyAnalysisWorker.nudge).mockClear();
   vi.mocked(resetAnalysisForRetry).mockClear();
+  vi.mocked(deleteInFlightAnalysesForUser).mockClear();
+  vi.mocked(deleteInFlightAnalysesForUser).mockResolvedValue({ deletedSessionIds: [] });
 });
 
 describe("policy.upload", () => {
@@ -255,6 +258,26 @@ describe("policy.analyze", () => {
     expect(result.status).toBe("queued");
     expect(resetAnalysisForRetry).toHaveBeenCalledWith("error-session");
     expect(policyAnalysisWorker.nudge).toHaveBeenCalled();
+  });
+});
+
+describe("policy.clearInFlightQueue", () => {
+  it("rejects unauthenticated requests", async () => {
+    const ctx = createPublicContext();
+    const caller = appRouter.createCaller(ctx);
+    await expect(caller.policy.clearInFlightQueue()).rejects.toThrow();
+  });
+
+  it("deletes in-flight analyses for the user", async () => {
+    vi.mocked(deleteInFlightAnalysesForUser).mockResolvedValueOnce({
+      deletedSessionIds: ["s1", "s2"],
+    });
+    const ctx = createAuthenticatedContext();
+    const caller = appRouter.createCaller(ctx);
+    const result = await caller.policy.clearInFlightQueue();
+    expect(result.deletedCount).toBe(2);
+    expect(result.deletedSessionIds).toEqual(["s1", "s2"]);
+    expect(deleteInFlightAnalysesForUser).toHaveBeenCalledWith(1);
   });
 });
 

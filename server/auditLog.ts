@@ -21,6 +21,7 @@ export type AuditAction =
   | "view_analysis"
   | "create_analysis"
   | "delete_analysis"
+  | "clear_inflight_analysis_queue"
   | "view_chat"
   | "send_chat"
   // File operations

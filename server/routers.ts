@@ -18,6 +18,7 @@ import {
   getUserAnalyses,
   linkAnalysisToUser,
   deleteAnalysis,
+  deleteInFlightAnalysesForUser,
   logApiUsage,
   getUserUsageStats,
   getAllUsersWithUsage,
@@ -1822,6 +1823,18 @@ ${JSON.stringify(payload, null, 2)}`,
         });
         return { success: true };
       }),
+
+    clearInFlightQueue: protectedProcedure.mutation(async ({ ctx }) => {
+      if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const { deletedSessionIds } = await deleteInFlightAnalysesForUser(ctx.user.id);
+      await audit({
+        userId: ctx.user.id,
+        action: "clear_inflight_analysis_queue",
+        resource: "analysis",
+        details: JSON.stringify({ count: deletedSessionIds.length, sessionIds: deletedSessionIds }),
+      });
+      return { deletedSessionIds, deletedCount: deletedSessionIds.length };
+    }),
 
     /** Get current user's usage stats */
     myUsage: protectedProcedure.query(async ({ ctx }) => {
