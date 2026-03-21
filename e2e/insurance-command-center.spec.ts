@@ -111,17 +111,15 @@ const invoices = [
   },
 ];
 
-const monthlySummary = [
+const insuranceDiscoveries = [
   {
-    month: "2026-03",
-    total: 305,
-    expenseTotal: 305,
-    categories: [
-      {
-        category: "ביטוח",
-        total: 305,
-      },
-    ],
+    id: 101,
+    provider: "הראל",
+    artifactType: "renewal_notice",
+    insuranceCategory: "health",
+    documentDate: new Date("2026-03-21T08:00:00.000Z"),
+    summary: "נמצא מסמך חידוש לביטוח הבריאות.",
+    actionHint: "כדאי לבדוק אם התנאים עדיין מתאימים למשפחה לפני החידוש.",
   },
 ];
 
@@ -173,6 +171,50 @@ const insuranceMapSnapshot = {
   ],
 };
 
+const assistantHomeContext = {
+  greeting: "שלום מיכל, ריכזתי כאן את מה שחשוב לדעת על הביטוחים, המשפחה והמיילים של הבית.",
+  chips: [
+    { label: "2 פוליסות פעילות", tone: "success" as const },
+    { label: "2 התראות פתוחות", tone: "warning" as const },
+    { label: "Gmail מחובר", tone: "info" as const },
+  ],
+  suggestedPrompts: [
+    "מה דורש טיפול עכשיו?",
+    "איזו פוליסה כדאי לפתוח קודם?",
+  ],
+  highlights: [
+    {
+      title: "חידוש בריאות מתקרב",
+      description: "לבדוק את תנאי החידוש של בריאות משפחתית לפני מאי.",
+      tone: "warning" as const,
+    },
+  ],
+};
+
+const dashboardSummary = {
+  score: 78,
+  topActions: [
+    {
+      id: 1,
+      title: "בדקי את חידוש הבריאות",
+      description: "חידוש חדש הגיע מהראל וכדאי לעבור עליו לפני התשלום הבא.",
+      type: "renewal",
+      priority: "high",
+      status: "pending",
+    },
+  ],
+};
+
+const savingsReport = {
+  totalMonthlySaving: 180,
+  opportunities: [
+    {
+      id: 1,
+      title: "בדיקת כפל כיסוי",
+    },
+  ],
+};
+
 function createTrpcSuccessResponse(data: unknown) {
   return {
     result: {
@@ -195,10 +237,10 @@ async function mockAuthenticatedApp(page: Page) {
           return createTrpcSuccessResponse(null);
         case "policy.getUserAnalyses":
           return createTrpcSuccessResponse(analyses);
-        case "gmail.getMonthlySummary":
-          return createTrpcSuccessResponse(monthlySummary);
         case "gmail.getInvoices":
           return createTrpcSuccessResponse(invoices);
+        case "gmail.getInsuranceDiscoveries":
+          return createTrpcSuccessResponse(insuranceDiscoveries);
         case "family.list":
           return createTrpcSuccessResponse(members);
         case "insuranceMap.get":
@@ -206,8 +248,23 @@ async function mockAuthenticatedApp(page: Page) {
         case "gmail.connectionStatus":
           return createTrpcSuccessResponse({
             connected: true,
-            email: "michal@gmail.com",
+            connections: [
+              {
+                id: 1,
+                email: "michal@gmail.com",
+                lastSyncCount: 4,
+                lastSyncedAt: new Date("2026-03-21T07:00:00.000Z"),
+              },
+            ],
           });
+        case "assistant.getHomeContext":
+          return createTrpcSuccessResponse(assistantHomeContext);
+        case "assistant.getChatHistory":
+          return createTrpcSuccessResponse([]);
+        case "insuranceScore.getDashboard":
+          return createTrpcSuccessResponse(dashboardSummary);
+        case "savings.getReport":
+          return createTrpcSuccessResponse(savingsReport);
         default:
           return createTrpcSuccessResponse(null);
       }
@@ -229,19 +286,30 @@ test.describe("Insurance command center", () => {
   test("renders the dashboard as an insurance command center", async ({ page }) => {
     await page.goto("/");
     await expect(page.getByTestId("insurance-command-center")).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByText("מרכז הפיקוד הביטוחי של המשפחה")).toBeVisible();
+    await expect(page.getByText("הבית של לומי")).toBeVisible();
+    await expect(page.getByTestId("home-lumi-chat")).toBeVisible();
+    await expect(page.getByTestId("home-alerts-preview")).toBeVisible();
     await expect(page.getByText("תקציר משפחתי")).toBeVisible();
     await expect(page.getByText("פרמיה חודשית מזוהה")).toBeVisible();
     await expect(page.getByText("שיוכים לבדיקה", { exact: true }).first()).toBeVisible();
+    await expect(page.locator("[data-testid='monthly-report-card']")).toHaveCount(0);
+  });
+
+  test("renders the alerts center with findings from scans", async ({ page }) => {
+    await page.goto("/alerts");
+    await expect(page.getByTestId("alerts-page")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText("מסך אחד לכל מה שלומי מצא")).toBeVisible();
+    await expect(page.getByText("זוהו חפיפות ב-בריאות משפחתית")).toBeVisible();
+    await expect(page.getByText("חידוש חדש מ-הראל")).toBeVisible();
   });
 
   test("renders the family coverage map with household statuses", async ({ page }) => {
     await page.goto("/family");
     await expect(page.getByTestId("family-page")).toBeVisible({ timeout: 15_000 });
     await expect(page.getByTestId("coverage-orbit-map")).toBeVisible();
-    await expect(page.getByText("בעל/ת החשבון")).toBeVisible();
-    await expect(page.getByText("רן ישראלי", { exact: true }).first()).toBeVisible();
-    await expect(page.getByText("נועה ישראלי", { exact: true }).first()).toBeVisible();
+    await expect(page.getByTestId("orbit-center-node")).toBeVisible();
+    await expect(page.getByTestId("orbit-member-node-member-10")).toBeVisible();
+    await expect(page.getByTestId("orbit-member-node-member-11")).toBeVisible();
     await expect(page.getByText("יש כיסוי", { exact: true }).first()).toBeVisible();
     await expect(page.getByText("חסר מידע", { exact: true }).first()).toBeVisible();
   });
@@ -252,8 +320,8 @@ test.describe("Insurance command center", () => {
     await expect(page.getByRole("heading", { name: "תמונה אחת של כל הכיסויים בבית" })).toBeVisible();
     await expect(page.getByTestId("coverage-score-ring")).toBeVisible();
     await expect(page.getByTestId("coverage-orbit-map")).toBeVisible();
-    await expect(page.getByText("בעל/ת החשבון")).toBeVisible();
-    await expect(page.getByText("רן ישראלי", { exact: true }).first()).toBeVisible();
-    await expect(page.getByText("נועה ישראלי", { exact: true }).first()).toBeVisible();
+    await expect(page.getByTestId("orbit-center-node")).toBeVisible();
+    await expect(page.getByTestId("orbit-member-node-member-10")).toBeVisible();
+    await expect(page.getByTestId("orbit-member-node-member-11")).toBeVisible();
   });
 });

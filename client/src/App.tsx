@@ -18,7 +18,7 @@ const Insurance = lazy(() => import("./pages/Insurance"));
 const InsuranceCategoryPage = lazy(() => import("./pages/InsuranceCategoryPage"));
 const Home = lazy(() => import("./pages/Home"));
 const Expenses = lazy(() => import("./pages/SmartInvoices"));
-const Reminders = lazy(() => import("./pages/Reminders"));
+const Alerts = lazy(() => import("./pages/Alerts"));
 const Documents = lazy(() => import("./pages/Documents"));
 const SavingsCenter = lazy(() => import("./pages/SavingsCenter"));
 const Settings = lazy(() => import("./pages/Settings"));
@@ -39,6 +39,7 @@ const KNOWN_ROUTE_PATTERNS = [
   /^\/savings$/,
   /^\/money$/,
   /^\/expenses$/,
+  /^\/alerts$/,
   /^\/reminders$/,
   /^\/documents$/,
   /^\/settings$/,
@@ -106,7 +107,8 @@ function Router() {
           <Route path="/insurance/:sessionId" component={Home} />
           <Route path="/money" component={Expenses} />
           <Route path="/expenses" component={Expenses} />
-          <Route path="/reminders" component={Reminders} />
+          <Route path="/alerts" component={Alerts} />
+          <Route path="/reminders" component={Alerts} />
           <Route path="/documents" component={Documents} />
           <Route path="/settings" component={Settings} />
           <Route path="/admin" component={AdminDashboard} />
