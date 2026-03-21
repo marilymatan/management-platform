@@ -16,7 +16,7 @@ import { convert as htmlToText } from "html-to-text";
 import { generateSignedFileUrl, storagePut, storageRead, sanitizeFilename } from "./storage";
 import { decryptJson, encryptField, decryptField, encryptJson } from "./encryption";
 import { ENV } from "./_core/env";
-import { extractInsuranceDiscoveryData, inferInsuranceArtifactType, inferInsuranceCategoryFromText, looksLikeInsuranceMessage } from "./gmailInsuranceDiscovery";
+import { extractInsuranceDiscoveryData, inferInsuranceArtifactType, inferInsuranceCategoryFromText, looksLikeInsuranceMessage, looksLikeInsurancePdfCandidate } from "./gmailInsuranceDiscovery";
 import { policyAnalysisWorker } from "./policyAnalysisWorker";
 
 // ─── OAuth2 client factory ────────────────────────────────────────────────────
@@ -977,13 +977,21 @@ export async function scanGmailForInvoices(
         .limit(1);
 
       const shouldProcessInvoice = !existingInvoice && isInvoiceEmail(email.subject, email.body);
-      const shouldProcessDiscovery = !existingArtifact && looksLikeInsuranceMessage({
-        subject: email.subject,
-        from: email.from,
-        body: email.body,
-        attachmentFilename: email.pdfAttachments[0]?.filename ?? null,
-        detectedProvider,
-      });
+      const shouldProcessDiscovery = !existingArtifact && (
+        looksLikeInsuranceMessage({
+          subject: email.subject,
+          from: email.from,
+          body: email.body,
+          attachmentFilename: email.pdfAttachments[0]?.filename ?? null,
+          detectedProvider,
+        }) || looksLikeInsurancePdfCandidate({
+          subject: email.subject,
+          from: email.from,
+          body: email.body,
+          attachmentFilename: email.pdfAttachments[0]?.filename ?? null,
+          detectedProvider,
+        })
+      );
 
       if (!shouldProcessInvoice && !shouldProcessDiscovery) continue;
 
@@ -1196,7 +1204,7 @@ export interface DiscoveredPolicyPdf {
 
 export async function discoverPolicyPdfs(
   userId: number,
-  daysBack: number = 90
+  daysBack: number = 365
 ): Promise<DiscoveredPolicyPdf[]> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -1214,8 +1222,13 @@ export async function discoverPolicyPdfs(
 
       const detectedProvider = detectProvider(email.subject, email.from, email.body);
       const shouldInclude =
-        detectedProvider?.category === "ביטוח"
-        || looksLikeInsuranceMessage({
+        looksLikeInsuranceMessage({
+          subject: email.subject,
+          from: email.from,
+          body: email.body,
+          attachmentFilename: email.pdfAttachments[0]?.filename ?? null,
+          detectedProvider,
+        }) || looksLikeInsurancePdfCandidate({
           subject: email.subject,
           from: email.from,
           body: email.body,

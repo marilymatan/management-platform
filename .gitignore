@@ -114,7 +114,12 @@ data/
 .manus-logs/
 .manus/
 
+# Codex artifacts
+.codex/
+.codex-skill-staging/
+
 # Playwright artifacts
+output/playwright/
 playwright-report/
 test-results/
 blob-report/

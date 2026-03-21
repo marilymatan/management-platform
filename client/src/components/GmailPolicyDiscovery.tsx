@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import { formatGmailConnectionSummary } from "@/lib/gmailConnections";
 import { trpc } from "@/lib/trpc";
 import { FileText, Loader2, Mail, RefreshCw, Sparkles } from "lucide-react";
 
@@ -51,8 +52,13 @@ export function GmailPolicyDiscovery({
   const { data: connectionStatus } = trpc.gmail.connectionStatus.useQuery();
   const { data: authUrlData } = trpc.gmail.getAuthUrl.useQuery({ returnTo });
   const candidatesQuery = trpc.gmail.discoverPolicies.useQuery(
-    { daysBack: 120 },
-    { enabled: Boolean(connectionStatus?.connected) }
+    { daysBack: 365 },
+    {
+      enabled: Boolean(connectionStatus?.connected),
+      retry: false,
+      refetchOnWindowFocus: false,
+      staleTime: 5 * 60 * 1000,
+    }
   );
   const importMutation = trpc.gmail.importPolicyPdf.useMutation({
     onError: (error) => {
@@ -61,6 +67,7 @@ export function GmailPolicyDiscovery({
   });
 
   const candidates = candidatesQuery.data ?? [];
+  const connectionSummary = formatGmailConnectionSummary(connectionStatus?.connections);
   const selectedCandidates = useMemo(
     () => candidates.filter((candidate) => selectedKeys.includes(buildCandidateKey(candidate))),
     [candidates, selectedKeys]
@@ -128,6 +135,16 @@ export function GmailPolicyDiscovery({
               <h3 className="text-base font-semibold">{title}</h3>
             </div>
             <p className="text-sm text-muted-foreground">{description}</p>
+            {connectionStatus?.connected && (
+              <div
+                className="flex flex-wrap items-center gap-2 rounded-xl border border-emerald-200/80 bg-emerald-50/70 px-3 py-2 text-xs text-emerald-900"
+                data-testid="gmail-policy-connected-account"
+              >
+                <span className="font-medium">Gmail מחובר:</span>
+                <span className="font-semibold truncate">{connectionSummary.label}</span>
+                <span className="text-emerald-700/70">• {connectionSummary.detail}</span>
+              </div>
+            )}
           </div>
 
           <div className="flex items-center gap-2">
@@ -158,11 +175,22 @@ export function GmailPolicyDiscovery({
         ) : candidatesQuery.isLoading ? (
           <div className="rounded-xl border p-4 flex items-center gap-2 text-sm text-muted-foreground">
             <Loader2 className="size-4 animate-spin" />
-            מחפש מסמכי פוליסה ו־PDF ב-Gmail...
+            מחפש מסמכי פוליסה ו־PDF ב-Gmail ב־12 החודשים האחרונים...
+          </div>
+        ) : candidatesQuery.error ? (
+          <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-4 space-y-3">
+            <p className="text-sm font-medium text-foreground">לא הצלחנו להשלים את חיפוש הפוליסות</p>
+            <p className="text-sm text-muted-foreground">
+              אפשר לנסות שוב, או להמשיך להעלות פוליסות ידנית אם כבר יש קבצים זמינים.
+            </p>
+            <Button variant="outline" size="sm" onClick={() => candidatesQuery.refetch()} className="gap-1.5">
+              <RefreshCw className="size-4" />
+              נסה שוב
+            </Button>
           </div>
         ) : candidates.length === 0 ? (
           <div className="rounded-xl border p-4 text-sm text-muted-foreground">
-            לא זוהו כרגע PDF-ים ביטוחיים ב-Gmail. אפשר להעלות PDF ידנית או לנסות רענון בהמשך.
+            לא זוהו כרגע PDF-ים ביטוחיים ב-Gmail ב־365 הימים האחרונים. אפשר להעלות PDF ידנית או לנסות רענון בהמשך.
           </div>
         ) : (
           <>

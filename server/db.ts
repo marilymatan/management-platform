@@ -114,7 +114,13 @@ export async function getUserByOpenId(openId: string) {
 interface CreateAnalysisInput {
   sessionId: string;
   userId?: number | null;
-  files: Array<{ name: string; size: number; fileKey?: string; url?: string; mimeType?: string }>;
+  files: Array<{
+    name: string;
+    size: number;
+    fileKey?: string;
+    url?: string;
+    mimeType?: string;
+  }>;
   status?: "pending" | "processing" | "completed" | "error";
   insuranceCategory?: "health" | "life" | "car" | "home" | null;
 }
@@ -134,18 +140,62 @@ type AnalysisStatusUpdate = {
   nextRetryAt?: Date | null;
 };
 
+type EncryptedAnalysisJsonEnvelope = {
+  __encrypted: true;
+  ciphertext: string;
+};
+
+function isEncryptedAnalysisJsonEnvelope(value: unknown): value is EncryptedAnalysisJsonEnvelope {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  return record.__encrypted === true && typeof record.ciphertext === "string";
+}
+
+export function serializeAnalysisJsonCompat(value: unknown): string {
+  return JSON.stringify({
+    __encrypted: true,
+    ciphertext: encryptJson(value),
+  } satisfies EncryptedAnalysisJsonEnvelope);
+}
+
+export function decodeAnalysisJsonCompat<T = unknown>(value: unknown): T | null {
+  if (value == null) {
+    return null;
+  }
+
+  if (isEncryptedAnalysisJsonEnvelope(value)) {
+    return decryptJson<T>(value.ciphertext);
+  }
+
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value) as unknown;
+      if (isEncryptedAnalysisJsonEnvelope(parsed)) {
+        return decryptJson<T>(parsed.ciphertext);
+      }
+      return parsed as T;
+    } catch {
+      return decryptJson<T>(value);
+    }
+  }
+
+  return value as T;
+}
+
 function decryptAnalysisData(row: any): any {
   if (!row) return row;
   const decrypted = { ...row };
-  if (decrypted.files && typeof decrypted.files === "string") {
-    const parsed = decryptJson(decrypted.files);
+  if (decrypted.files !== undefined && decrypted.files !== null) {
+    const parsed = decodeAnalysisJsonCompat(decrypted.files);
     decrypted.files = parsed ?? decrypted.files;
   }
   if (decrypted.extractedText && typeof decrypted.extractedText === "string") {
     decrypted.extractedText = decryptField(decrypted.extractedText);
   }
-  if (decrypted.analysisResult && typeof decrypted.analysisResult === "string") {
-    decrypted.analysisResult = decryptJson(decrypted.analysisResult);
+  if (decrypted.analysisResult !== undefined && decrypted.analysisResult !== null) {
+    decrypted.analysisResult = decodeAnalysisJsonCompat(decrypted.analysisResult);
   }
   if (decrypted.errorMessage && typeof decrypted.errorMessage === "string") {
     decrypted.errorMessage = decryptField(decrypted.errorMessage);
@@ -153,12 +203,48 @@ function decryptAnalysisData(row: any): any {
   return decrypted;
 }
 
+function normalizeAnalysisFile(file: CreateAnalysisInput["files"][number]) {
+  const name = typeof file.name === "string" && file.name.trim() ? file.name.trim() : "file";
+  const size = typeof file.size === "number" && Number.isFinite(file.size) && file.size >= 0
+    ? Math.floor(file.size)
+    : 0;
+  const normalized: {
+    name: string;
+    size: number;
+    fileKey?: string;
+    url?: string;
+    mimeType?: string;
+  } = { name, size };
+
+  const fileKey = typeof file.fileKey === "string" && file.fileKey.trim() ? file.fileKey.trim() : "";
+  if (fileKey) {
+    normalized.fileKey = fileKey;
+  }
+
+  const url = typeof file.url === "string" && file.url.trim() ? file.url.trim() : "";
+  if (url) {
+    normalized.url = url;
+  }
+
+  const mimeType = typeof file.mimeType === "string" && file.mimeType.trim() ? file.mimeType.trim() : "";
+  if (mimeType) {
+    normalized.mimeType = mimeType;
+  }
+
+  return normalized;
+}
+
+export function normalizeAnalysisFiles(files: CreateAnalysisInput["files"]) {
+  return (files ?? []).map(normalizeAnalysisFile);
+}
+
 export async function createAnalysis(data: CreateAnalysisInput) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
+  const normalizedFiles = normalizeAnalysisFiles(data.files);
   const row: InsertAnalysis = {
     sessionId: data.sessionId,
-    files: encryptJson(data.files),
+    files: serializeAnalysisJsonCompat(normalizedFiles),
     status: data.status ?? "pending",
   };
   if (data.userId != null) row.userId = data.userId;
@@ -189,7 +275,7 @@ export async function updateAnalysisStatus(
     updateData.extractedText = data.extractedText == null ? null : encryptField(data.extractedText);
   }
   if (data?.analysisResult !== undefined) {
-    updateData.analysisResult = data.analysisResult == null ? null : encryptJson(data.analysisResult);
+    updateData.analysisResult = data.analysisResult == null ? null : serializeAnalysisJsonCompat(data.analysisResult);
   }
   if (data?.errorMessage !== undefined) {
     updateData.errorMessage = data.errorMessage == null ? null : encryptField(data.errorMessage);
@@ -279,7 +365,7 @@ export async function completeAnalysis(sessionId: string, workerId: string, data
     .update(analyses)
     .set({
       status: "completed",
-      analysisResult: encryptJson(data.analysisResult),
+      analysisResult: serializeAnalysisJsonCompat(data.analysisResult),
       insuranceCategory: (data.insuranceCategory ?? null) as InsertAnalysis["insuranceCategory"],
       errorMessage: null,
       lockedBy: null,

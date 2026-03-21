@@ -2132,7 +2132,7 @@ ${JSON.stringify(payload, null, 2)}`,
       }),
 
     discoverPolicies: protectedProcedure
-      .input(z.object({ daysBack: z.number().min(1).max(365).default(90) }))
+      .input(z.object({ daysBack: z.number().min(1).max(365).default(365) }))
       .query(async ({ ctx, input }) => {
         if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
         return discoverPolicyPdfs(ctx.user.id, input.daysBack);

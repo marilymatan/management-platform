@@ -58,6 +58,30 @@ const EXCLUDED_INSURANCE_PATTERNS = [
   /\bnational insurance\b/i,
 ];
 
+const POLICY_DISCOVERY_PATTERNS = [
+  /ביטוח/,
+  /פוליס/,
+  /חידוש/,
+  /כיסוי/,
+  /פרמיה/,
+  /תביעה/,
+  /אישור/,
+  /תעודה/,
+  /מסמך/,
+  /נספח/,
+  /הצעה/,
+  /\binsurance\b/i,
+  /\bpolicy\b/i,
+  /\brenewal\b/i,
+  /\bcoverage\b/i,
+  /\bpremium\b/i,
+  /\bclaim\b/i,
+  /\bcertificate\b/i,
+  /\bschedule\b/i,
+  /\bdocument\b/i,
+  /\bproposal\b/i,
+];
+
 export function inferInsuranceCategoryFromText(text: string): InsuranceCategory | null {
   const normalized = text.toLowerCase();
   if (/רכב|מקיף|חובה|צד ג|נהג|vehicle|auto|car/i.test(normalized)) return "car";
@@ -146,6 +170,34 @@ export function looksLikeInsuranceMessage({
   }
 
   return hasInsuranceSignal;
+}
+
+export function looksLikeInsurancePdfCandidate({
+  subject,
+  from,
+  body,
+  attachmentFilename,
+  detectedProvider,
+}: {
+  subject: string;
+  from: string;
+  body: string;
+  attachmentFilename?: string | null;
+  detectedProvider: ProviderSignal;
+}) {
+  if (detectedProvider?.category === "ביטוח") {
+    return true;
+  }
+
+  const text = [subject, from, body.slice(0, 1200), attachmentFilename ?? ""].join(" ");
+  const hasExcludedPattern = EXCLUDED_INSURANCE_PATTERNS.some((pattern) => pattern.test(text));
+  const hasPolicySignal = POLICY_DISCOVERY_PATTERNS.some((pattern) => pattern.test(text));
+
+  if (hasExcludedPattern && detectedProvider?.category !== "ביטוח") {
+    return /פוליס|פרמיה|חידוש|כיסוי|ביטוח|policy|premium|renewal|coverage|claim|certificate|schedule|document|proposal/i.test(text);
+  }
+
+  return hasPolicySignal;
 }
 
 export async function extractInsuranceDiscoveryData({

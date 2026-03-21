@@ -5,11 +5,15 @@ import { toast } from "sonner";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { trpc } from "@/lib/trpc";
-import { mergeScanStatuses } from "@shared/scanNotificationTransitions";
+import { getAnalysisPollInterval, mergeScanStatuses } from "@shared/scanNotificationTransitions";
 
 type AnalysisRow = {
   sessionId: string;
   status: string;
+  createdAt?: string | Date | null;
+  startedAt?: string | Date | null;
+  lastHeartbeatAt?: string | Date | null;
+  updatedAt?: string | Date | null;
   analysisResult?: { generalInfo?: { policyName?: string | null } | null } | null;
 };
 
@@ -35,14 +39,10 @@ export function PendingScanNotifications() {
 
   const { data } = trpc.policy.getUserAnalyses.useQuery(undefined, {
     enabled: Boolean(user) && location !== "/login",
-    refetchInterval: query => {
-      const list = query.state.data as AnalysisRow[] | undefined;
-      if (!Array.isArray(list) || list.length === 0) return false;
-      const hasInFlight = list.some(
-        row => row.status === "pending" || row.status === "processing",
-      );
-      return hasInFlight ? 8000 : false;
-    },
+    refetchInterval: query => getAnalysisPollInterval(query.state.data as AnalysisRow[] | undefined, { intervalMs: 20_000 }),
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
 
   useEffect(() => {

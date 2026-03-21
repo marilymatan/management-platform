@@ -5,6 +5,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { trpc } from "@/lib/trpc";
+import { formatGmailConnectionSummary } from "@/lib/gmailConnections";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -171,6 +172,7 @@ export default function Settings() {
   const [activeTab, setActiveTab] = useState("profile");
 
   const profileQuery = trpc.profile.get.useQuery(undefined, { enabled: !!user });
+  const { data: gmailConnectionStatus } = trpc.gmail.connectionStatus.useQuery(undefined, { enabled: !!user });
   const updateMutation = trpc.profile.update.useMutation();
   const uploadImageMutation = trpc.profile.uploadImage.useMutation();
   const { data: profileImageUrl } = trpc.profile.getImageUrl.useQuery(undefined, { enabled: !!user });
@@ -239,6 +241,7 @@ export default function Settings() {
   const hasSpecialHealth = form.watch("hasSpecialHealthConditions") ?? false;
   const employmentStatus = form.watch("employmentStatus");
   const isBusinessProfile = employmentStatus === "business_owner" || employmentStatus === "self_employed";
+  const gmailConnectionSummary = formatGmailConnectionSummary(gmailConnectionStatus?.connections);
 
   const onSubmit = async (data: ProfileFormValues) => {
     setSaving(true);
@@ -353,6 +356,46 @@ export default function Settings() {
             <h2 className="text-xl font-bold">{user.name}</h2>
             <p className="text-sm text-muted-foreground">{user.email}</p>
           </div>
+
+          <Card className="mb-5 border-dashed" data-testid="settings-gmail-connection">
+            <CardContent className="pt-5 pb-5 text-start">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <div className="size-8 rounded-lg bg-emerald-500/8 flex items-center justify-center">
+                    <Mail className="size-4 text-emerald-600" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-semibold">חיבור Gmail</h3>
+                    <p className="text-xs text-muted-foreground">
+                      כאן רואים איזה חשבון Gmail מקושר כרגע לסריקה אוטומטית.
+                    </p>
+                  </div>
+                </div>
+                <Badge variant={gmailConnectionStatus?.connected ? "secondary" : "outline"}>
+                  {gmailConnectionStatus?.connected ? "מחובר" : "לא מחובר"}
+                </Badge>
+              </div>
+              {gmailConnectionStatus?.connected ? (
+                <div className="mt-4 space-y-3">
+                  <div className="flex flex-wrap gap-2">
+                    {gmailConnectionSummary.emails.map((email) => (
+                      <Badge key={email} variant="outline" className="bg-emerald-50 text-emerald-800 border-emerald-200">
+                        {email}
+                      </Badge>
+                    ))}
+                  </div>
+                  <p className="text-xs text-muted-foreground">{gmailConnectionSummary.detail}</p>
+                </div>
+              ) : (
+                <p className="mt-4 text-sm text-muted-foreground">
+                  עדיין לא חיברת חשבון Gmail. אפשר לעשות זאת ממסך ההוצאות כדי שלומי יתחיל לסרוק מיילים.
+                </p>
+              )}
+              <Button type="button" variant="link" className="h-auto p-0 mt-3 text-sm" onClick={() => setLocation("/expenses")}>
+                {gmailConnectionStatus?.connected ? "ניהול חיבור Gmail" : "לחיבור Gmail"}
+              </Button>
+            </CardContent>
+          </Card>
 
           <Card className="mb-5">
             <CardContent className="pt-5 pb-5">

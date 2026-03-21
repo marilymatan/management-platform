@@ -12,6 +12,7 @@ import {
   inferInsuranceArtifactType,
   inferInsuranceCategoryFromText,
   looksLikeInsuranceMessage,
+  looksLikeInsurancePdfCandidate,
 } from "./gmailInsuranceDiscovery";
 
 describe("gmailInsuranceDiscovery", () => {
@@ -47,6 +48,18 @@ describe("gmailInsuranceDiscovery", () => {
         subject: "ביטוח לאומי",
         from: "noreply@btl.gov.il",
         body: "מצורף עדכון פרמיה לפוליסת רכב פרטית",
+        detectedProvider: null,
+      })
+    ).toBe(true);
+  });
+
+  it("recognizes generic policy PDF emails as discovery candidates", () => {
+    expect(
+      looksLikeInsurancePdfCandidate({
+        subject: "Your documents are ready",
+        from: "notifications@example.com",
+        body: "Please review the attached file.",
+        attachmentFilename: "policy.pdf",
         detectedProvider: null,
       })
     ).toBe(true);

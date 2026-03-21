@@ -14,6 +14,7 @@ import { FinancialSummary } from "@/components/FinancialSummary";
 import { PolicyChatbot } from "@/components/PolicyChatbot";
 import { DuplicateCoveragesAlert } from "@/components/DuplicateCoveragesAlert";
 import { PersonalizedInsights } from "@/components/PersonalizedInsights";
+import { getAnalysisPollInterval } from "@shared/scanNotificationTransitions";
 import {
   Shield,
   FileSearch,
@@ -85,7 +86,14 @@ export default function Home() {
   const analyzeMutation = trpc.policy.analyze.useMutation();
   const getAnalysisQuery = trpc.policy.getAnalysis.useQuery(
     { sessionId: requestedSessionId ?? "" },
-    { enabled: !!requestedSessionId, retry: false }
+    {
+      enabled: !!requestedSessionId,
+      retry: false,
+      refetchInterval: query => getAnalysisPollInterval(query.state.data, { intervalMs: 10_000 }),
+      refetchIntervalInBackground: false,
+      refetchOnWindowFocus: false,
+      refetchOnReconnect: false,
+    }
   );
 
   useEffect(() => {
@@ -118,22 +126,6 @@ export default function Home() {
     }
     setAnalysisResult(null);
   }, [getAnalysisQuery.data?.result, getAnalysisQuery.data?.status, requestedSessionId, utils]);
-
-  useEffect(() => {
-    if (!requestedSessionId) {
-      return;
-    }
-    const status = getAnalysisQuery.data?.status;
-    if (status === "completed" || status === "error") {
-      return;
-    }
-    const timer = window.setInterval(() => {
-      void getAnalysisQuery.refetch();
-    }, 3000);
-    return () => {
-      window.clearInterval(timer);
-    };
-  }, [getAnalysisQuery.data?.status, getAnalysisQuery.refetch, requestedSessionId]);
 
   useEffect(() => {
     setSelectedFileFilter(resolveSelectedFileFilter(analysisResult, requestedFileFilter));

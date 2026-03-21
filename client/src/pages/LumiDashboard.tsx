@@ -11,6 +11,7 @@ import { GmailPolicyDiscovery } from "@/components/GmailPolicyDiscovery";
 import { MonthlyReportCard } from "@/components/MonthlyReportCard";
 import { OnboardingWizard } from "@/components/OnboardingWizard";
 import { buildFamilyCoverageSnapshot, type FamilyMemberLike } from "@/lib/familyCoverage";
+import { formatGmailConnectionSummary } from "@/lib/gmailConnections";
 import { formatInsuranceCurrency } from "@/lib/insuranceOverview";
 import { trpc } from "@/lib/trpc";
 import {
@@ -177,6 +178,7 @@ export default function LumiDashboard() {
   const displayedMonthlyPremium = overview.totalMonthlyPremium > 0 ? overview.totalMonthlyPremium : insuranceInvoiceTotal;
   const totalMonthlyExpenses = monthlySummary?.reduce((sum, category) => sum + (category.expenseTotal ?? category.total), 0) ?? 0;
   const gmailConnected = Boolean(gmailStatus?.connected);
+  const gmailConnectionSummary = formatGmailConnectionSummary(gmailStatus?.connections);
   const shouldShowOnboarding = !analysesLoading && !profileLoading && analysisRows.length === 0 && !profileData?.onboardingCompleted;
 
   useEffect(() => {
@@ -455,6 +457,16 @@ export default function LumiDashboard() {
                   </Badge>
                 )}
               </div>
+              {gmailConnected && (
+                <div
+                  className="rounded-xl border border-white/15 bg-white/10 px-4 py-3 backdrop-blur-sm"
+                  data-testid="dashboard-gmail-connection"
+                >
+                  <p className="text-[11px] uppercase tracking-wide text-white/55">חשבון Gmail מחובר</p>
+                  <p className="mt-1 text-sm font-semibold break-all">{gmailConnectionSummary.label}</p>
+                  <p className="text-xs text-white/65 mt-1">{gmailConnectionSummary.detail}</p>
+                </div>
+              )}
             </div>
 
             <div className="w-full sm:w-auto min-w-[220px] rounded-2xl bg-white/10 p-4 backdrop-blur-sm border border-white/15">
