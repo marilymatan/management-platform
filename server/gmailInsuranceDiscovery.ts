@@ -21,6 +21,7 @@ type ExtractInsuranceDiscoveryInput = {
   pdfText: string | null;
   detectedProvider: ProviderSignal;
   attachmentFilename?: string | null;
+  userFilterContext?: string;
 };
 
 export type ExtractedInsuranceDiscovery = {
@@ -36,50 +37,163 @@ export type ExtractedInsuranceDiscovery = {
   policyType: string | null;
 };
 
-const INSURANCE_SIGNAL_PATTERNS = [
+const KNOWN_INSURANCE_DOMAINS = [
+  "harel-group.co.il",
+  "harel.co.il",
+  "migdal.co.il",
+  "clal.co.il",
+  "clalbit.co.il",
+  "phoenix.co.il",
+  "fnx.co.il",
+  "menora.co.il",
+  "ayalon-ins.co.il",
+  "ayalon.co.il",
+  "shirbit.co.il",
+  "hachshara.co.il",
+  "hachsharainsurance.co.il",
+  "bituachyashir.co.il",
+  "bit-y.co.il",
+  "aig.co.il",
+  "shmera.co.il",
+  "shomera.co.il",
+  "libra-insurance.co.il",
+  "libra.co.il",
+  "9ins.co.il",
+  "rac.co.il",
+  "psagot.co.il",
+  "as-invest.co.il",
+  "mor-invest.co.il",
+  "ha-invest.co.il",
+  "maccabi4u.co.il",
+  "maccabi.co.il",
+  "clalit.co.il",
+  "meuhedet.co.il",
+  "leumit.co.il",
+  "wesure.co.il",
+  "we4sure.co.il",
+  "passportcard.co.il",
+  "amitassur.co.il",
+  "shlomo-ins.co.il",
+  "dikla.co.il",
+  "tmura.co.il",
+];
+
+const KNOWN_INSURANCE_NAMES = [
+  "הראל",
+  "מגדל",
+  "כלל ביטוח",
+  "הפניקס",
+  "מנורה מבטחים",
+  "מנורה",
+  "איילון",
+  "שירביט",
+  "הכשרה",
+  "ביטוח ישיר",
+  "שומרה",
+  "ליברה",
+  "AIG",
+  "פסגות",
+  "אלטשולר שחם",
+  "מור",
+  "הלמן אלדובי",
+  "כלל בריאות",
+  "מכבי שירותי בריאות",
+  "כללית",
+  "מאוחדת",
+  "לאומית",
+  "פספורטכארד",
+  "דיקלה",
+  "תמורה",
+  "שלמה ביטוח",
+  "ווישור",
+];
+
+const STRONG_INSURANCE_PHRASES = [
+  /פוליסת ביטוח/,
+  /חידוש ביטוח/,
+  /חידוש פוליס/,
+  /חיוב פרמי/,
+  /פרמיית ביטוח/,
+  /פרמיה חודשית/,
+  /תביעת ביטוח/,
+  /ביטוח רכב/,
+  /ביטוח דירה/,
+  /ביטוח בריאות/,
+  /ביטוח חיים/,
+  /ביטוח מקיף/,
+  /ביטוח חובה/,
+  /ביטוח צד ג/,
+  /ביטוח משכנתא/,
+  /ביטוח נסיעות/,
+  /ביטוח סיעודי/,
+  /ביטוח תאונות/,
+  /אובדן כושר עבודה/,
+  /כיסוי ביטוחי/,
+  /עדכון כיסוי ביטוחי/,
+  /ביטוח תכולה/,
+  /ביטוח מבנה/,
+  /סוכן ביטוח/,
+  /סוכנות ביטוח/,
+  /מבוטח.{0,10}פוליס/,
+  /פוליס.{0,10}מבוטח/,
+  /השתתפות עצמית/,
+  /\binsurance\s+polic/i,
+  /\binsurance\s+premium/i,
+  /\binsurance\s+renewal/i,
+  /\binsurance\s+claim/i,
+  /\binsurance\s+coverage/i,
+  /\bpolicy\s+renewal/i,
+  /\bpolicy\s+document/i,
+  /\bpolicy\s+number/i,
+  /\bpolicy\s+schedule/i,
+  /\bpolicy\s+certificate/i,
+];
+
+const HEBREW_INSURANCE_KEYWORDS = [
   /ביטוח/,
   /פוליס/,
-  /כיסוי/,
   /פרמיה/,
-  /חידוש/,
   /מבוטח/,
   /מבטח/,
+];
+
+const SECONDARY_INSURANCE_SIGNALS = [
+  /כיסוי/,
+  /חידוש/,
   /תביעה/,
   /\binsurance\b/i,
-  /\bpolicy\b/i,
-  /\bcoverage\b/i,
-  /\bpremium\b/i,
-  /\brenewal\b/i,
-  /\bclaim\b/i,
+];
+
+const FALSE_POSITIVE_PATTERNS = [
+  /privacy\s+policy/i,
+  /terms\s+(of\s+)?(service|use)/i,
+  /cookie\s+policy/i,
+  /refund\s+policy/i,
+  /return\s+policy/i,
+  /shipping\s+policy/i,
+  /cancellation\s+policy/i,
+  /acceptable\s+use\s+policy/i,
+  /מדיניות\s*פרטיות/,
+  /תנאי\s*שימוש/,
+  /מדיניות\s*ביטולים/,
+  /מדיניות\s*החזרות/,
+  /premium\s+(plan|account|subscription|member|tier|feature|upgrade|version)/i,
+  /go\s+premium/i,
+  /\bpremium\b.{0,15}\b(monthly|annual|yearly|free)\b/i,
+  /network\s+coverage/i,
+  /coverage\s+area/i,
+  /5g\s+coverage/i,
+  /claim\s+(your|this|the|a)\s+(reward|prize|gift|bonus|offer|discount|coupon|code)/i,
+  /subscription\s+renewal/i,
+  /domain\s+renewal/i,
+  /license\s+renewal/i,
+  /membership\s+renewal/i,
+  /renewal\s+(of\s+)?(your\s+)?(subscription|domain|license|membership|plan|account)/i,
 ];
 
 const EXCLUDED_INSURANCE_PATTERNS = [
   /ביטוח לאומי/,
   /\bnational insurance\b/i,
-];
-
-const POLICY_DISCOVERY_PATTERNS = [
-  /ביטוח/,
-  /פוליס/,
-  /חידוש/,
-  /כיסוי/,
-  /פרמיה/,
-  /תביעה/,
-  /אישור/,
-  /תעודה/,
-  /מסמך/,
-  /נספח/,
-  /הצעה/,
-  /\binsurance\b/i,
-  /\bpolicy\b/i,
-  /\brenewal\b/i,
-  /\bcoverage\b/i,
-  /\bpremium\b/i,
-  /\bclaim\b/i,
-  /\bcertificate\b/i,
-  /\bschedule\b/i,
-  /\bdocument\b/i,
-  /\bproposal\b/i,
 ];
 
 export function inferInsuranceCategoryFromText(text: string): InsuranceCategory | null {
@@ -144,6 +258,21 @@ function normalizeInsuranceCategory(value: unknown, fallbackText: string): Insur
   return inferInsuranceCategoryFromText(fallbackText);
 }
 
+function senderIsKnownInsurer(from: string): boolean {
+  const lowerFrom = from.toLowerCase();
+  if (KNOWN_INSURANCE_DOMAINS.some((domain) => lowerFrom.includes(domain))) {
+    return true;
+  }
+  if (KNOWN_INSURANCE_NAMES.some((name) => lowerFrom.includes(name))) {
+    return true;
+  }
+  return false;
+}
+
+function hasFalsePositiveContext(text: string): boolean {
+  return FALSE_POSITIVE_PATTERNS.some((pattern) => pattern.test(text));
+}
+
 export function looksLikeInsuranceMessage({
   subject,
   from,
@@ -161,15 +290,35 @@ export function looksLikeInsuranceMessage({
     return true;
   }
 
-  const text = [subject, from, body.slice(0, 1200), attachmentFilename ?? ""].join(" ");
-  const hasExcludedPattern = EXCLUDED_INSURANCE_PATTERNS.some((pattern) => pattern.test(text));
-  const hasInsuranceSignal = INSURANCE_SIGNAL_PATTERNS.some((pattern) => pattern.test(text));
-
-  if (hasExcludedPattern && detectedProvider?.category !== "ביטוח") {
-    return /פוליס|פרמיה|חידוש|כיסוי|רכב|בריאות|דירה|חיים|policy|premium|renewal|claim/i.test(text);
+  if (senderIsKnownInsurer(from)) {
+    return true;
   }
 
-  return hasInsuranceSignal;
+  const text = [subject, from, body.slice(0, 1200), attachmentFilename ?? ""].join(" ");
+
+  if (EXCLUDED_INSURANCE_PATTERNS.some((pattern) => pattern.test(text))) {
+    return false;
+  }
+
+  if (STRONG_INSURANCE_PHRASES.some((pattern) => pattern.test(text))) {
+    return true;
+  }
+
+  const subjectAndFilename = [subject, attachmentFilename ?? ""].join(" ");
+  const hasHebrewKeywordInSubject = HEBREW_INSURANCE_KEYWORDS.some((p) => p.test(subjectAndFilename));
+  if (hasHebrewKeywordInSubject && !hasFalsePositiveContext(text)) {
+    return true;
+  }
+
+  const hebrewKeywordCount = HEBREW_INSURANCE_KEYWORDS.filter((p) => p.test(text)).length;
+  const secondaryCount = SECONDARY_INSURANCE_SIGNALS.filter((p) => p.test(text)).length;
+  const totalSignals = hebrewKeywordCount + secondaryCount;
+
+  if (totalSignals >= 2 && !hasFalsePositiveContext(text)) {
+    return true;
+  }
+
+  return false;
 }
 
 export function looksLikeInsurancePdfCandidate({
@@ -189,15 +338,35 @@ export function looksLikeInsurancePdfCandidate({
     return true;
   }
 
-  const text = [subject, from, body.slice(0, 1200), attachmentFilename ?? ""].join(" ");
-  const hasExcludedPattern = EXCLUDED_INSURANCE_PATTERNS.some((pattern) => pattern.test(text));
-  const hasPolicySignal = POLICY_DISCOVERY_PATTERNS.some((pattern) => pattern.test(text));
-
-  if (hasExcludedPattern && detectedProvider?.category !== "ביטוח") {
-    return /פוליס|פרמיה|חידוש|כיסוי|ביטוח|policy|premium|renewal|coverage|claim|certificate|schedule|document|proposal/i.test(text);
+  if (senderIsKnownInsurer(from)) {
+    return true;
   }
 
-  return hasPolicySignal;
+  const text = [subject, from, body.slice(0, 1200), attachmentFilename ?? ""].join(" ");
+
+  if (EXCLUDED_INSURANCE_PATTERNS.some((pattern) => pattern.test(text))) {
+    return false;
+  }
+
+  if (STRONG_INSURANCE_PHRASES.some((pattern) => pattern.test(text))) {
+    return true;
+  }
+
+  const subjectAndFilename = [subject, attachmentFilename ?? ""].join(" ");
+  const hasHebrewKeywordInSubject = HEBREW_INSURANCE_KEYWORDS.some((p) => p.test(subjectAndFilename));
+  if (hasHebrewKeywordInSubject && !hasFalsePositiveContext(text)) {
+    return true;
+  }
+
+  const hebrewKeywordCount = HEBREW_INSURANCE_KEYWORDS.filter((p) => p.test(text)).length;
+  const secondaryCount = SECONDARY_INSURANCE_SIGNALS.filter((p) => p.test(text)).length;
+  const totalSignals = hebrewKeywordCount + secondaryCount;
+
+  if (totalSignals >= 2 && !hasFalsePositiveContext(text)) {
+    return true;
+  }
+
+  return false;
 }
 
 export async function extractInsuranceDiscoveryData({
@@ -207,12 +376,14 @@ export async function extractInsuranceDiscoveryData({
   pdfText,
   detectedProvider,
   attachmentFilename,
+  userFilterContext,
 }: ExtractInsuranceDiscoveryInput): Promise<ExtractedInsuranceDiscovery> {
   const contentForAnalysis = [
     `שולח: ${from}`,
     `נושא: ${subject}`,
     `ספק שזוהה אוטומטית: ${detectedProvider?.name ?? "לא זוהה"}`,
     `שם קובץ מצורף: ${attachmentFilename ?? "אין"}`,
+    userFilterContext ? `\n${userFilterContext}` : "",
     `גוף המייל:\n${body}`,
     pdfText ? `\n--- תוכן PDF ---\n${pdfText.slice(0, 4000)}` : "",
   ]
@@ -230,13 +401,29 @@ export async function extractInsuranceDiscoveryData({
         {
           role: "system",
           content: `אתה מומחה בזיהוי מיילים ומסמכים ביטוחיים בישראל.
-המטרה היא לזהות האם המייל קשור לביטוח פרטי של המשתמש, ומה בדיוק נמצא בו.
+המטרה היא לזהות האם המייל קשור לביטוח פרטי של המשתמש (ביטוח בריאות, חיים, רכב, דירה), ומה בדיוק נמצא בו.
+
+חשוב מאוד: אם המייל אינו קשור לביטוח (למשל: חשבוניות כלליות, קבלות תרומה, חשבונות תקשורת, מנויי תוכנה, הזמנות, אישורי תשלום שאינם ביטוח, privacy policy) — החזר confidence: 0 ו-artifactType: "other".
+
+דוגמאות למיילים שאינם ביטוחיים (confidence צריך להיות 0):
+- חשבוניות מחברות תקשורת (בזק, פרטנר, סלקום)
+- חשבוניות מחברות תוכנה (Elementor, Wix, Google)
+- קבלות תרומה לעמותות
+- אישורי רכישה מחנויות אונליין
+- חשבוניות חשמל, מים, ארנונה
+
+דוגמאות למיילים ביטוחיים (confidence גבוה):
+- מסמכי פוליסה מחברות ביטוח (הראל, מגדל, כלל, הפניקס, מנורה)
+- הודעות חידוש ביטוח
+- חיובי פרמיה מחברות ביטוח
+- עדכוני כיסוי ביטוחי
+- סטטוס תביעות ביטוח
 
 החזר JSON בלבד ללא הסברים עם השדות:
-- provider: שם הגוף הביטוחי או הסוכן המרכזי
+- provider: שם הגוף הביטוחי או הסוכן המרכזי (אם אינו ביטוחי, כתוב את שם השולח)
 - insuranceCategory: health/life/car/home/unknown
 - artifactType: policy_document/renewal_notice/premium_notice/coverage_update/claim_update/other
-- confidence: מספר בין 0 ל-1
+- confidence: מספר בין 0 ל-1. 0 = לא קשור לביטוח כלל. 0.5+ = קשור לביטוח. 0.8+ = בוודאות גבוהה קשור לביטוח
 - summary: סיכום קצר בעברית עד 140 תווים שמתאר מה זוהה
 - actionHint: פעולה מומלצת קצרה בעברית למשתמש
 - policyNumber: מספר פוליסה אם נמצא, אחרת null
@@ -250,6 +437,7 @@ export async function extractInsuranceDiscoveryData({
 - אם מדובר במסמך פוליסה, תנאים או schedule עם קובץ PDF, artifactType צריך להיות policy_document
 - אם מדובר בעדכון כיסוי, הטבה, שינוי תנאים או הרחבה, artifactType צריך להיות coverage_update
 - אם מדובר בתביעה או סטטוס תביעה, artifactType צריך להיות claim_update
+- אם המייל אינו ביטוחי כלל, החזר confidence: 0 ו-artifactType: "other"
 - insuranceCategory צריך לשקף את סוג הביטוח: בריאות, חיים, רכב או דירה
 - כל summary ו-actionHint חייבים להיות בעברית`,
         },

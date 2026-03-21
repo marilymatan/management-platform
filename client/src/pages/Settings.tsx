@@ -53,6 +53,7 @@ import {
   Info,
   TrendingUp,
   Camera,
+  Filter,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -84,6 +85,8 @@ const profileSchema = z.object({
   businessName: z.string().max(160).nullable().optional(),
   businessTaxId: z.string().max(64).nullable().optional(),
   businessEmailDomains: z.string().max(1000).nullable().optional(),
+  emailScanSenders: z.string().max(2000).nullable().optional(),
+  emailScanKeywords: z.string().max(2000).nullable().optional(),
 });
 
 type ProfileFormValues = z.infer<typeof profileSchema>;
@@ -106,6 +109,8 @@ type ProfileQueryData = {
   businessTaxId: string | null;
   businessEmailDomains: string | null;
   profileImageKey: string | null;
+  emailScanSenders: string | null;
+  emailScanKeywords: string | null;
 };
 
 const MARITAL_OPTIONS = [
@@ -171,7 +176,11 @@ export default function Settings() {
   const [saving, setSaving] = useState(false);
   const [activeTab, setActiveTab] = useState("profile");
 
-  const profileQuery = trpc.profile.get.useQuery(undefined, { enabled: !!user });
+  const profileQuery = trpc.profile.get.useQuery(undefined, {
+    enabled: !!user,
+    staleTime: 0,
+    refetchOnMount: "always",
+  });
   const { data: gmailConnectionStatus } = trpc.gmail.connectionStatus.useQuery(undefined, { enabled: !!user });
   const updateMutation = trpc.profile.update.useMutation();
   const uploadImageMutation = trpc.profile.uploadImage.useMutation();
@@ -207,6 +216,8 @@ export default function Settings() {
     businessName: profile.businessName ?? null,
     businessTaxId: profile.businessTaxId ?? null,
     businessEmailDomains: profile.businessEmailDomains ?? null,
+    emailScanSenders: profile.emailScanSenders ?? null,
+    emailScanKeywords: profile.emailScanKeywords ?? null,
   });
 
   const form = useForm<ProfileFormValues>({
@@ -229,9 +240,10 @@ export default function Settings() {
       businessName: null,
       businessTaxId: null,
       businessEmailDomains: null,
+      emailScanSenders: null,
+      emailScanKeywords: null,
     },
     values: profileQuery.data ? toFormValues(profileQuery.data) : undefined,
-    resetOptions: { keepDirtyValues: true },
   });
 
   const watchedValues = form.watch();
@@ -250,8 +262,8 @@ export default function Settings() {
       if (result.profile) {
         utils.profile.get.setData(undefined, result.profile);
         form.reset(toFormValues(result.profile));
+        await utils.profile.get.invalidate();
       }
-      await utils.profile.get.invalidate();
       toast.success("הפרופיל עודכן בהצלחה");
     } catch {
       toast.error("שגיאה בעדכון הפרופיל");
@@ -395,6 +407,70 @@ export default function Settings() {
               <Button type="button" variant="link" className="h-auto p-0 mt-3 text-sm" onClick={() => setLocation("/money")}>
                 {gmailConnectionStatus?.connected ? "ניהול חיבור Gmail" : "לחיבור Gmail"}
               </Button>
+            </CardContent>
+          </Card>
+
+          <Card className="mb-5 border-dashed" data-testid="settings-email-scan-filters">
+            <CardContent className="pt-5 pb-5 text-start">
+              <div className="flex items-start gap-2 mb-4">
+                <div className="size-8 rounded-lg bg-blue-500/8 flex items-center justify-center shrink-0">
+                  <Filter className="size-4 text-blue-600" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-semibold">סינון סריקת מייל</h3>
+                  <p className="text-xs text-muted-foreground">
+                    הגדר נמענים ומילות מפתח שלומי ישתמש בהם כדי למצוא מסמכי ביטוח במייל שלך
+                  </p>
+                </div>
+              </div>
+              <div className="space-y-4">
+                <FormField
+                  control={form.control}
+                  name="emailScanSenders"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+                        <Mail className="size-3" />
+                        נמענים / שולחים ביטוחיים
+                      </FormLabel>
+                      <FormControl>
+                        <Textarea
+                          rows={3}
+                          placeholder={"harel.co.il\nmigdal@email.com\nסוכן הביטוח שלי"}
+                          value={field.value || ""}
+                          onChange={(e) => field.onChange(e.target.value || null)}
+                          className="mt-1.5"
+                          data-testid="email-scan-senders"
+                        />
+                      </FormControl>
+                      <p className="text-[11px] text-muted-foreground">כתובות מייל, דומיינים או שמות שולחים — כל ערך בשורה נפרדת</p>
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="emailScanKeywords"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+                        <Search className="size-3" />
+                        מילות מפתח נוספות
+                      </FormLabel>
+                      <FormControl>
+                        <Textarea
+                          rows={3}
+                          placeholder={"ביטוח דירה\nפוליסת רכב\nחידוש שנתי"}
+                          value={field.value || ""}
+                          onChange={(e) => field.onChange(e.target.value || null)}
+                          className="mt-1.5"
+                          data-testid="email-scan-keywords"
+                        />
+                      </FormControl>
+                      <p className="text-[11px] text-muted-foreground">מילים או ביטויים לחיפוש במיילים — כל ערך בשורה נפרדת</p>
+                    </FormItem>
+                  )}
+                />
+              </div>
             </CardContent>
           </Card>
 

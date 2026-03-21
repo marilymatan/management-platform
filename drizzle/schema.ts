@@ -237,6 +237,8 @@ export const userProfiles = pgTable("user_profiles", {
   businessEmailDomains: text("business_email_domains"),
   profileImageKey: text("profile_image_key"),
   onboardingCompleted: boolean("onboarding_completed").default(false).notNull(),
+  emailScanSenders: text("email_scan_senders"),
+  emailScanKeywords: text("email_scan_keywords"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull().$onUpdate(() => new Date()),
 }, (table) => ({

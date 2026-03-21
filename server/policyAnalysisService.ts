@@ -3,6 +3,7 @@ import { invokeLLM } from "./_core/llm";
 import { getUserProfile, logApiUsage, updateAnalysisProcessingProgress } from "./db";
 import { storageRead } from "./storage";
 import { POLICY_ANALYSIS_BATCH_SIZE } from "@shared/analysisProgress";
+import { buildProfileContext } from "./helpers";
 import type { PolicyAnalysis, PremiumPaymentPeriod } from "@shared/insurance";
 
 const ANALYSIS_SYSTEM_PROMPT = `אתה מומחה לניתוח פוליסות ביטוח בעברית. תפקידך לנתח את הטקסט של פוליסת הביטוח ולחלץ ממנו מידע מובנה.
@@ -234,56 +235,6 @@ function normalizeAnalysisPremiums(result: PolicyAnalysis): PolicyAnalysis {
   };
 }
 
-function buildProfileContext(profile: any): string {
-  const labels: Record<string, string> = {
-    single: "רווק/ה",
-    married: "נשוי/אה",
-    divorced: "גרוש/ה",
-    widowed: "אלמן/ה",
-    salaried: "שכיר/ה",
-    self_employed: "עצמאי/ת",
-    business_owner: "בעל/ת עסק",
-    student: "סטודנט/ית",
-    retired: "פנסיונר/ית",
-    unemployed: "לא עובד/ת",
-    male: "זכר",
-    female: "נקבה",
-    other: "אחר",
-    below_5k: "מתחת ל-5,000 ₪",
-    "5k_10k": "5,000-10,000 ₪",
-    "10k_15k": "10,000-15,000 ₪",
-    "15k_25k": "15,000-25,000 ₪",
-    "25k_40k": "25,000-40,000 ₪",
-    above_40k: "מעל 40,000 ₪",
-  };
-  const parts: string[] = [];
-  if (profile.dateOfBirth) {
-    const age = Math.floor((Date.now() - new Date(profile.dateOfBirth).getTime()) / (365.25 * 24 * 60 * 60 * 1000));
-    parts.push(`גיל: ${age}`);
-  }
-  if (profile.gender) parts.push(`מין: ${labels[profile.gender] || profile.gender}`);
-  if (profile.maritalStatus) parts.push(`מצב משפחתי: ${labels[profile.maritalStatus] || profile.maritalStatus}`);
-  if (profile.numberOfChildren > 0) {
-    parts.push(`מספר ילדים: ${profile.numberOfChildren}`);
-    if (profile.childrenAges) parts.push(`גילאי ילדים: ${profile.childrenAges}`);
-  }
-  if (profile.employmentStatus) parts.push(`תעסוקה: ${labels[profile.employmentStatus] || profile.employmentStatus}`);
-  if (profile.incomeRange) parts.push(`הכנסה חודשית: ${labels[profile.incomeRange] || profile.incomeRange}`);
-  if (profile.businessName) parts.push(`שם העסק: ${profile.businessName}`);
-  if (profile.businessTaxId) parts.push(`מספר מזהה עסקי: ${profile.businessTaxId}`);
-  if (profile.businessEmailDomains) parts.push(`דומיינים או מיילים עסקיים: ${profile.businessEmailDomains}`);
-  if (profile.ownsApartment) parts.push("בעלות על דירה: כן");
-  if (profile.hasActiveMortgage) parts.push("משכנתא פעילה: כן");
-  if (profile.numberOfVehicles > 0) parts.push(`מספר רכבים: ${profile.numberOfVehicles}`);
-  if (profile.hasExtremeSports) parts.push("ספורט אקסטרימי/תחביבים מסוכנים: כן");
-  if (profile.hasSpecialHealthConditions) {
-    parts.push("מצב בריאותי מיוחד: כן");
-    if (profile.healthConditionsDetails) parts.push(`פרטי מצב בריאותי: ${profile.healthConditionsDetails}`);
-  }
-  if (profile.hasPets) parts.push("חיות מחמד: כן");
-  return parts.join("\n");
-}
-
 async function logLlmUsage(sessionId: string, userId: number | null | undefined, response: {
   usage?: { prompt_tokens?: number; completion_tokens?: number };
   model?: string;
@@ -403,6 +354,11 @@ const analysisResponseFormat = {
 
 async function runBatchAnalysis(sessionId: string, userId: number | null | undefined, fileList: AnalysisFile[], label: string): Promise<PolicyAnalysis> {
   const fileParts = await loadFileParts(fileList);
+  if (fileParts.length === 0) {
+    throw new Error(
+      "לא ניתן לקרוא את קבצי ה-PDF מהשרת. ייתכן שהקבצים נמחקו לאחר עדכון גרסה. נסה להעלות את הקבצים מחדש."
+    );
+  }
   const response = await invokeLLM({
     messages: [
       { role: "system", content: ANALYSIS_SYSTEM_PROMPT },

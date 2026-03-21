@@ -19,6 +19,74 @@ import { ENV } from "./_core/env";
 import { extractInsuranceDiscoveryData, inferInsuranceArtifactType, inferInsuranceCategoryFromText, looksLikeInsuranceMessage, looksLikeInsurancePdfCandidate } from "./gmailInsuranceDiscovery";
 import { policyAnalysisWorker } from "./policyAnalysisWorker";
 
+// ─── User email scan filter sanitization ─────────────────────────────────────
+
+const GMAIL_OPERATOR_PATTERN = /\b(?:from|to|subject|has|in|is|before|after|older|newer|label|filename|cc|bcc|larger|smaller|category|rfc822msgid|list|OR|AND|NOT)\s*:/gi;
+
+const PROMPT_INJECTION_PATTERNS = [
+  /ignore\s+(previous|all|above|prior)\s+(instructions?|prompts?|context)/i,
+  /\bsystem\s*:/i,
+  /\bassistant\s*:/i,
+  /\buser\s*:/i,
+  /\brole\s*:/i,
+  /\bprompt\s*:/i,
+  /```/,
+  /<\/?[a-z]+>/i,
+  /\{[{%]/,
+];
+
+export function sanitizeEmailScanFilter(raw: string, maxLength = 500): string {
+  let sanitized = raw.slice(0, maxLength);
+  sanitized = sanitized.replace(GMAIL_OPERATOR_PATTERN, "");
+  for (const pattern of PROMPT_INJECTION_PATTERNS) {
+    sanitized = sanitized.replace(pattern, "");
+  }
+  sanitized = sanitized
+    .replace(/[{}[\]<>\\|`~^]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return sanitized;
+}
+
+export function parseEmailScanList(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  return raw
+    .split(/[\n,;]+/)
+    .map((entry) => sanitizeEmailScanFilter(entry.trim(), 120))
+    .filter((entry) => entry.length >= 2);
+}
+
+export interface EmailScanFilters {
+  senders: string[];
+  keywords: string[];
+}
+
+function buildUserGmailFilterClause(filters: EmailScanFilters): string {
+  const parts: string[] = [];
+  for (const sender of filters.senders) {
+    if (sender.includes("@") || sender.includes(".")) {
+      parts.push(`from:${sender}`);
+    } else {
+      parts.push(`from:${sender}`);
+    }
+  }
+  for (const kw of filters.keywords) {
+    parts.push(`"${kw}"`);
+  }
+  return parts.length > 0 ? ` OR ${parts.join(" OR ")}` : "";
+}
+
+function buildUserFilterContextForLLM(filters: EmailScanFilters): string {
+  const parts: string[] = [];
+  if (filters.senders.length > 0) {
+    parts.push(`נמענים/שולחים שהמשתמש הגדיר כביטוחיים: ${filters.senders.join(", ")}`);
+  }
+  if (filters.keywords.length > 0) {
+    parts.push(`מילות מפתח ביטוחיות שהמשתמש הגדיר: ${filters.keywords.join(", ")}`);
+  }
+  return parts.join("\n");
+}
+
 // ─── OAuth2 client factory ────────────────────────────────────────────────────
 
 export function createOAuth2Client(redirectUri: string) {
@@ -229,13 +297,32 @@ const ISRAELI_PROVIDERS: Array<{
   { name: "עיריית חיפה", category: "ארנונה", keywords: ["עיריית חיפה"], domains: ["haifa.muni.il"] },
   { name: "עיריית ראשון לציון", category: "ארנונה", keywords: ["עיריית ראשון לציון"], domains: ["rishonlezion.muni.il"] },
   // ביטוח
-  { name: "מנורה מבטחים", category: "ביטוח", keywords: ["מנורה", "menora"], domains: ["menora.co.il"] },
-  { name: "הפניקס", category: "ביטוח", keywords: ["הפניקס", "phoenix"], domains: ["phoenix.co.il"] },
-  { name: "מגדל", category: "ביטוח", keywords: ["מגדל", "migdal"], domains: ["migdal.co.il"] },
-  { name: "כלל ביטוח", category: "ביטוח", keywords: ["כלל ביטוח", "clal"], domains: ["clal.co.il"] },
-  { name: "הראל", category: "ביטוח", keywords: ["הראל", "harel"], domains: ["harel-group.co.il"] },
-  { name: "איילון", category: "ביטוח", keywords: ["איילון", "ayalon"], domains: ["ayalon.co.il"] },
-  { name: "שירביט", category: "ביטוח", keywords: ["שירביט", "shirbit"], domains: ["shirbit.co.il"] },
+  { name: "מנורה מבטחים", category: "ביטוח", keywords: ["מנורה מבטחים", "מנורה"], domains: ["menora.co.il"] },
+  { name: "הפניקס", category: "ביטוח", keywords: ["הפניקס", "phoenix"], domains: ["phoenix.co.il", "fnx.co.il"] },
+  { name: "מגדל", category: "ביטוח", keywords: ["מגדל ביטוח", "מגדל"], domains: ["migdal.co.il"] },
+  { name: "כלל ביטוח", category: "ביטוח", keywords: ["כלל ביטוח"], domains: ["clal.co.il", "clalbit.co.il"] },
+  { name: "הראל", category: "ביטוח", keywords: ["הראל ביטוח", "הראל"], domains: ["harel-group.co.il", "harel.co.il"] },
+  { name: "איילון", category: "ביטוח", keywords: ["איילון ביטוח", "איילון"], domains: ["ayalon-ins.co.il", "ayalon.co.il"] },
+  { name: "שירביט", category: "ביטוח", keywords: ["שירביט"], domains: ["shirbit.co.il"] },
+  { name: "הכשרה", category: "ביטוח", keywords: ["הכשרה ביטוח", "הכשרה"], domains: ["hachshara.co.il", "hachsharainsurance.co.il"] },
+  { name: "ביטוח ישיר", category: "ביטוח", keywords: ["ביטוח ישיר"], domains: ["bituachyashir.co.il", "bit-y.co.il"] },
+  { name: "AIG ישראל", category: "ביטוח", keywords: ["aig ישראל", "aig israel"], domains: ["aig.co.il"] },
+  { name: "שומרה", category: "ביטוח", keywords: ["שומרה ביטוח", "שומרה"], domains: ["shmera.co.il", "shomera.co.il"] },
+  { name: "ליברה", category: "ביטוח", keywords: ["ליברה ביטוח", "ליברה"], domains: ["libra-insurance.co.il", "libra.co.il"] },
+  { name: "9 ביטוח", category: "ביטוח", keywords: ["9 ביטוח"], domains: ["9ins.co.il"] },
+  { name: "RAC", category: "ביטוח", keywords: ["rac ביטוח"], domains: ["rac.co.il"] },
+  { name: "פספורטכארד", category: "ביטוח", keywords: ["פספורטכארד", "passportcard"], domains: ["passportcard.co.il"] },
+  { name: "דיקלה", category: "ביטוח", keywords: ["דיקלה ביטוח", "דיקלה"], domains: ["dikla.co.il"] },
+  { name: "שלמה ביטוח", category: "ביטוח", keywords: ["שלמה ביטוח"], domains: ["shlomo-ins.co.il"] },
+  { name: "כלל בריאות", category: "ביטוח", keywords: ["כלל בריאות"], domains: ["clalhealth.co.il"] },
+  { name: "מכבי שירותי בריאות", category: "ביטוח", keywords: ["מכבי שירותי בריאות"], domains: ["maccabi4u.co.il", "maccabi.co.il"] },
+  { name: "כללית", category: "ביטוח", keywords: ["כללית שירותי בריאות"], domains: ["clalit.co.il"] },
+  { name: "מאוחדת", category: "ביטוח", keywords: ["מאוחדת"], domains: ["meuhedet.co.il"] },
+  { name: "לאומית", category: "ביטוח", keywords: ["לאומית שירותי בריאות"], domains: ["leumit.co.il"] },
+  { name: "ווישור", category: "ביטוח", keywords: ["ווישור", "wesure", "we4sure"], domains: ["wesure.co.il", "we4sure.co.il"] },
+  { name: "פסגות", category: "ביטוח", keywords: ["פסגות ביטוח"], domains: ["psagot.co.il"] },
+  { name: "אלטשולר שחם", category: "ביטוח", keywords: ["אלטשולר שחם"], domains: ["as-invest.co.il"] },
+  { name: "תמורה", category: "ביטוח", keywords: ["תמורה ביטוח"], domains: ["tmura.co.il"] },
   // בנק
   { name: "בנק לאומי", category: "בנק", keywords: ["לאומי", "leumi"], domains: ["leumi.co.il"] },
   { name: "בנק הפועלים", category: "בנק", keywords: ["הפועלים", "hapoalim"], domains: ["bankhapoalim.co.il"] },
@@ -570,14 +657,15 @@ export function pickPrimaryInsuranceActionLink(links: EmailActionLink[]): EmailA
 
 async function fetchRecentEmails(
   connectionId: number,
-  daysBack: number = 7
+  daysBack: number = 7,
+  userFilters?: EmailScanFilters
 ): Promise<ScannedEmail[]> {
   const auth = await getAuthenticatedClient(connectionId);
   const gmail = google.gmail({ version: "v1", auth });
 
-  // Build query: last N days, only relevant emails
   const after = Math.floor((Date.now() - daysBack * 24 * 60 * 60 * 1000) / 1000);
-  const query = `after:${after} (חשבונית OR חשבון OR קבלה OR invoice OR bill OR payment OR חיוב OR לתשלום OR receipt OR זיכוי OR "credit note" OR הקבלה OR ביטוח OR פוליסה OR פרמיה OR חידוש OR כיסוי OR insurance OR policy OR premium OR renewal OR claim OR has:attachment filename:pdf)`;
+  const userFilterClause = userFilters ? buildUserGmailFilterClause(userFilters) : "";
+  const query = `after:${after} (חשבונית OR חשבון OR קבלה OR invoice OR bill OR payment OR חיוב OR לתשלום OR receipt OR זיכוי OR "credit note" OR הקבלה OR ביטוח OR פוליסה OR פרמיה OR חידוש OR כיסוי OR insurance OR policy OR premium OR renewal OR claim OR has:attachment filename:pdf${userFilterClause})`;
 
   const listRes = await gmail.users.messages.list({
     userId: "me",
@@ -1048,6 +1136,10 @@ export async function scanGmailForInvoices(
   if (!db) throw new Error("Database not available");
   const profile = await getUserProfile(userId);
   const businessContext = getBusinessIdentityContext(profile);
+  const userFilters: EmailScanFilters = {
+    senders: parseEmailScanList(profile?.emailScanSenders),
+    keywords: parseEmailScanList(profile?.emailScanKeywords),
+  };
 
   const connections = await getAllGmailConnections(userId);
   if (connections.length === 0) throw new Error("No Gmail accounts connected");
@@ -1063,7 +1155,7 @@ export async function scanGmailForInvoices(
   for (const conn of connections) {
     let connSaved = 0;
 
-    const emails = await fetchRecentEmails(conn.id, daysBack);
+    const emails = await fetchRecentEmails(conn.id, daysBack, userFilters);
     totalScanned += emails.length;
 
     for (const email of emails) {
@@ -1092,7 +1184,11 @@ export async function scanGmailForInvoices(
         .limit(1);
 
       const shouldProcessInvoice = !existingInvoice && isInvoiceEmail(email.subject, email.body);
+      const matchesUserSender = userFilters.senders.length > 0 && userFilters.senders.some((s) => email.from.toLowerCase().includes(s.toLowerCase()));
+      const matchesUserKeyword = userFilters.keywords.length > 0 && userFilters.keywords.some((kw) => `${email.subject} ${email.body}`.toLowerCase().includes(kw.toLowerCase()));
       const shouldProcessDiscovery = !existingArtifact && (
+        matchesUserSender ||
+        matchesUserKeyword ||
         looksLikeInsuranceMessage({
           subject: email.subject,
           from: email.from,
@@ -1231,7 +1327,14 @@ export async function scanGmailForInvoices(
           pdfText,
           detectedProvider,
           attachmentFilename: email.pdfAttachments[0]?.filename ?? null,
+          userFilterContext: buildUserFilterContextForLLM(userFilters),
         });
+
+        if (discovery.confidence < 0.5) {
+          console.log(`[Gmail] Skipping low-confidence discovery (${discovery.confidence.toFixed(2)}): "${email.subject}" from "${email.from}"`);
+          continue;
+        }
+
         const requiresExternalAccess = !pdfFileKey && Boolean(primaryActionLink);
         const externalAccessMode = requiresExternalAccess
           ? (primaryActionLink?.requiresLogin ? "portal_login" : "external_link")
@@ -1337,13 +1440,19 @@ export async function discoverPolicyPdfs(
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
+  const profile = await getUserProfile(userId);
+  const userFilters: EmailScanFilters = {
+    senders: parseEmailScanList(profile?.emailScanSenders),
+    keywords: parseEmailScanList(profile?.emailScanKeywords),
+  };
+
   const connections = await getAllGmailConnections(userId);
   if (connections.length === 0) return [];
 
   const discovered: DiscoveredPolicyPdf[] = [];
 
   for (const conn of connections) {
-    const emails = await fetchRecentEmails(conn.id, daysBack);
+    const emails = await fetchRecentEmails(conn.id, daysBack, userFilters);
 
     for (const email of emails) {
       if (email.pdfAttachments.length === 0) continue;

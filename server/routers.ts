@@ -71,8 +71,9 @@ import {
 } from "../drizzle/schema";
 import { decryptField, decryptJson, encryptJson } from "./encryption";
 import { eq, desc, and } from "drizzle-orm";
-import { audit, getClientIp, getRecentAuditLogs, getSecurityEvents } from "./auditLog";
+import { audit, getRecentAuditLogs, getSecurityEvents } from "./auditLog";
 import { summarizeMonthlyInvoices } from "./invoiceSummary";
+import { buildProfileContext } from "./helpers";
 import {
   buildAssistantHomeContext as buildLumiHomeContext,
   buildAssistantSystemPrompt as buildLumiSystemPrompt,
@@ -279,58 +280,6 @@ function buildCategorySummaryPayload(analyses: any[]) {
   }));
 }
 
-function buildProfileContext(profile: any): string {
-  const labels: Record<string, string> = {
-    single: "רווק/ה",
-    married: "נשוי/אה",
-    divorced: "גרוש/ה",
-    widowed: "אלמן/ה",
-    salaried: "שכיר/ה",
-    self_employed: "עצמאי/ת",
-    business_owner: "בעל/ת עסק",
-    student: "סטודנט/ית",
-    retired: "פנסיונר/ית",
-    unemployed: "לא עובד/ת",
-    male: "זכר",
-    female: "נקבה",
-    other: "אחר",
-    below_5k: "מתחת ל-5,000 ₪",
-    "5k_10k": "5,000-10,000 ₪",
-    "10k_15k": "10,000-15,000 ₪",
-    "15k_25k": "15,000-25,000 ₪",
-    "25k_40k": "25,000-40,000 ₪",
-    above_40k: "מעל 40,000 ₪",
-  };
-
-  const parts: string[] = [];
-
-  if (profile.dateOfBirth) {
-    const age = Math.floor((Date.now() - new Date(profile.dateOfBirth).getTime()) / (365.25 * 24 * 60 * 60 * 1000));
-    parts.push(`גיל: ${age}`);
-  }
-  if (profile.gender) parts.push(`מין: ${labels[profile.gender] || profile.gender}`);
-  if (profile.maritalStatus) parts.push(`מצב משפחתי: ${labels[profile.maritalStatus] || profile.maritalStatus}`);
-  if (profile.numberOfChildren > 0) {
-    parts.push(`מספר ילדים: ${profile.numberOfChildren}`);
-    if (profile.childrenAges) parts.push(`גילאי ילדים: ${profile.childrenAges}`);
-  }
-  if (profile.employmentStatus) parts.push(`תעסוקה: ${labels[profile.employmentStatus] || profile.employmentStatus}`);
-  if (profile.incomeRange) parts.push(`הכנסה חודשית: ${labels[profile.incomeRange] || profile.incomeRange}`);
-  if (profile.businessName) parts.push(`שם העסק: ${profile.businessName}`);
-  if (profile.businessTaxId) parts.push(`מספר מזהה עסקי: ${profile.businessTaxId}`);
-  if (profile.businessEmailDomains) parts.push(`דומיינים או מיילים עסקיים: ${profile.businessEmailDomains}`);
-  if (profile.ownsApartment) parts.push(`בעלות על דירה: כן`);
-  if (profile.hasActiveMortgage) parts.push(`משכנתא פעילה: כן`);
-  if (profile.numberOfVehicles > 0) parts.push(`מספר רכבים: ${profile.numberOfVehicles}`);
-  if (profile.hasExtremeSports) parts.push(`ספורט אקסטרימי/תחביבים מסוכנים: כן`);
-  if (profile.hasSpecialHealthConditions) {
-    parts.push(`מצב בריאותי מיוחד: כן`);
-    if (profile.healthConditionsDetails) parts.push(`פרטי מצב בריאותי: ${profile.healthConditionsDetails}`);
-  }
-  if (profile.hasPets) parts.push(`חיות מחמד: כן`);
-
-  return parts.join("\n");
-}
 
 function serializeProfileForClient(profile: any) {
   if (!profile) return null;
@@ -354,6 +303,8 @@ function serializeProfileForClient(profile: any) {
     businessEmailDomains: profile.businessEmailDomains ?? null,
     profileImageKey: profile.profileImageKey ?? null,
     onboardingCompleted: profile.onboardingCompleted ?? false,
+    emailScanSenders: profile.emailScanSenders ?? null,
+    emailScanKeywords: profile.emailScanKeywords ?? null,
   };
 }
 
@@ -405,83 +356,6 @@ function serializeFamilyMemberForClient(member: any) {
   };
 }
 
-function buildFamilyMembersContext(members: any[]) {
-  if (!members.length) {
-    return "לא הוזנו עדיין בני בית נפרדים במודל המשפחה.";
-  }
-  return members
-    .map((member) => {
-      const details = [
-        `שם: ${member.fullName}`,
-        `קשר: ${member.relation}`,
-        member.ageLabel ? `גיל/שלב: ${member.ageLabel}` : null,
-        member.birthDate ? `תאריך לידה: ${new Date(member.birthDate).toISOString().slice(0, 10)}` : null,
-        member.allergies ? `אלרגיות: ${member.allergies}` : null,
-        member.medicalNotes ? `בריאות: ${member.medicalNotes}` : null,
-        member.activities ? `שגרה/חוגים: ${member.activities}` : null,
-        member.insuranceNotes ? `דגשי ביטוח: ${member.insuranceNotes}` : null,
-        member.notes ? `הערות: ${member.notes}` : null,
-      ].filter(Boolean);
-      return `- ${details.join(" | ")}`;
-    })
-    .join("\n");
-}
-
-type AssistantTone = "neutral" | "info" | "success" | "warning";
-
-type AssistantChip = {
-  label: string;
-  tone: AssistantTone;
-};
-
-type AssistantHighlight = {
-  title: string;
-  description: string;
-  tone: AssistantTone;
-};
-
-function getAssistantSessionId(userId: number) {
-  return `assistant-home-${userId}`;
-}
-
-function formatIls(value: number) {
-  return `₪${Math.round(value).toLocaleString("he-IL")}`;
-}
-
-function formatMonthLabel(monthKey?: string) {
-  if (!monthKey) return "";
-  const [year, month] = monthKey.split("-");
-  const monthLabels: Record<string, string> = {
-    "01": "ינואר",
-    "02": "פברואר",
-    "03": "מרץ",
-    "04": "אפריל",
-    "05": "מאי",
-    "06": "יוני",
-    "07": "יולי",
-    "08": "אוגוסט",
-    "09": "ספטמבר",
-    "10": "אוקטובר",
-    "11": "נובמבר",
-    "12": "דצמבר",
-  };
-  return `${monthLabels[month] ?? month} ${year}`;
-}
-
-function parsePolicyDate(dateStr?: string | null) {
-  if (!dateStr || dateStr === "לא צוין בפוליסה" || dateStr === "לא צוין") return null;
-  const parts = dateStr.match(/(\d{1,2})[./\-](\d{1,2})[./\-](\d{2,4})/);
-  if (parts) {
-    const day = parseInt(parts[1], 10);
-    const month = parseInt(parts[2], 10) - 1;
-    let year = parseInt(parts[3], 10);
-    if (year < 100) year += 2000;
-    const parsed = new Date(year, month, day);
-    return isNaN(parsed.getTime()) ? null : parsed;
-  }
-  const parsed = new Date(dateStr);
-  return isNaN(parsed.getTime()) ? null : parsed;
-}
 
 async function getAssistantInvoices(userId: number) {
   const db = await getDb();
@@ -865,203 +739,6 @@ async function buildAndSyncUserHubState(userId: number) {
   };
 }
 
-function buildAssistantHomeContext(params: {
-  userName?: string | null;
-  profile: any;
-  analyses: any[];
-  invoices: any[];
-  familyMembers: any[];
-  gmailConnections: Array<{ id: number }>;
-}) {
-  const completedAnalyses = params.analyses.filter((analysis) => analysis.status === "completed" && analysis.analysisResult);
-  const monthlySummary = summarizeMonthlyInvoices(params.invoices);
-  const currentMonth = monthlySummary[0] ?? null;
-  const pendingInvoices = params.invoices.filter((invoice) => invoice.status === "pending" || invoice.status === "overdue");
-  const docCount =
-    completedAnalyses.reduce((sum, analysis) => sum + ((analysis.files ?? []) as unknown[]).length, 0) +
-    params.invoices.filter((invoice) => {
-      const extracted = invoice.extractedData as Record<string, unknown> | null;
-      return Boolean(extracted?.pdfUrl);
-    }).length;
-  const upcomingRenewals = completedAnalyses
-    .map((analysis) => {
-      const endDate = parsePolicyDate(analysis.analysisResult?.generalInfo?.endDate);
-      if (!endDate) return null;
-      const daysLeft = Math.ceil((endDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
-      return {
-        title: analysis.analysisResult?.generalInfo?.policyName || "פוליסה",
-        daysLeft,
-      };
-    })
-    .filter((item): item is { title: string; daysLeft: number } => Boolean(item))
-    .filter((item) => item.daysLeft >= 0 && item.daysLeft <= 45)
-    .sort((a, b) => a.daysLeft - b.daysLeft);
-
-  const chips: AssistantChip[] = [];
-  const highlights: AssistantHighlight[] = [];
-  const prompts: string[] = [];
-  const familyMembersCount = params.familyMembers.length;
-  const childrenCount =
-    params.familyMembers.filter((member) => member.relation === "child").length ||
-    (params.profile?.numberOfChildren ?? 0);
-
-  if (!params.gmailConnections.length) {
-    chips.push({ label: "Gmail עדיין לא מחובר", tone: "warning" });
-    prompts.push("איך מחברים את Gmail כדי שלומי יזהה הוצאות והכנסות?");
-    highlights.push({
-      title: "חיבור Gmail יפתח את לומי",
-      description: "ברגע שתחבר את Gmail, לומי יוכל לזהות תשלומים, הכנסות ומסמכים כספיים אוטומטית.",
-      tone: "warning",
-    });
-  }
-
-  if (pendingInvoices.length > 0) {
-    chips.push({
-      label: `${pendingInvoices.length} תשלומים פתוחים`,
-      tone: pendingInvoices.some((invoice) => invoice.status === "overdue") ? "warning" : "info",
-    });
-    prompts.push("איזה תשלומים פתוחים מחכים לי עכשיו?");
-  }
-
-  if (upcomingRenewals.length > 0) {
-    chips.push({
-      label: `חידוש פוליסה בעוד ${upcomingRenewals[0].daysLeft} ימים`,
-      tone: "info",
-    });
-    prompts.push("יש לי חידושי ביטוח קרובים או פערים בכיסוי?");
-    highlights.push({
-      title: "יש פוליסה שדורשת תשומת לב",
-      description: `${upcomingRenewals[0].title} מתקרבת לחידוש בעוד ${upcomingRenewals[0].daysLeft} ימים.`,
-      tone: "info",
-    });
-  }
-
-  if (familyMembersCount > 0) {
-    chips.push({
-      label: `${familyMembersCount + 1} בני בית מנוהלים`,
-      tone: "success",
-    });
-    highlights.push({
-      title: "מודל המשפחה כבר פעיל",
-      description: `יש כרגע ${familyMembersCount + 1} בני בית שמזינים הקשר לשאלות על משפחה, ביטוחים ומסמכים.`,
-      tone: "success",
-    });
-  }
-
-  if (childrenCount > 0) {
-    chips.push({
-      label: `${childrenCount} ילדים במשפחה`,
-      tone: "success",
-    });
-    prompts.push("יש משהו חשוב שמתקרב לילדים או למשפחה שלי?");
-  }
-
-  if (docCount > 0) {
-    chips.push({
-      label: `${docCount} מסמכים זמינים`,
-      tone: "neutral",
-    });
-    prompts.push("עשה לי סדר במסמכים החשובים שלי.");
-  }
-
-  if (currentMonth) {
-    const monthLabel = formatMonthLabel(currentMonth.month);
-    chips.push({
-      label: `נטו ${monthLabel}: ${currentMonth.netTotal >= 0 ? "+" : "-"}${formatIls(Math.abs(currentMonth.netTotal))}`,
-      tone: currentMonth.netTotal >= 0 ? "success" : "warning",
-    });
-    prompts.push("איך נראות ההוצאות וההכנסות שלי החודש?");
-    highlights.push({
-      title: `תמונת מצב ל-${monthLabel}`,
-      description: `הוצאות ${formatIls(currentMonth.expenseTotal)} מול הכנסות ${formatIls(currentMonth.incomeTotal)}. הנטו כרגע הוא ${currentMonth.netTotal >= 0 ? "חיובי" : "שלילי"}.`,
-      tone: currentMonth.netTotal >= 0 ? "success" : "warning",
-    });
-  }
-
-  if (!params.profile?.incomeRange || !params.profile?.employmentStatus) {
-    prompts.push("איזה מידע חסר ללומי כדי לעזור לי טוב יותר?");
-  }
-
-  if (!completedAnalyses.length) {
-    prompts.push("איך מתחילים להעלות ולנתח ביטוחים בלומי?");
-  }
-
-  if (!highlights.length) {
-    highlights.push({
-      title: "לומי מוכן להתחיל",
-      description: "אפשר לשאול על כסף, משפחה, מסמכים וביטוחים, ולקבל תשובות שמבוססות על הנתונים שלך.",
-      tone: "info",
-    });
-  }
-
-  const greetingName = params.userName?.split(" ")[0] || "";
-
-  return {
-    greeting: `${greetingName ? `שלום ${greetingName}, ` : ""}אני כאן כדי לעזור לך להבין מה קורה בבית, בכסף, במסמכים ובביטוחים. אפשר לשאול אותי כל דבר או לבחור אחת מהשאלות המומלצות.`,
-    chips: chips.slice(0, 5),
-    highlights: highlights.slice(0, 3),
-    suggestedPrompts: Array.from(new Set(prompts)).slice(0, 5),
-  };
-}
-
-function buildAssistantSystemPrompt(params: {
-  profile: any;
-  analyses: any[];
-  invoices: any[];
-  familyMembers: any[];
-  gmailConnections: Array<{ id: number }>;
-}) {
-  const completedAnalyses = params.analyses.filter((analysis) => analysis.status === "completed" && analysis.analysisResult);
-  const monthlySummary = summarizeMonthlyInvoices(params.invoices);
-  const currentMonth = monthlySummary[0] ?? null;
-  const docCount =
-    completedAnalyses.reduce((sum, analysis) => sum + ((analysis.files ?? []) as unknown[]).length, 0) +
-    params.invoices.filter((invoice) => {
-      const extracted = invoice.extractedData as Record<string, unknown> | null;
-      return Boolean(extracted?.pdfUrl);
-    }).length;
-  const recentPolicies = completedAnalyses.slice(0, 6).map((analysis) => {
-    const info = analysis.analysisResult?.generalInfo;
-    return `- ${info?.policyName || "פוליסה"} | ${info?.insurerName || "לא ידוע"} | קטגוריה: ${info?.insuranceCategory || "לא ידוע"} | פרמיה חודשית: ${info?.monthlyPremium || "לא ידוע"} | תוקף עד: ${info?.endDate || "לא ידוע"}`;
-  });
-  const recentInvoices = params.invoices.slice(0, 8).map((invoice) => {
-    const flowDirection = invoice.flowDirection === "income" ? "הכנסה" : invoice.flowDirection === "expense" ? "הוצאה" : "לא מסווג";
-    return `- ${invoice.provider || "ללא ספק"} | ${flowDirection} | סכום: ${invoice.amount || "לא ידוע"} | סטטוס: ${invoice.status || "לא ידוע"}`;
-  });
-
-  return `אתה לומי, עוזר אישי חכם לניהול החיים השוטפים של משק בית בישראל.
-
-ענה בעברית, בגובה העיניים, בצורה פרקטית וברורה.
-השתמש אך ורק במידע שסופק לך. אם מידע חסר, אמור זאת במפורש והצע מה כדאי להשלים.
-אם אפשר, סיים כל תשובה בהמלצה קצרה לפעולה הבאה.
-אל תמציא נתונים שלא קיימים.
-אל תתן ייעוץ משפטי, ביטוחי או פיננסי מחייב. תסביר, תסכם ותמליץ בזהירות.
-
-פרופיל הלקוח:
-${params.profile ? buildProfileContext(params.profile) || "לא הוזן פרופיל מפורט" : "לא הוזן פרופיל מפורט"}
-
-בני הבית:
-${buildFamilyMembersContext(params.familyMembers)}
-
-חיבורים:
-- Gmail מחובר: ${params.gmailConnections.length > 0 ? "כן" : "לא"}
-
-כסף:
-- מספר תנועות: ${params.invoices.length}
-- מסמכים כספיים כוללים: ${docCount}
-${currentMonth ? `- הוצאות ${formatMonthLabel(currentMonth.month)}: ${formatIls(currentMonth.expenseTotal)}
-- הכנסות ${formatMonthLabel(currentMonth.month)}: ${formatIls(currentMonth.incomeTotal)}
-- נטו ${formatMonthLabel(currentMonth.month)}: ${currentMonth.netTotal >= 0 ? "+" : "-"}${formatIls(Math.abs(currentMonth.netTotal))}` : "- אין עדיין סיכום חודשי"}
-
-פוליסות:
-- מספר פוליסות שנותחו: ${completedAnalyses.length}
-${recentPolicies.length > 0 ? recentPolicies.join("\n") : "- אין עדיין פוליסות מנותחות"}
-
-תנועות אחרונות:
-${recentInvoices.length > 0 ? recentInvoices.join("\n") : "- אין עדיין תנועות כספיות"}
-`;
-}
-
 export const appRouter = router({
   system: systemRouter,
   auth: router({
@@ -1131,6 +808,8 @@ export const appRouter = router({
         businessTaxId: z.string().max(64).nullable().optional(),
         businessEmailDomains: z.string().max(1000).nullable().optional(),
         onboardingCompleted: z.boolean().optional(),
+        emailScanSenders: z.string().max(2000).nullable().optional(),
+        emailScanKeywords: z.string().max(2000).nullable().optional(),
       }))
       .mutation(async ({ ctx, input }) => {
         if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
@@ -1143,6 +822,14 @@ export const appRouter = router({
             const normalized = data[field].trim();
             data[field] = normalized ? normalized : null;
           }
+        }
+        if (typeof data.emailScanSenders === "string") {
+          const { sanitizeEmailScanFilter } = await import("./gmail");
+          data.emailScanSenders = sanitizeEmailScanFilter(data.emailScanSenders, 2000) || null;
+        }
+        if (typeof data.emailScanKeywords === "string") {
+          const { sanitizeEmailScanFilter } = await import("./gmail");
+          data.emailScanKeywords = sanitizeEmailScanFilter(data.emailScanKeywords, 2000) || null;
         }
         const profile = await upsertUserProfile(ctx.user.id, data);
         return { success: true, profile: serializeProfileForClient(profile) };
