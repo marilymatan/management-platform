@@ -64,13 +64,13 @@ async function mockSavingsCenter(page: Page) {
             opportunities: [
               {
                 id: 11,
-                title: "ייתכן כפל כיסוי באמבולטורי",
+                title: "חפיפת כיסוי באמבולטורי",
                 description: "יש חפיפה שנראית בין שתי פוליסות בריאות.",
                 type: "duplicate",
                 priority: "high",
                 monthlySaving: 70,
                 annualSaving: 840,
-                actionSteps: ["לבדוק את שתי הפוליסות", "להחליט אם לצמצם כיסוי כפול"],
+                actionSteps: ["לבדוק את שתי הפוליסות", "להחליט אם צריך לצמצם את החפיפה"],
                 status: "open",
               },
             ],
@@ -216,13 +216,13 @@ async function mockSavingsCenterWithActionsFailure(page: Page) {
             opportunities: [
               {
                 id: 11,
-                title: "ייתכן כפל כיסוי באמבולטורי",
+                title: "חפיפת כיסוי באמבולטורי",
                 description: "יש חפיפה שנראית בין שתי פוליסות בריאות.",
                 type: "duplicate",
                 priority: "high",
                 monthlySaving: 70,
                 annualSaving: 840,
-                actionSteps: ["לבדוק את שתי הפוליסות", "להחליט אם לצמצם כיסוי כפול"],
+                actionSteps: ["לבדוק את שתי הפוליסות", "להחליט אם צריך לצמצם את החפיפה"],
                 status: "open",
               },
             ],
@@ -368,7 +368,7 @@ test.describe("Savings and onboarding", () => {
     await expect(page.getByTestId("savings-center-summary-strip")).toBeVisible();
     await expect(page.getByText("איפה אפשר לחסוך ואיזה צעדים עושים עכשיו")).toBeVisible();
     await expect(
-      page.getByTestId("savings-center-highlight-card").getByRole("heading", { name: "ייתכן כפל כיסוי באמבולטורי" })
+      page.getByTestId("savings-center-highlight-card").getByRole("heading", { name: "חפיפת כיסוי באמבולטורי" })
     ).toBeVisible();
     await page.getByRole("tab", { name: "מעקב פעולות" }).click();
     await expect(page.getByTestId("savings-center-actions-summary")).toBeVisible();
@@ -381,7 +381,7 @@ test.describe("Savings and onboarding", () => {
     await page.goto("/savings");
 
     await expect(page.getByTestId("savings-center-page")).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByText("זוהו כבר 2 פוליסות פעילות. המסך הזה מתמלא רק כשיש כפל, פער, חידוש קרוב או שינוי חיוב שמצריך פעולה.")).toBeVisible();
+    await expect(page.getByText("זוהו כבר 2 פוליסות פעילות. המסך הזה מתמלא רק כשיש חפיפה, פער, חידוש קרוב או שינוי חיוב שמצריך פעולה.")).toBeVisible();
     await expect(page.getByTestId("savings-center-report-empty-with-policies")).toBeVisible();
     await expect(page.getByText("זיהינו כבר 2 פוליסות, אבל אין כרגע הזדמנויות פתוחות")).toBeVisible();
     await expect(page.getByTestId("savings-center-report-empty-with-policies").getByText("ביטוחי בריאות")).toBeVisible();

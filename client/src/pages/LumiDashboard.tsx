@@ -294,8 +294,8 @@ export default function LumiDashboard() {
     if (overview.duplicateGroups > 0) {
       items.push({
         id: "duplicates",
-        title: `זוהו ${overview.duplicateGroups} חפיפות אפשריות בין כיסויים`,
-        description: "כדאי לעבור עליהן מתוך ההתראות ולוודא שאין כיסוי כפול או כסף שיוצא פעמיים.",
+        title: `זוהו ${overview.duplicateGroups} חפיפות שדורשות בדיקה`,
+        description: "כדאי לעבור עליהן מתוך ההתראות ולוודא שאין חפיפת כיסוי או פוליסה שמייצרת תשלום מיותר.",
         path: "/alerts",
         cta: "לבדיקה",
         tone: "warning",

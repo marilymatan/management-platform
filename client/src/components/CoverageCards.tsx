@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -38,10 +38,11 @@ import {
   Wrench,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
-import type { Coverage } from "@shared/insurance";
+import type { Coverage, InsurancePolicy } from "@shared/insurance";
 
 interface CoverageCardsProps {
   coverages: Coverage[];
+  policies?: InsurancePolicy[];
   selectedFileFilter?: string | null;
   initialCategoryFilter?: string | null;
 }
@@ -109,10 +110,27 @@ function DetailRow({ label, value }: { label: string; value?: string }) {
   );
 }
 
-export function CoverageCards({ coverages, selectedFileFilter, initialCategoryFilter }: CoverageCardsProps) {
+export function CoverageCards({
+  coverages,
+  policies = [],
+  selectedFileFilter,
+  initialCategoryFilter,
+}: CoverageCardsProps) {
   const [selectedCoverage, setSelectedCoverage] = useState<Coverage | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [activeCategory, setActiveCategory] = useState<string | null>(initialCategoryFilter ?? null);
+  const coverageNodeById = useMemo(
+    () =>
+      new Map(
+        policies.flatMap((policy) =>
+          policy.coverages.map((coverage) => [coverage.id, { coverage, policy }] as const)
+        )
+      ),
+    [policies]
+  );
+  const selectedCoverageNode = selectedCoverage
+    ? coverageNodeById.get(selectedCoverage.id)
+    : null;
 
   useEffect(() => {
     const availableCategories = new Set(coverages.map((coverage) => coverage.category || "אחר"));
@@ -234,6 +252,7 @@ export function CoverageCards({ coverages, selectedFileFilter, initialCategoryFi
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                   {items.map(coverage => {
                     const catConfig = getCategoryConfig(coverage.category);
+                    const coverageNode = coverageNodeById.get(coverage.id);
                     return (
                       <Card
                         key={coverage.id}
@@ -250,6 +269,11 @@ export function CoverageCards({ coverages, selectedFileFilter, initialCategoryFi
                           <p className="text-xs text-primary font-medium mt-2">
                             {coverage.limit}
                           </p>
+                          {coverageNode?.policy.generalInfo.policyName && (
+                            <p className="text-[11px] text-muted-foreground mt-1">
+                              פוליסה: {coverageNode.policy.generalInfo.policyName}
+                            </p>
+                          )}
                           {coverage.copay && coverage.copay !== "לא מצוין בפוליסה" && coverage.copay !== "לא צוין בפוליסה" && (
                             <p className="text-[11px] text-muted-foreground mt-1.5">
                               השתתפות עצמית: {coverage.copay}
@@ -278,12 +302,26 @@ export function CoverageCards({ coverages, selectedFileFilter, initialCategoryFi
               {selectedCoverage?.title}
             </DialogTitle>
             <DialogDescription className="text-right" dir="rtl">
-              {selectedCoverage?.category}
+              {selectedCoverageNode?.policy.generalInfo.policyName
+                ? `${selectedCoverage?.category} • ${selectedCoverageNode.policy.generalInfo.policyName}`
+                : selectedCoverage?.category}
             </DialogDescription>
           </DialogHeader>
 
           <ScrollArea className="h-full max-h-[60vh] pr-4">
             <div className="space-y-4" dir="rtl">
+              {selectedCoverage && selectedCoverageNode?.policy.generalInfo.policyName && (
+                <>
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                    <p className="text-sm text-amber-900">
+                      <span className="font-semibold">פוליסה:</span>{" "}
+                      {selectedCoverageNode.policy.generalInfo.policyName}
+                    </p>
+                  </div>
+                  <Separator />
+                </>
+              )}
+
               {selectedCoverage?.sourceFile && (
                 <>
                   <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
@@ -336,6 +374,25 @@ export function CoverageCards({ coverages, selectedFileFilter, initialCategoryFi
               {selectedCoverage?.exclusions && selectedCoverage.exclusions !== "לא מצוין בפוליסה" && selectedCoverage.exclusions !== "לא צוין בפוליסה" && (
                 <>
                   <DetailRow label="חריגים" value={selectedCoverage.exclusions} />
+                  <Separator />
+                </>
+              )}
+
+              {selectedCoverage && (selectedCoverageNode?.coverage.clauses.length ?? 0) > 0 && (
+                <>
+                  <div className="space-y-2">
+                    <p className="text-sm font-semibold text-foreground">סעיפי הכיסוי</p>
+                    <div className="space-y-2">
+                      {selectedCoverageNode?.coverage.clauses.map((clause) => (
+                        <div key={clause.id} className="rounded-lg border border-border bg-muted/20 p-3">
+                          <p className="text-sm font-medium text-foreground">{clause.title}</p>
+                          <p className="text-sm text-muted-foreground mt-1 leading-relaxed">
+                            {clause.text}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                   <Separator />
                 </>
               )}

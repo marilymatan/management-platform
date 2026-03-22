@@ -1197,11 +1197,29 @@ export default function Home() {
             </Card>
           )}
 
-          {analysisResult.duplicateCoverages &&
-            analysisResult.duplicateCoverages.length > 0 && (
+          {analysisResult.requiresReanalysis && (
+            <Card
+              className="border-warning/40 bg-warning/10 animate-fade-in-up"
+              data-testid="legacy-analysis-banner"
+            >
+              <CardContent className="p-5" dir="rtl">
+                <p className="text-sm font-semibold text-warning-foreground">
+                  הסריקה הזו נוצרה במודל הישן
+                </p>
+                <p className="text-sm text-muted-foreground mt-1.5 leading-relaxed">
+                  אפשר להמשיך לצפות בה, אבל כדי לקבל חפיפות מדויקות ברמת כיסוי
+                  ופוליסה כדאי להריץ ניתוח מחדש על אותם המסמכים.
+                </p>
+              </CardContent>
+            </Card>
+          )}
+
+          {((analysisResult.coverageOverlapGroups?.length ?? 0) > 0 ||
+            (analysisResult.policyOverlapGroups?.length ?? 0) > 0) && (
               <DuplicateCoveragesAlert
-                duplicates={analysisResult.duplicateCoverages}
-                coverages={analysisResult.coverages}
+                coverageOverlaps={analysisResult.coverageOverlapGroups ?? []}
+                policyOverlaps={analysisResult.policyOverlapGroups ?? []}
+                policies={analysisResult.policies ?? []}
               />
             )}
 
@@ -1245,6 +1263,7 @@ export default function Home() {
             <TabsContent value="coverages" className="mt-5">
               <CoverageCards
                 coverages={analysisResult.coverages}
+                policies={analysisResult.policies ?? []}
                 selectedFileFilter={selectedFileFilter}
                 initialCategoryFilter={requestedCoverageCategory}
               />

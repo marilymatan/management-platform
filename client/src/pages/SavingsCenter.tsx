@@ -79,7 +79,7 @@ function getPriorityBadgeClassName(priority: "high" | "medium" | "low") {
 }
 
 function getTypeLabel(type: Opportunity["type"]) {
-  if (type === "duplicate") return "כפל";
+  if (type === "duplicate") return "חפיפה";
   if (type === "overpriced") return "התייקרות";
   if (type === "unnecessary") return "לא הכרחי";
   return "פער כיסוי";
@@ -131,7 +131,7 @@ function getFallbackOverview(report?: SavingsReport) {
   }
 
   if ((report?.policyCount ?? 0) > 0) {
-    return `זוהו כבר ${report?.policyCount} פוליסות פעילות. המסך הזה מתמלא רק כשיש כפל, פער, חידוש קרוב או שינוי חיוב שמצריך פעולה.`;
+    return `זוהו כבר ${report?.policyCount} פוליסות פעילות. המסך הזה מתמלא רק כשיש חפיפה, פער, חידוש קרוב או שינוי חיוב שמצריך פעולה.`;
   }
 
   return "כאן יופיעו הזדמנויות חיסכון, פעולות מומלצות ושינויי ניטור ברגע שלומי יזהה מספיק מידע מהפוליסות והמסמכים שלך.";
@@ -326,7 +326,7 @@ export default function SavingsCenter() {
       helper:
         (reportData?.totalAnnualSaving ?? 0) > 0
           ? "אם סוגרים את כל ההזדמנויות שזוהו"
-          : "יתעדכן כשיזוהו כפל או התייקרות",
+          : "יתעדכן כשיזוהו חפיפה או התייקרות",
       icon: TrendingDown,
       toneClassName: "bg-warning/20 text-warning-foreground",
     },
@@ -567,7 +567,7 @@ export default function SavingsCenter() {
                     {leadOpportunity
                       ? leadOpportunity.description
                       : hasPolicies
-                        ? "זה בדרך כלל אומר שהתיק נקי מכפלים או התייקרויות שמצריכים טיפול מיידי, אבל הניטור ממשיך לעבוד ברקע."
+                        ? "זה בדרך כלל אומר שהתיק נקי מחפיפות או התייקרויות שמצריכות טיפול מיידי, אבל הניטור ממשיך לעבוד ברקע."
                         : "העלאת פוליסות, חיבור Gmail או זיהוי מסמכים יעזרו ללומי לבנות תמונת חיסכון מדויקת יותר."}
                   </p>
                 </div>
@@ -607,7 +607,7 @@ export default function SavingsCenter() {
                     {leadAction
                       ? leadAction.description
                       : hasPolicies
-                        ? "ברגע שתזוהה התייקרות, חידוש קרוב או כפל, היא תופיע כאן עם הצעד הבא."
+                        ? "ברגע שתזוהה התייקרות, חידוש קרוב או חפיפה, היא תופיע כאן עם הצעד הבא."
                         : "כדאי לחבר Gmail או להוסיף פוליסות כדי שלומי תוכל לייצר פעולות מדויקות יותר."}
                   </p>
                 </div>
@@ -720,7 +720,7 @@ export default function SavingsCenter() {
                   </p>
                   <p className="text-sm text-muted-foreground max-w-2xl mx-auto leading-relaxed">
                     {hasPolicies
-                      ? "העמוד הזה לא מציג רשימת ביטוחים מלאה. הוא מתמלא רק כשיש כפל כיסוי, חידוש קרוב, פער כיסוי או שינוי חיוב שמצדיקים פעולה."
+                      ? "העמוד הזה לא מציג רשימת ביטוחים מלאה. הוא מתמלא רק כשיש חפיפת כיסוי, חידוש קרוב, פער כיסוי או שינוי חיוב שמצדיקים פעולה."
                       : "ככל שיתווספו מסמכים, חידושים או שינויי חיוב, לומי תעדכן כאן חיסכון פוטנציאלי."}
                   </p>
                 </div>

@@ -480,11 +480,18 @@ function buildPolicySearchText(analysis: AssistantAnalysis) {
       coverage.limit,
       coverage.sourceFile,
     ]),
-    ...(result.duplicateCoverages ?? []).flatMap((duplicate) => [
-      duplicate.title,
-      duplicate.explanation,
-      duplicate.recommendation,
-      ...duplicate.sourceFiles,
+    ...((result.coverageOverlapGroups as any[] | undefined) ?? (result.duplicateCoverages as any[] | undefined) ?? []).flatMap((overlap) => [
+      overlap.title,
+      overlap.explanation,
+      overlap.recommendation,
+      ...((overlap.coverageRefs ?? overlap.coverageIds ?? []).map((ref: any) =>
+        typeof ref === "string" ? ref : `${ref.policyId} ${ref.coverageId}`
+      )),
+    ]),
+    ...(result.policyOverlapGroups ?? []).flatMap((overlap) => [
+      overlap.explanation,
+      overlap.recommendation,
+      ...overlap.policyIds,
     ]),
   ].filter(Boolean).join(" "));
 }
@@ -791,9 +798,12 @@ function formatRelevantPoliciesSection(relevantPolicies: RelevantPolicy[], signa
     const insightLines = (result.personalizedInsights ?? [])
       .slice(0, 3)
       .map((insight) => `  - ${insight.title}: ${insight.description}`);
-    const duplicateLines = (result.duplicateCoverages ?? [])
+    const coverageOverlapLines = ((result.coverageOverlapGroups as any[] | undefined) ?? (result.duplicateCoverages as any[] | undefined) ?? [])
       .slice(0, 2)
-      .map((duplicate) => `  - ${duplicate.title}: ${duplicate.explanation}. המלצה: ${duplicate.recommendation}`);
+      .map((overlap) => `  - ${overlap.title}: ${overlap.explanation}. המלצה: ${overlap.recommendation}`);
+    const policyOverlapLines = (result.policyOverlapGroups ?? [])
+      .slice(0, 1)
+      .map((overlap) => `  - חפיפת פוליסה: ${overlap.explanation}. המלצה: ${overlap.recommendation}`);
     const coverageLines = relevantCoverages.map((coverage) => {
       return `  - ${coverage.title} | קטגוריה: ${coverage.category} | מגבלה: ${formatOptionalValue(coverage.limit)} | השתתפות עצמית: ${formatOptionalValue(coverage.copay)} | תקרת החזר: ${formatOptionalValue(coverage.maxReimbursement)} | תקופת אכשרה: ${formatOptionalValue(coverage.waitingPeriod)} | החרגות: ${formatOptionalValue(coverage.exclusions)} | פירוט: ${formatOptionalValue(coverage.details)}`;
     });
@@ -822,9 +832,9 @@ function formatRelevantPoliciesSection(relevantPolicies: RelevantPolicy[], signa
       lines.push("  תובנות מותאמות לפרופיל:");
       lines.push(...insightLines);
     }
-    if (duplicateLines.length) {
+    if (coverageOverlapLines.length || policyOverlapLines.length) {
       lines.push("  חפיפות שזוהו:");
-      lines.push(...duplicateLines);
+      lines.push(...coverageOverlapLines, ...policyOverlapLines);
     }
 
     return lines.join("\n");

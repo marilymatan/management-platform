@@ -1,107 +1,99 @@
+import { POLICY_ANALYSIS_BATCH_SIZE } from "@shared/analysisProgress";
+import {
+  mergeNormalizedPolicyAnalyses,
+  normalizePolicyAnalysis,
+  type NormalizedPolicyAnalysis,
+  type PolicyAnalysis,
+} from "@shared/insurance";
 import { ENV } from "./_core/env";
 import { invokeLLM } from "./_core/llm";
 import { getUserProfile, logApiUsage, updateAnalysisProcessingProgress } from "./db";
-import { storageRead } from "./storage";
-import { POLICY_ANALYSIS_BATCH_SIZE } from "@shared/analysisProgress";
 import { buildProfileContext } from "./helpers";
-import type { PolicyAnalysis, PremiumPaymentPeriod } from "@shared/insurance";
+import { storageRead } from "./storage";
 
-const ANALYSIS_SYSTEM_PROMPT = `אתה מומחה לניתוח פוליסות ביטוח בעברית. תפקידך לנתח את הטקסט של פוליסת הביטוח ולחלץ ממנו מידע מובנה.
+const ANALYSIS_SYSTEM_PROMPT = `אתה מומחה לניתוח פוליסות ביטוח בעברית. תפקידך לנתח מסמכי ביטוח ולהחזיר JSON היררכי בלבד.
 
-עליך להחזיר JSON בפורמט הבא בלבד, ללא טקסט נוסף:
+מודל הנתונים המחייב:
+- פוליסה
+- כיסוי בתוך פוליסה
+- סעיף בתוך כיסוי
+
+כלל קריטי:
+- אי אפשר לבטל או להמליץ לבטל סעיף בודד.
+- סעיף הוא ראיה והסבר בלבד.
+- יחידת הפעולה היא כיסוי, ורק אם יש חפיפה רחבה בין כמה כיסויים אפשר לרמוז שיש מקום לבדוק גם את הפוליסה.
+
+החזר JSON בלבד בפורמט הבא:
 {
-  "coverages": [
+  "summary": "סיכום כולל קצר של כל המסמכים",
+  "policies": [
     {
-      "id": "מזהה ייחודי",
-      "title": "שם הכיסוי/ההטבה",
-      "category": "קטגוריה משנית בתוך סוג הביטוח — ראה רשימה למטה",
-      "limit": "מגבלת שימוש (למשל: עד 12 טיפולים בשנה)",
-      "details": "תיאור מפורט של הכיסוי",
-      "eligibility": "תנאי זכאות",
-      "copay": "גובה השתתפות עצמית",
-      "maxReimbursement": "תקרת החזר כספי",
-      "exclusions": "החרגות רלוונטיות",
-      "waitingPeriod": "תקופת אכשרה",
-      "sourceFile": "שם הקובץ שמהו הכיסוי חולץ"
+      "id": "מזהה פוליסה ייחודי בתוך התגובה",
+      "generalInfo": {
+        "policyName": "שם הפוליסה",
+        "insurerName": "שם חברת הביטוח",
+        "policyNumber": "מספר פוליסה",
+        "policyType": "סוג הפוליסה",
+        "insuranceCategory": "health | life | car | home",
+        "premiumPaymentPeriod": "monthly | annual | unknown",
+        "monthlyPremium": "פרמיה חודשית",
+        "annualPremium": "פרמיה שנתית",
+        "startDate": "תאריך תחילה",
+        "endDate": "תאריך סיום",
+        "importantNotes": ["הערות חשובות"],
+        "fineprint": ["אותיות קטנות וחריגים בולטים"]
+      },
+      "summary": "סיכום קצר של הפוליסה",
+      "sourceFiles": ["שם קובץ"],
+      "coverages": [
+        {
+          "id": "מזהה כיסוי ייחודי בתוך התגובה",
+          "title": "שם הכיסוי/ההטבה",
+          "category": "קטגוריה משנית בתוך סוג הביטוח",
+          "summary": "תיאור קצר של הכיסוי",
+          "sourceFile": "שם הקובץ שממנו הכיסוי חולץ",
+          "clauses": [
+            {
+              "id": "מזהה סעיף ייחודי בתוך התגובה",
+              "kind": "benefit_detail | eligibility | limit | copay | max_reimbursement | exclusion | waiting_period | other",
+              "title": "כותרת אנושית קצרה",
+              "text": "טקסט הסעיף"
+            }
+          ]
+        }
+      ]
     }
   ],
-  "generalInfo": {
-    "policyName": "שם הפוליסה",
-    "insurerName": "שם חברת הביטוח",
-    "policyNumber": "מספר פוליסה",
-    "policyType": "סוג הפוליסה",
-    "insuranceCategory": "health | life | car | home",
-    "premiumPaymentPeriod": "monthly | annual | unknown",
-    "monthlyPremium": "פרמיה חודשית",
-    "annualPremium": "פרמיה שנתית",
-    "startDate": "תאריך תחילה",
-    "endDate": "תאריך סיום",
-    "importantNotes": ["הערות חשובות"],
-    "fineprint": ["אותיות קטנות וחריגים בולטים"]
-  },
-  "summary": "סיכום כללי קצר של הפוליסה ב-2-3 משפטים",
-  "duplicateCoverages": [
+  "coverageOverlapGroups": [
     {
-      "id": "מזהה ייחודי",
-      "title": "שם הכיסוי הכפול",
-      "coverageIds": ["מזהה כיסוי 1", "מזהה כיסוי 2"],
-      "sourceFiles": ["שם קובץ 1", "שם קובץ 2"],
-      "explanation": "הסבר קצר מדוע כיסויים אלו נחשבים כפולים או חופפים",
-      "recommendation": "המלצה למשתמש, למשל: לבדוק אם משלם כפל ביטוח"
+      "id": "מזהה חפיפה ייחודי בתוך התגובה",
+      "title": "שם קצר של החפיפה",
+      "coverageRefs": [
+        { "policyId": "מזהה פוליסה", "coverageId": "מזהה כיסוי" }
+      ],
+      "matchedClauseIdsByCoverage": {
+        "מזהה כיסוי": ["מזהה סעיף 1", "מזהה סעיף 2"]
+      },
+      "explanation": "למה הכיסויים נראים חופפים",
+      "recommendation": "מה כדאי לבדוק ברמת הכיסוי"
     }
   ]
 }
 
 הנחיות:
-- חלץ את כל הכיסויים וההטבות שמופיעים בפוליסה
-- לכל כיסוי, הוסף את שם הקובץ (sourceFile) שממנו הוא חולץ
-- אם מידע מסוים לא נמצא, רשום "לא מצוין בפוליסה" (לא "לא צוין")
-- עבור insuranceCategory, סווג את הפוליסה לאחת מהקטגוריות הבאות בלבד:
-  * "health" - ביטוח בריאות (רפואה משלימה, אשפוז, שיניים, תרופות, ביטוח בריאות)
-  * "life" - ביטוח חיים (ביטוח חיים, ריסק, אובדן כושר עבודה, נכות, מוות, סיעודי, פנסיה)
-  * "car" - ביטוח רכב (ביטוח רכב, מקיף, צד ג, חובה, רכב)
-  * "home" - ביטוח דירה (ביטוח דירה, מבנה, תכולה, רעידת אדמה, צנרת)
-- עבור category של כל כיסוי, סווג לפי סוג הפוליסה:
-  * ביטוח בריאות (health): "רפואה משלימה", "אשפוז", "שיניים", "עיניים", "תרופות", "ניתוח", "נפש", "הריון ולידה", "אחר"
-  * ביטוח חיים (life): "ביטוח חיים", "אובדן כושר עבודה", "סיעודי", "נכות", "פנסיה", "ריסק", "אחר"
-  * ביטוח רכב (car): "חובה", "מקיף", "צד ג", "נזקי גוף", "רכוש", "גניבה", "אחר"
-  * ביטוח דירה (home): "מבנה", "תכולה", "צד ג", "נזקי טבע", "צנרת", "אחר"
-  חשוב: תמיד השתמש בקטגוריות מגוונות ומתאימות לתוכן. אל תסווג את כל הכיסויים לקטגוריה אחת — חלק אותם לפי תת-נושאים ברורים.
-- הקפד על דיוק בנתונים הכספיים
-- קבע premiumPaymentPeriod כך:
-  * "monthly" רק אם המסמך מציין במפורש חיוב חודשי, פרמיה חודשית, לחודש, או 12 תשלומים חודשיים
-  * "annual" רק אם המסמך מציין במפורש חיוב שנתי, פרמיה שנתית, לשנה, או מחיר לכל תקופת הביטוח
-  * "unknown" אם התקופה לא ברורה מספיק
-- אם premiumPaymentPeriod הוא "annual", אל תעתיק את אותו סכום ל-monthlyPremium
-- אם premiumPaymentPeriod הוא "monthly", אל תעתיק את אותו סכום ל-annualPremium
-- אם מופיע סכום אחד בלבד והתקופה לא ברורה, החזר premiumPaymentPeriod = "unknown" ואל תנחש תקופה
-- שמור על שפה ברורה ומובנת בעברית
-- החזר JSON תקין בלבד
+- אם מידע מסוים לא נמצא, רשום "לא מצוין בפוליסה".
+- הפרד בין פוליסות שונות. אם המסמכים מתייחסים לפוליסות שונות, אל תאחד ביניהן.
+- אם שני מסמכים שייכים לאותה פוליסה, מותר לאחד אותם רק אם מספר הפוליסה תואם, או אם שם הפוליסה ושם החברה תואמים בדיוק.
+- עבור insuranceCategory, השתמש רק באחת מהאפשרויות: health, life, car, home.
+- עבור category של כיסוי, השתמש בקטגוריה אנושית ספציפית ורלוונטית, לא כללית מדי.
+- חלץ סעיפים רק כאשר יש טקסט ממשי. אין צורך לייצר סעיף ריק.
+- אם אין חפיפות כיסוי, החזר coverageOverlapGroups כ-[].
+- חפיפת כיסוי נוצרת כאשר שני כיסויים או יותר נראים כמספקים אותה הגנה או הגנה דומה.
+- recommendation חייב להישאר ברמת הכיסוי או ההשוואה בין כיסויים. אסור להמליץ לבטל סעיף.
+- שמור על עברית ברורה ומובנת.
+- החזר JSON תקין בלבד.`;
 
-הנחיות לזיהוי כיסויים כפולים:
-- בדוק אם יש כיסויים זהים או חופפים שמופיעים ביותר מקובץ אחד, או אפילו בתוך אותו קובץ
-- כיסוי נחשב כפול כאשר שני כיסויים מכסים את אותו סוג טיפול/שירות, גם אם השמות שונים במקצת
-- לכל קבוצת כיסויים כפולים, ציין את ה-id של הכיסויים הרלוונטיים מתוך מערך ה-coverages
-- הסבר בבירור למה הכיסויים נחשבים כפולים (למשל: שניהם מכסים ביקור רופא מומחה)
-- תן המלצה מעשית למשתמש (למשל: כדאי לבדוק אם ניתן לבטל אחד מהכיסויים ולחסוך בפרמיה)
-- אם אין כיסויים כפולים, החזר מערך ריק []`;
-
-const BATCH_MERGE_PROMPT = `אתה מומחה לניתוח פוליסות ביטוח בעברית. קיבלת תוצאות ניתוח של מספר קבוצות קבצי פוליסה שנותחו בנפרד.
-
-משימתך:
-1. אחד את כל פרטי המידע הכללי (generalInfo) לאובייקט אחד מסכם. אם יש מספר פוליסות שונות, סכם את שמות כל הפוליסות, חברות הביטוח, מספרי הפוליסות, הפרמיות וכו׳
-2. כתוב סיכום (summary) אחד כולל שמכסה את כל הפוליסות
-3. זהה כיסויים כפולים (duplicateCoverages) בין הקבוצות השונות — השתמש ב-id המדויקים כפי שהתקבלו (מתחילים ב-b0-, b1-, b2- וכו׳)
-
-הנחיות:
-- בדוק כיסויים כפולים בין קבוצות שונות, לא רק בתוך אותה קבוצה
-- כיסוי נחשב כפול כאשר שני כיסויים מכסים את אותו סוג טיפול/שירות
-- עבור insuranceCategory, בחר את הקטגוריה הנפוצה ביותר
-- עבור premiumPaymentPeriod, בחר את התקופה רק אם היא ברורה מהקבוצות; אחרת החזר "unknown"
-- שמור על שפה ברורה ומובנת בעברית
-- החזר JSON תקין בלבד`;
-
-const PERSONALIZED_INSIGHTS_PROMPT = `אתה יועץ ביטוח מומחה ומנוסה בישראל. קיבלת ניתוח מלא של פוליסת ביטוח ופרופיל אישי של הלקוח.
+const PERSONALIZED_INSIGHTS_PROMPT = `אתה יועץ ביטוח מומחה ומנוסה בישראל. קיבלת ניתוח מלא של פוליסות ביטוח ופרופיל אישי של הלקוח.
 
 תפקידך: לזהות פערים ביטוחיים, סיכונים, והמלצות מותאמות אישית על בסיס המצב האישי והמשפחתי של הלקוח.
 
@@ -117,13 +109,12 @@ const PERSONALIZED_INSIGHTS_PROMPT = `אתה יועץ ביטוח מומחה ומ
 8. **חיות מחמד**: אם יש חיות מחמד - האם יש ביטוח וטרינרי?
 
 כללים:
-- החזר רק תובנות רלוונטיות למצב הספציפי של הלקוח (אל תחזיר תובנות על ילדים אם אין ילדים, וכו')
-- לכל תובנה, סווג אותה כ: "warning" (חסר כיסוי קריטי), "recommendation" (המלצה לשיפור), או "positive" (כיסוי מתאים קיים)
-- דרג כל תובנה: "high" (דחוף/קריטי), "medium" (חשוב), או "low" (כדאי לשקול)
-- כתוב בעברית ברורה ומובנת, בגובה העיניים
-- הסבר בקצרה למה זה רלוונטי ומה ההמלצה המעשית
-- החזר 3-8 תובנות, לא יותר
-- אם יש כיסוי טוב שמתאים למצב הלקוח, ציין את זה כ-"positive"
+- החזר רק תובנות רלוונטיות למצב הספציפי של הלקוח.
+- לכל תובנה, סווג אותה כ: "warning", "recommendation", או "positive".
+- דרג כל תובנה: "high", "medium", או "low".
+- כתוב בעברית ברורה ומובנת.
+- החזר 3-8 תובנות, לא יותר.
+- אם יש כיסוי טוב שמתאים למצב הלקוח, ציין את זה כ-"positive".
 
 החזר JSON בפורמט הבא בלבד:
 {
@@ -151,6 +142,37 @@ type AnalysisRecord = {
   userId?: number | null;
   files: AnalysisFile[];
   workerId?: string | null;
+};
+
+type LlmPolicyAnalysisResponse = {
+  summary: string;
+  policies: Array<{
+    id: string;
+    generalInfo: PolicyAnalysis["generalInfo"];
+    summary: string;
+    sourceFiles: string[];
+    coverages: Array<{
+      id: string;
+      title: string;
+      category: string;
+      summary: string;
+      sourceFile: string;
+      clauses: Array<{
+        id: string;
+        kind: string;
+        title: string;
+        text: string;
+      }>;
+    }>;
+  }>;
+  coverageOverlapGroups: Array<{
+    id: string;
+    title: string;
+    coverageRefs: Array<{ policyId: string; coverageId: string }>;
+    matchedClauseIdsByCoverage: Record<string, string[]>;
+    explanation: string;
+    recommendation: string;
+  }>;
 };
 
 function extractLLMContent(response: any): string {
@@ -186,59 +208,14 @@ function parseLLMJson<T = any>(raw: string): T {
   return JSON.parse(cleaned);
 }
 
-const POLICY_NOT_SPECIFIED = "לא מצוין בפוליסה";
-
-function isMissingPolicyValue(value: string | null | undefined) {
-  if (!value) return true;
-  const normalized = value.trim();
-  return normalized.length === 0 || normalized === POLICY_NOT_SPECIFIED || normalized === "לא צוין בפוליסה";
-}
-
-function normalizePremiumGeneralInfo<T extends PolicyAnalysis["generalInfo"]>(generalInfo: T): T {
-  const normalized = {
-    ...generalInfo,
-    premiumPaymentPeriod:
-      generalInfo.premiumPaymentPeriod === "monthly" ||
-      generalInfo.premiumPaymentPeriod === "annual" ||
-      generalInfo.premiumPaymentPeriod === "unknown"
-        ? generalInfo.premiumPaymentPeriod
-        : ("unknown" as PremiumPaymentPeriod),
-  };
-
-  if (normalized.premiumPaymentPeriod === "annual") {
-    const annualSource = isMissingPolicyValue(normalized.annualPremium)
-      ? normalized.monthlyPremium
-      : normalized.annualPremium;
-    normalized.annualPremium = annualSource ?? POLICY_NOT_SPECIFIED;
-    if (isMissingPolicyValue(normalized.monthlyPremium) || normalized.monthlyPremium === annualSource) {
-      normalized.monthlyPremium = POLICY_NOT_SPECIFIED;
-    }
-  }
-
-  if (normalized.premiumPaymentPeriod === "monthly") {
-    const monthlySource = isMissingPolicyValue(normalized.monthlyPremium)
-      ? normalized.annualPremium
-      : normalized.monthlyPremium;
-    normalized.monthlyPremium = monthlySource ?? POLICY_NOT_SPECIFIED;
-    if (isMissingPolicyValue(normalized.annualPremium) || normalized.annualPremium === monthlySource) {
-      normalized.annualPremium = POLICY_NOT_SPECIFIED;
-    }
-  }
-
-  return normalized as T;
-}
-
-function normalizeAnalysisPremiums(result: PolicyAnalysis): PolicyAnalysis {
-  return {
-    ...result,
-    generalInfo: normalizePremiumGeneralInfo(result.generalInfo),
-  };
-}
-
-async function logLlmUsage(sessionId: string, userId: number | null | undefined, response: {
-  usage?: { prompt_tokens?: number; completion_tokens?: number };
-  model?: string;
-}) {
+async function logLlmUsage(
+  sessionId: string,
+  userId: number | null | undefined,
+  response: {
+    usage?: { prompt_tokens?: number; completion_tokens?: number };
+    model?: string;
+  },
+) {
   if (!response.usage) {
     return;
   }
@@ -264,14 +241,15 @@ async function loadFileParts(fileList: AnalysisFile[]) {
         return null;
       }
       const base64 = buffer.toString("base64");
-      const mimeType = typeof file.mimeType === "string" && file.mimeType.trim()
-        ? file.mimeType
-        : "application/pdf";
+      const mimeType =
+        typeof file.mimeType === "string" && file.mimeType.trim()
+          ? file.mimeType
+          : "application/pdf";
       return {
         type: "image_url" as const,
         image_url: { url: `data:${mimeType};base64,${base64}` },
       };
-    })
+    }),
   );
   return parts.filter((part): part is NonNullable<typeof part> => part !== null);
 }
@@ -292,80 +270,168 @@ const generalInfoSchema = {
     importantNotes: { type: "array", items: { type: "string" } },
     fineprint: { type: "array", items: { type: "string" } },
   },
-  required: ["policyName", "insurerName", "policyNumber", "policyType", "insuranceCategory", "premiumPaymentPeriod", "monthlyPremium", "annualPremium", "startDate", "endDate", "importantNotes", "fineprint"],
+  required: [
+    "policyName",
+    "insurerName",
+    "policyNumber",
+    "policyType",
+    "insuranceCategory",
+    "premiumPaymentPeriod",
+    "monthlyPremium",
+    "annualPremium",
+    "startDate",
+    "endDate",
+    "importantNotes",
+    "fineprint",
+  ],
   additionalProperties: false,
 } as const;
 
-const duplicateCoveragesSchema = {
-  type: "array",
-  items: {
-    type: "object",
-    properties: {
-      id: { type: "string" },
-      title: { type: "string" },
-      coverageIds: { type: "array", items: { type: "string" } },
-      sourceFiles: { type: "array", items: { type: "string" } },
-      explanation: { type: "string" },
-      recommendation: { type: "string" },
+const clauseSchema = {
+  type: "object",
+  properties: {
+    id: { type: "string" },
+    kind: {
+      type: "string",
+      enum: [
+        "benefit_detail",
+        "eligibility",
+        "limit",
+        "copay",
+        "max_reimbursement",
+        "exclusion",
+        "waiting_period",
+        "other",
+      ],
     },
-    required: ["id", "title", "coverageIds", "sourceFiles", "explanation", "recommendation"],
-    additionalProperties: false,
+    title: { type: "string" },
+    text: { type: "string" },
   },
+  required: ["id", "kind", "title", "text"],
+  additionalProperties: false,
+} as const;
+
+const coverageSchema = {
+  type: "object",
+  properties: {
+    id: { type: "string" },
+    title: { type: "string" },
+    category: { type: "string" },
+    summary: { type: "string" },
+    sourceFile: { type: "string" },
+    clauses: {
+      type: "array",
+      items: clauseSchema,
+    },
+  },
+  required: ["id", "title", "category", "summary", "sourceFile", "clauses"],
+  additionalProperties: false,
+} as const;
+
+const policySchema = {
+  type: "object",
+  properties: {
+    id: { type: "string" },
+    generalInfo: generalInfoSchema,
+    summary: { type: "string" },
+    sourceFiles: {
+      type: "array",
+      items: { type: "string" },
+    },
+    coverages: {
+      type: "array",
+      items: coverageSchema,
+    },
+  },
+  required: ["id", "generalInfo", "summary", "sourceFiles", "coverages"],
+  additionalProperties: false,
+} as const;
+
+const coverageOverlapGroupSchema = {
+  type: "object",
+  properties: {
+    id: { type: "string" },
+    title: { type: "string" },
+    coverageRefs: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          policyId: { type: "string" },
+          coverageId: { type: "string" },
+        },
+        required: ["policyId", "coverageId"],
+        additionalProperties: false,
+      },
+    },
+    matchedClauseIdsByCoverage: {
+      type: "object",
+      additionalProperties: {
+        type: "array",
+        items: { type: "string" },
+      },
+    },
+    explanation: { type: "string" },
+    recommendation: { type: "string" },
+  },
+  required: [
+    "id",
+    "title",
+    "coverageRefs",
+    "matchedClauseIdsByCoverage",
+    "explanation",
+    "recommendation",
+  ],
+  additionalProperties: false,
 } as const;
 
 const analysisResponseFormat = {
   type: "json_schema" as const,
   json_schema: {
-    name: "policy_analysis",
+    name: "policy_analysis_v2",
     strict: true,
     schema: {
       type: "object",
       properties: {
-        coverages: {
-          type: "array",
-          items: {
-            type: "object",
-            properties: {
-              id: { type: "string" },
-              title: { type: "string" },
-              category: { type: "string" },
-              limit: { type: "string" },
-              details: { type: "string" },
-              eligibility: { type: "string" },
-              copay: { type: "string" },
-              maxReimbursement: { type: "string" },
-              exclusions: { type: "string" },
-              waitingPeriod: { type: "string" },
-              sourceFile: { type: "string" },
-            },
-            required: ["id", "title", "category", "limit", "details", "eligibility", "copay", "maxReimbursement", "exclusions", "waitingPeriod", "sourceFile"],
-            additionalProperties: false,
-          },
-        },
-        generalInfo: generalInfoSchema,
         summary: { type: "string" },
-        duplicateCoverages: duplicateCoveragesSchema,
+        policies: {
+          type: "array",
+          items: policySchema,
+        },
+        coverageOverlapGroups: {
+          type: "array",
+          items: coverageOverlapGroupSchema,
+        },
       },
-      required: ["coverages", "generalInfo", "summary", "duplicateCoverages"],
+      required: ["summary", "policies", "coverageOverlapGroups"],
       additionalProperties: false,
     },
   },
 };
 
-async function runBatchAnalysis(sessionId: string, userId: number | null | undefined, fileList: AnalysisFile[], label: string): Promise<PolicyAnalysis> {
+async function runBatchAnalysis(
+  sessionId: string,
+  userId: number | null | undefined,
+  fileList: AnalysisFile[],
+  label: string,
+): Promise<NormalizedPolicyAnalysis> {
   const fileParts = await loadFileParts(fileList);
   if (fileParts.length === 0) {
     throw new Error(
-      "לא ניתן לקרוא את קבצי ה-PDF מהשרת. ייתכן שהקבצים נמחקו לאחר עדכון גרסה. נסה להעלות את הקבצים מחדש."
+      "לא ניתן לקרוא את קבצי ה-PDF מהשרת. ייתכן שהקבצים נמחקו לאחר עדכון גרסה. נסה להעלות את הקבצים מחדש.",
     );
   }
+
   const response = await invokeLLM({
     messages: [
       { role: "system", content: ANALYSIS_SYSTEM_PROMPT },
       {
         role: "user",
         content: [
-          { type: "text" as const, text: `נא לנתח את פוליסות הביטוח הבאות (${label}) ולהחזיר את המידע בפורמט JSON המבוקש:` },
+          {
+            type: "text" as const,
+            text: `נא לנתח את מסמכי הביטוח הבאים (${label}) ולהחזיר את המידע בפורמט JSON המבוקש.`,
+          },
           ...fileParts,
         ],
       },
@@ -373,8 +439,11 @@ async function runBatchAnalysis(sessionId: string, userId: number | null | undef
     maxTokens: 65536,
     response_format: analysisResponseFormat,
   });
+
   await logLlmUsage(sessionId, userId, response);
-  return normalizeAnalysisPremiums(parseLLMJson<PolicyAnalysis>(extractLLMContent(response)));
+  return normalizePolicyAnalysis(
+    parseLLMJson<LlmPolicyAnalysisResponse>(extractLLMContent(response)),
+  );
 }
 
 export async function analyzePolicySession(analysis: AnalysisRecord) {
@@ -383,7 +452,10 @@ export async function analyzePolicySession(analysis: AnalysisRecord) {
     throw new Error("לא נמצאו קבצים לעיבוד");
   }
 
-  const updateProgress = async (processedFileCount: number, activeBatchFileCount: number) => {
+  const updateProgress = async (
+    processedFileCount: number,
+    activeBatchFileCount: number,
+  ) => {
     if (!analysis.workerId) {
       return;
     }
@@ -393,7 +465,7 @@ export async function analyzePolicySession(analysis: AnalysisRecord) {
     });
   };
 
-  let analysisResult: PolicyAnalysis;
+  let analysisResult: NormalizedPolicyAnalysis;
 
   if (typedFiles.length <= POLICY_ANALYSIS_BATCH_SIZE) {
     try {
@@ -402,10 +474,13 @@ export async function analyzePolicySession(analysis: AnalysisRecord) {
         analysis.sessionId,
         analysis.userId,
         typedFiles,
-        `${typedFiles.length} קבצים`
+        `${typedFiles.length} קבצים`,
       );
     } catch (error: any) {
-      throw new Error(error?.message || "שגיאה בעיבוד תגובת ה-AI. התגובה לא התקבלה בפורמט תקין. נסה להעלות פחות קבצים בבת אחת.");
+      throw new Error(
+        error?.message ||
+          "שגיאה בעיבוד תגובת ה-AI. התגובה לא התקבלה בפורמט תקין. נסה להעלות פחות קבצים בבת אחת.",
+      );
     }
   } else {
     const batches: AnalysisFile[][] = [];
@@ -413,7 +488,7 @@ export async function analyzePolicySession(analysis: AnalysisRecord) {
       batches.push(typedFiles.slice(i, i + POLICY_ANALYSIS_BATCH_SIZE));
     }
 
-    const batchResults: PolicyAnalysis[] = [];
+    const batchResults: NormalizedPolicyAnalysis[] = [];
     for (let batchIdx = 0; batchIdx < batches.length; batchIdx += 1) {
       const processedFileCount = batchIdx * POLICY_ANALYSIS_BATCH_SIZE;
       await updateProgress(processedFileCount, batches[batchIdx].length);
@@ -421,94 +496,13 @@ export async function analyzePolicySession(analysis: AnalysisRecord) {
         analysis.sessionId,
         analysis.userId,
         batches[batchIdx],
-        `${batches[batchIdx].length} קבצים, קבוצה ${batchIdx + 1} מתוך ${batches.length}`
+        `${batches[batchIdx].length} קבצים, קבוצה ${batchIdx + 1} מתוך ${batches.length}`,
       );
-      batchResult.coverages = batchResult.coverages.map((coverage) => ({
-        ...coverage,
-        id: `b${batchIdx}-${coverage.id}`,
-      }));
-      if (batchResult.duplicateCoverages) {
-        batchResult.duplicateCoverages = batchResult.duplicateCoverages.map((duplicate) => ({
-          ...duplicate,
-          id: `b${batchIdx}-${duplicate.id}`,
-          coverageIds: duplicate.coverageIds.map((coverageId) => `b${batchIdx}-${coverageId}`),
-        }));
-      }
       batchResults.push(batchResult);
     }
 
     await updateProgress(typedFiles.length, 0);
-
-    const allCoverages = batchResults.flatMap((result) => result.coverages);
-    const withinBatchDuplicates = batchResults.flatMap((result) => result.duplicateCoverages || []);
-    const coverageSummary = allCoverages.map((coverage) => ({
-      id: coverage.id,
-      title: coverage.title,
-      category: coverage.category,
-      sourceFile: coverage.sourceFile,
-      copay: coverage.copay,
-      limit: coverage.limit,
-    }));
-    const batchGeneralInfos = batchResults.map((result, index) => ({ batch: index, ...result.generalInfo }));
-    const batchSummariesText = batchResults.map((result, index) => `קבוצה ${index + 1}: ${result.summary}`).join("\n");
-
-    try {
-      const mergeResponse = await invokeLLM({
-        messages: [
-          { role: "system", content: BATCH_MERGE_PROMPT },
-          {
-            role: "user",
-            content: `מידע כללי מכל הקבוצות:\n${JSON.stringify(batchGeneralInfos, null, 2)}\n\nסיכומי הקבוצות:\n${batchSummariesText}\n\nכל הכיסויים (תקציר):\n${JSON.stringify(coverageSummary, null, 2)}\n\nכיסויים כפולים שזוהו בתוך קבוצות:\n${JSON.stringify(withinBatchDuplicates, null, 2)}`,
-          },
-        ],
-        maxTokens: 16384,
-        response_format: {
-          type: "json_schema" as const,
-          json_schema: {
-            name: "batch_merge",
-            strict: true,
-            schema: {
-              type: "object",
-              properties: {
-                generalInfo: generalInfoSchema,
-                summary: { type: "string" },
-                duplicateCoverages: duplicateCoveragesSchema,
-              },
-              required: ["generalInfo", "summary", "duplicateCoverages"],
-              additionalProperties: false,
-            },
-          },
-        },
-      });
-      await logLlmUsage(analysis.sessionId, analysis.userId, mergeResponse);
-      const merged = parseLLMJson<{
-        generalInfo: PolicyAnalysis["generalInfo"];
-        summary: string;
-        duplicateCoverages: NonNullable<PolicyAnalysis["duplicateCoverages"]>;
-      }>(extractLLMContent(mergeResponse));
-      const allDuplicates = [...withinBatchDuplicates, ...(merged.duplicateCoverages || [])];
-      const seenIds = new Set<string>();
-      const uniqueDuplicates = allDuplicates.filter((duplicate) => {
-        if (seenIds.has(duplicate.id)) {
-          return false;
-        }
-        seenIds.add(duplicate.id);
-        return true;
-      });
-      analysisResult = normalizeAnalysisPremiums({
-        coverages: allCoverages,
-        generalInfo: normalizePremiumGeneralInfo(merged.generalInfo),
-        summary: merged.summary,
-        duplicateCoverages: uniqueDuplicates,
-      });
-    } catch {
-      analysisResult = normalizeAnalysisPremiums({
-        coverages: allCoverages,
-        generalInfo: batchResults[0].generalInfo,
-        summary: batchSummariesText,
-        duplicateCoverages: withinBatchDuplicates,
-      });
-    }
+    analysisResult = mergeNormalizedPolicyAnalyses(batchResults);
   }
 
   const userProfile = analysis.userId ? await getUserProfile(analysis.userId) : null;
@@ -520,7 +514,7 @@ export async function analyzePolicySession(analysis: AnalysisRecord) {
           { role: "system", content: PERSONALIZED_INSIGHTS_PROMPT },
           {
             role: "user",
-            content: `פרופיל הלקוח:\n${profileText}\n\nניתוח הפוליסה:\n${JSON.stringify(analysisResult, null, 2)}`,
+            content: `פרופיל הלקוח:\n${profileText}\n\nניתוח הפוליסות:\n${JSON.stringify(analysisResult, null, 2)}`,
           },
         ],
         response_format: {
@@ -537,13 +531,26 @@ export async function analyzePolicySession(analysis: AnalysisRecord) {
                     type: "object",
                     properties: {
                       id: { type: "string" },
-                      type: { type: "string", enum: ["warning", "recommendation", "positive"] },
+                      type: {
+                        type: "string",
+                        enum: ["warning", "recommendation", "positive"],
+                      },
                       title: { type: "string" },
                       description: { type: "string" },
                       relevantCoverage: { type: "string" },
-                      priority: { type: "string", enum: ["high", "medium", "low"] },
+                      priority: {
+                        type: "string",
+                        enum: ["high", "medium", "low"],
+                      },
                     },
-                    required: ["id", "type", "title", "description", "relevantCoverage", "priority"],
+                    required: [
+                      "id",
+                      "type",
+                      "title",
+                      "description",
+                      "relevantCoverage",
+                      "priority",
+                    ],
                     additionalProperties: false,
                   },
                 },
@@ -554,10 +561,16 @@ export async function analyzePolicySession(analysis: AnalysisRecord) {
           },
         },
       });
-      const parsed = parseLLMJson<{ personalizedInsights?: PolicyAnalysis["personalizedInsights"] }>(extractLLMContent(insightsResponse));
-      analysisResult.personalizedInsights = parsed.personalizedInsights;
+      const parsed = parseLLMJson<{
+        personalizedInsights?: PolicyAnalysis["personalizedInsights"];
+      }>(extractLLMContent(insightsResponse));
+      analysisResult = normalizePolicyAnalysis({
+        ...analysisResult,
+        personalizedInsights: parsed.personalizedInsights ?? [],
+      });
       await logLlmUsage(analysis.sessionId, analysis.userId, insightsResponse);
     } catch {
+      // Keep the main analysis even if the personalized insight pass fails.
     }
   }
 

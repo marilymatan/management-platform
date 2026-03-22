@@ -198,8 +198,8 @@ export default function Insurance() {
       value: overview.totalMonthlyPremium > 0 ? formatInsuranceCurrency(overview.totalMonthlyPremium) : "—",
       detail:
         overview.duplicateGroups > 0
-          ? `${overview.duplicateGroups} קבוצות של כפילויות זוהו`
-          : "לא זוהו כרגע כפילויות בולטות",
+          ? `${overview.duplicateGroups} חפיפות זוהו ודורשות בדיקה`
+          : "לא זוהו כרגע חפיפות בולטות",
       icon: Wallet,
     },
     {
@@ -239,8 +239,8 @@ export default function Insurance() {
     overview.duplicateGroups > 0
       ? {
           id: "duplicates",
-          title: "כפילויות שכדאי לבדוק",
-          description: `זוהו ${overview.duplicateGroups} קבוצות של כיסויים כפולים בין הפוליסות.`,
+          title: "חפיפות שכדאי לבדוק",
+          description: `זוהו ${overview.duplicateGroups} חפיפות בין כיסויים או פוליסות.`,
         }
       : null,
     relevantMissingCategories.length > 0
@@ -424,7 +424,7 @@ export default function Insurance() {
                   חלוקת הפוליסות לפי קטגוריה
                 </h2>
                 <p className="text-sm leading-relaxed text-muted-foreground">
-                  כל כרטיס מרכז את מספר הפוליסות, הפרמיה החודשית, החידושים והכפילויות בכל שכבה.
+                  כל כרטיס מרכז את מספר הפוליסות, הפרמיה החודשית, החידושים והחפיפות בכל שכבה.
                 </p>
               </div>
               <Badge variant="outline" className="rounded-full">
@@ -453,7 +453,7 @@ export default function Insurance() {
                     value: stats.nextRenewalDays !== null ? `${stats.nextRenewalDays} ימים` : "—",
                   },
                   {
-                    label: "כפילויות",
+                    label: "חפיפות",
                     value: duplicateCount > 0 ? `${duplicateCount}` : "—",
                   },
                 ];

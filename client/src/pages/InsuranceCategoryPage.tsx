@@ -158,8 +158,8 @@ export default function InsuranceCategoryPage() {
     ...(categoryPolicies.some((policy) => policy.duplicateCount > 0)
       ? [{
           id: "duplicates",
-          title: "יש כפילויות שכדאי לפתוח",
-          description: "זוהו כפילויות בכיסוי לפחות באחת הפוליסות בקטגוריה הזאת.",
+          title: "יש חפיפות שכדאי לפתוח",
+          description: "זוהו חפיפות כיסוי או פוליסה לפחות באחת הפוליסות בקטגוריה הזאת.",
         }]
       : []),
     ...categoryPolicies
@@ -445,7 +445,7 @@ export default function InsuranceCategoryPage() {
                           <span>{policy.insurerName}</span>
                           <span>{policy.coverageCount} כיסויים</span>
                           <span>{policy.filesCount} קבצים</span>
-                          {policy.duplicateCount > 0 && <span>{policy.duplicateCount} כפילויות</span>}
+                          {policy.duplicateCount > 0 && <span>{policy.duplicateCount} חפיפות</span>}
                           <span>{format(new Date(matchingAnalysis.createdAt), "dd.MM.yy", { locale: he })}</span>
                         </div>
                       </div>

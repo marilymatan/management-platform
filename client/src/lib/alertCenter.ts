@@ -18,6 +18,8 @@ type AnalysisLike = {
       insuranceCategory?: InsuranceCategory | null;
     } | null;
     duplicateCoverages?: unknown[] | null;
+    coverageOverlapGroups?: unknown[] | null;
+    policyOverlapGroups?: unknown[] | null;
     personalizedInsights?: Array<{
       title: string;
       description: string;
@@ -256,7 +258,12 @@ export function buildAlertCenterSnapshot({
     const contextLabel = createCategoryContextLabel(category);
     const createdAtMs = toTimestamp(analysis.createdAt);
     const actionPath = `/insurance/${analysis.sessionId}`;
-    const duplicateCount = analysis.analysisResult?.duplicateCoverages?.length ?? 0;
+    const coverageOverlapCount =
+      analysis.analysisResult?.coverageOverlapGroups?.length ??
+      analysis.analysisResult?.duplicateCoverages?.length ??
+      0;
+    const policyOverlapCount = analysis.analysisResult?.policyOverlapGroups?.length ?? 0;
+    const duplicateCount = coverageOverlapCount + policyOverlapCount;
     const renewalDate = parseInsuranceDate(analysis.analysisResult?.generalInfo?.endDate);
 
     if (renewalDate) {
@@ -289,7 +296,10 @@ export function buildAlertCenterSnapshot({
         sourceLabel: "סריקת פוליסה",
         badgeLabel: "חפיפה",
         title: `זוהו חפיפות ב-${policyName}`,
-        description: `לומי מצא ${duplicateCount} חפיפות אפשריות בתוך הסריקה הזאת שכדאי לבדוק כדי לא לשלם פעמיים.`,
+        description:
+          policyOverlapCount > 0
+            ? `לומי מצא ${coverageOverlapCount} חפיפות כיסוי ו-${policyOverlapCount} חפיפות פוליסה שכדאי לבדוק.`
+            : `לומי מצא ${coverageOverlapCount} חפיפות כיסוי אפשריות בתוך הסריקה הזאת שכדאי לבדוק כדי לא לשלם פעמיים.`,
         actionLabel: "לסריקה",
         actionPath,
         createdAtMs,

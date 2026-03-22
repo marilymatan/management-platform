@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { normalizePolicyAnalysis } from "@shared/insurance";
 import {
   buildActionItemsDraft,
   buildInsuranceScoreSnapshot,
@@ -283,6 +284,183 @@ describe("insuranceHub", () => {
     expect(actions.some((action) => action.type === "monitoring")).toBe(true);
     expect(actions[0].priority).toBe("high");
     expect(actions.find((action) => action.type === "monitoring")?.potentialSaving).toBe(75);
+  });
+
+  it("buildSavingsReportDraft estimates coverage and policy overlap savings deterministically", () => {
+    const overlapAnalysis = {
+      sessionId: "health-overlap",
+      status: "completed" as const,
+      createdAt: new Date("2026-03-12T10:00:00.000Z"),
+      insuranceCategory: "health" as const,
+      files: [{ name: "health-overlap.pdf", fileKey: "policies/health-overlap.pdf" }],
+      analysisResult: normalizePolicyAnalysis({
+        summary: "שתי פוליסות בריאות עם חפיפה רחבה.",
+        policies: [
+          {
+            id: "policy-a",
+            summary: "פוליסה א",
+            sourceFiles: ["a.pdf"],
+            generalInfo: {
+              policyName: "בריאות א",
+              insurerName: "הראל",
+              policyNumber: "PA-1",
+              policyType: "ביטוח בריאות",
+              insuranceCategory: "health",
+              premiumPaymentPeriod: "monthly",
+              monthlyPremium: "100",
+              annualPremium: "1200",
+              startDate: "01/01/2026",
+              endDate: "31/12/2026",
+              importantNotes: [],
+              fineprint: [],
+            },
+            coverages: [
+              {
+                id: "a-1",
+                policyId: "policy-a",
+                title: "אמבולטורי",
+                category: "בריאות",
+                summary: "כיסוי אמבולטורי א",
+                sourceFile: "a.pdf",
+                clauses: [
+                  {
+                    id: "a-1-clause",
+                    coverageId: "a-1",
+                    kind: "benefit_detail",
+                    title: "פירוט הכיסוי",
+                    text: "כיסוי אמבולטורי א",
+                  },
+                ],
+              },
+              {
+                id: "a-2",
+                policyId: "policy-a",
+                title: "ניתוחים פרטיים",
+                category: "ניתוח",
+                summary: "כיסוי ניתוחים א",
+                sourceFile: "a.pdf",
+                clauses: [
+                  {
+                    id: "a-2-clause",
+                    coverageId: "a-2",
+                    kind: "benefit_detail",
+                    title: "פירוט הכיסוי",
+                    text: "כיסוי ניתוחים א",
+                  },
+                ],
+              },
+            ],
+          },
+          {
+            id: "policy-b",
+            summary: "פוליסה ב",
+            sourceFiles: ["b.pdf"],
+            generalInfo: {
+              policyName: "בריאות ב",
+              insurerName: "מגדל",
+              policyNumber: "PB-1",
+              policyType: "ביטוח בריאות",
+              insuranceCategory: "health",
+              premiumPaymentPeriod: "monthly",
+              monthlyPremium: "180",
+              annualPremium: "2160",
+              startDate: "01/01/2026",
+              endDate: "31/12/2026",
+              importantNotes: [],
+              fineprint: [],
+            },
+            coverages: [
+              {
+                id: "b-1",
+                policyId: "policy-b",
+                title: "אמבולטורי",
+                category: "בריאות",
+                summary: "כיסוי אמבולטורי ב",
+                sourceFile: "b.pdf",
+                clauses: [
+                  {
+                    id: "b-1-clause",
+                    coverageId: "b-1",
+                    kind: "benefit_detail",
+                    title: "פירוט הכיסוי",
+                    text: "כיסוי אמבולטורי ב",
+                  },
+                ],
+              },
+              {
+                id: "b-2",
+                policyId: "policy-b",
+                title: "ניתוחים פרטיים",
+                category: "ניתוח",
+                summary: "כיסוי ניתוחים ב",
+                sourceFile: "b.pdf",
+                clauses: [
+                  {
+                    id: "b-2-clause",
+                    coverageId: "b-2",
+                    kind: "benefit_detail",
+                    title: "פירוט הכיסוי",
+                    text: "כיסוי ניתוחים ב",
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        coverageOverlapGroups: [
+          {
+            id: "overlap-1",
+            title: "אמבולטורי",
+            coverageRefs: [
+              { policyId: "policy-a", coverageId: "a-1" },
+              { policyId: "policy-b", coverageId: "b-1" },
+            ],
+            matchedClauseIdsByCoverage: {
+              "a-1": ["a-1-clause"],
+              "b-1": ["b-1-clause"],
+            },
+            explanation: "כיסוי אמבולטורי חופף.",
+            recommendation: "כדאי להשוות.",
+          },
+          {
+            id: "overlap-2",
+            title: "ניתוחים פרטיים",
+            coverageRefs: [
+              { policyId: "policy-a", coverageId: "a-2" },
+              { policyId: "policy-b", coverageId: "b-2" },
+            ],
+            matchedClauseIdsByCoverage: {
+              "a-2": ["a-2-clause"],
+              "b-2": ["b-2-clause"],
+            },
+            explanation: "כיסוי ניתוחים חופף.",
+            recommendation: "כדאי להשוות.",
+          },
+        ],
+      }),
+    };
+
+    const report = buildSavingsReportDraft({
+      analyses: [overlapAnalysis],
+      profile: {
+        maritalStatus: "married",
+        numberOfChildren: 2,
+        ownsApartment: false,
+        hasActiveMortgage: false,
+        numberOfVehicles: 0,
+      },
+    });
+
+    const coverageOverlapOpportunities = report.opportunities.filter((opportunity) =>
+      opportunity.title.startsWith("חפיפת כיסוי ב-")
+    );
+    const policyOverlapOpportunity = report.opportunities.find(
+      (opportunity) => opportunity.title === "פוליסה שנראית חופפת ברובה"
+    );
+
+    expect(coverageOverlapOpportunities).toHaveLength(2);
+    expect(coverageOverlapOpportunities.every((opportunity) => opportunity.monthlySaving === 50)).toBe(true);
+    expect(policyOverlapOpportunity?.monthlySaving).toBe(100);
   });
 
   it("buildMonthlyReportDraft explains when there is not enough history", () => {

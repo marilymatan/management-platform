@@ -23,7 +23,7 @@ import {
   type InsertCategorySummaryCache,
 } from "../drizzle/schema";
 import { ENV } from "./_core/env";
-import type { PolicyAnalysis } from "@shared/insurance";
+import { normalizePolicyAnalysis, type PolicyAnalysis } from "@shared/insurance";
 import {
   encryptField,
   decryptField,
@@ -232,9 +232,9 @@ function decryptAnalysisData(row: any): any {
     decrypted.analysisResult !== undefined &&
     decrypted.analysisResult !== null
   ) {
-    decrypted.analysisResult = decodeAnalysisJsonCompat(
-      decrypted.analysisResult
-    );
+    const parsed = decodeAnalysisJsonCompat(decrypted.analysisResult);
+    decrypted.analysisResult =
+      parsed == null ? null : normalizePolicyAnalysis(parsed);
   }
   if (decrypted.errorMessage && typeof decrypted.errorMessage === "string") {
     decrypted.errorMessage = decryptField(decrypted.errorMessage);
@@ -383,7 +383,7 @@ export async function updateAnalysisStatus(
     updateData.analysisResult =
       data.analysisResult == null
         ? null
-        : serializeAnalysisJsonCompat(data.analysisResult);
+        : serializeAnalysisJsonCompat(normalizePolicyAnalysis(data.analysisResult));
   }
   if (data?.errorMessage !== undefined) {
     updateData.errorMessage =

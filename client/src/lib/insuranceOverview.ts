@@ -11,6 +11,7 @@ type AnalysisLike = {
   files?: unknown[];
   insuranceCategory?: InsuranceCategory | null;
   analysisResult?: {
+    analysisVersion?: number;
     generalInfo?: {
       policyName?: string;
       insurerName?: string;
@@ -23,6 +24,8 @@ type AnalysisLike = {
     };
     coverages?: unknown[];
     duplicateCoverages?: Array<unknown>;
+    coverageOverlapGroups?: Array<unknown>;
+    policyOverlapGroups?: Array<unknown>;
     personalizedInsights?: Array<{
       title: string;
       description: string;
@@ -68,6 +71,8 @@ export type InsuranceHubPolicy = {
   coverageCount: number;
   summary: string;
   duplicateCount: number;
+  coverageOverlapCount: number;
+  policyOverlapCount: number;
   personalizedInsights: Array<{
     title: string;
     description: string;
@@ -96,6 +101,8 @@ export type InsuranceHubOverview = {
   totalMonthlyPremium: number;
   renewals: InsuranceHubPolicy[];
   duplicateGroups: number;
+  coverageOverlapGroups: number;
+  policyOverlapGroups: number;
   categorySummaries: Record<InsuranceCategory, InsuranceHubCategorySummary>;
   insights: InsuranceHubInsight[];
   coverageGaps: InsuranceHubInsight[];
@@ -285,7 +292,15 @@ export function buildInsuranceOverview(analyses: AnalysisLike[] | undefined, pro
         daysUntilRenewal,
         coverageCount: analysis.analysisResult?.coverages?.length ?? 0,
         summary: analysis.analysisResult?.summary || "אין סיכום זמין",
-        duplicateCount: analysis.analysisResult?.duplicateCoverages?.length ?? 0,
+        duplicateCount:
+          (analysis.analysisResult?.coverageOverlapGroups?.length ?? 0) +
+          (analysis.analysisResult?.policyOverlapGroups?.length ?? 0) ||
+          (analysis.analysisResult?.duplicateCoverages?.length ?? 0),
+        coverageOverlapCount:
+          analysis.analysisResult?.coverageOverlapGroups?.length ??
+          analysis.analysisResult?.duplicateCoverages?.length ??
+          0,
+        policyOverlapCount: analysis.analysisResult?.policyOverlapGroups?.length ?? 0,
         personalizedInsights: analysis.analysisResult?.personalizedInsights ?? [],
         filesCount: analysis.files?.length ?? 0,
       } satisfies InsuranceHubPolicy;
@@ -296,7 +311,15 @@ export function buildInsuranceOverview(analyses: AnalysisLike[] | undefined, pro
   const renewals = completedPolicies
     .filter((policy) => policy.daysUntilRenewal !== null && policy.daysUntilRenewal >= 0 && policy.daysUntilRenewal <= 90)
     .sort((a, b) => (a.daysUntilRenewal ?? 999) - (b.daysUntilRenewal ?? 999));
-  const duplicateGroups = completedPolicies.reduce((sum, policy) => sum + policy.duplicateCount, 0);
+  const coverageOverlapGroups = completedPolicies.reduce(
+    (sum, policy) => sum + policy.coverageOverlapCount,
+    0,
+  );
+  const policyOverlapGroups = completedPolicies.reduce(
+    (sum, policy) => sum + policy.policyOverlapCount,
+    0,
+  );
+  const duplicateGroups = coverageOverlapGroups + policyOverlapGroups;
 
   const categorySummaries = (["health", "life", "car", "home"] as InsuranceCategory[]).reduce(
     (acc, category) => {
@@ -406,8 +429,11 @@ export function buildInsuranceOverview(analyses: AnalysisLike[] | undefined, pro
     ...(duplicateGroups > 0
       ? [{
           id: "duplicates",
-          title: "זוהו חפיפות בין כיסויים",
-          description: `לומי זיהה ${duplicateGroups} קבוצות של כיסויים כפולים שכדאי לבדוק.`,
+          title: policyOverlapGroups > 0 ? "זוהו חפיפות בכיסויים ובפוליסות" : "זוהו חפיפות בין כיסויים",
+          description:
+            policyOverlapGroups > 0
+              ? `לומי זיהה ${coverageOverlapGroups} חפיפות כיסוי ו-${policyOverlapGroups} חפיפות פוליסה שכדאי לבדוק.`
+              : `לומי זיהה ${coverageOverlapGroups} חפיפות כיסוי שכדאי לבדוק.`,
           tone: "warning" as InsuranceInsightTone,
         }]
       : []),
@@ -433,6 +459,8 @@ export function buildInsuranceOverview(analyses: AnalysisLike[] | undefined, pro
     totalMonthlyPremium,
     renewals,
     duplicateGroups,
+    coverageOverlapGroups,
+    policyOverlapGroups,
     categorySummaries,
     insights,
     coverageGaps,

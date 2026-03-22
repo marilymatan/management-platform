@@ -1,5 +1,12 @@
 import crypto from "crypto";
-import type { InsuranceCategory, PolicyAnalysis } from "@shared/insurance";
+import {
+  normalizePolicyAnalysis,
+  type CoverageOverlapGroup,
+  type GeneralInfo,
+  type InsuranceCategory,
+  type PolicyAnalysis,
+  type PolicyOverlapGroup,
+} from "@shared/insurance";
 import {
   buildInsuranceOverview,
   formatInsuranceCurrency,
@@ -203,7 +210,13 @@ function normalizeProfile(profile?: InsuranceHubProfile | null) {
 }
 
 function getPolicyMonthlyPremium(analysis: InsuranceHubAnalysis) {
-  const info = analysis.analysisResult?.generalInfo;
+  const info = analysis.analysisResult
+    ? normalizePolicyAnalysis(analysis.analysisResult).generalInfo
+    : null;
+  return getMonthlyPremiumFromGeneralInfo(info);
+}
+
+function getMonthlyPremiumFromGeneralInfo(info?: Partial<GeneralInfo> | null) {
   const monthlyPremium = parseInsuranceMoneyValue(info?.monthlyPremium);
   const annualPremium = parseInsuranceMoneyValue(info?.annualPremium);
   if (info?.premiumPaymentPeriod === "annual" && annualPremium > 0) {
@@ -218,8 +231,64 @@ function getPolicyMonthlyPremium(analysis: InsuranceHubAnalysis) {
   return 0;
 }
 
+function estimateCoverageOverlapMonthlySaving(
+  analysis: InsuranceHubAnalysis,
+  overlapGroup: CoverageOverlapGroup,
+) {
+  const policies = analysis.analysisResult
+    ? normalizePolicyAnalysis(analysis.analysisResult).policies
+    : [];
+  const policyById = new Map(policies.map((policy) => [policy.id, policy]));
+  const matchedCountsByPolicy = new Map<string, number>();
+
+  overlapGroup.coverageRefs.forEach((ref) => {
+    matchedCountsByPolicy.set(ref.policyId, (matchedCountsByPolicy.get(ref.policyId) ?? 0) + 1);
+  });
+
+  const candidates = Array.from(matchedCountsByPolicy.entries())
+    .map(([policyId, matchedCoveragesInPolicy]) => {
+      const policy = policyById.get(policyId);
+      if (!policy || policy.coverages.length === 0) {
+        return 0;
+      }
+      const policyMonthlyPremium = getMonthlyPremiumFromGeneralInfo(policy.generalInfo);
+      if (policyMonthlyPremium <= 0) {
+        return 0;
+      }
+      return policyMonthlyPremium * (matchedCoveragesInPolicy / policy.coverages.length);
+    })
+    .filter((value) => value > 0);
+
+  if (candidates.length === 0) {
+    return 0;
+  }
+  return Math.round(Math.min(...candidates));
+}
+
+function estimatePolicyOverlapMonthlySaving(
+  analysis: InsuranceHubAnalysis,
+  policyOverlapGroup: PolicyOverlapGroup,
+) {
+  const policies = analysis.analysisResult
+    ? normalizePolicyAnalysis(analysis.analysisResult).policies
+    : [];
+  const policyById = new Map(policies.map((policy) => [policy.id, policy]));
+  const policyPremiums = policyOverlapGroup.policyIds
+    .map((policyId) => getMonthlyPremiumFromGeneralInfo(policyById.get(policyId)?.generalInfo))
+    .filter((value) => value > 0);
+
+  if (policyPremiums.length === 0) {
+    return 0;
+  }
+
+  const smallerPolicyMonthlyPremium = Math.min(...policyPremiums);
+  return Math.round(smallerPolicyMonthlyPremium * policyOverlapGroup.overlapRatio);
+}
+
 function getPolicyProvider(analysis: InsuranceHubAnalysis) {
-  return analysis.analysisResult?.generalInfo?.insurerName?.trim() || "";
+  return analysis.analysisResult
+    ? normalizePolicyAnalysis(analysis.analysisResult).generalInfo.insurerName?.trim() || ""
+    : "";
 }
 
 function getRelevantFamilyCellCount(coverageSnapshot: ReturnType<typeof buildFamilyCoverageSnapshot>) {
@@ -248,25 +317,49 @@ export function buildSavingsReportDraft(params: {
   params.analyses
     .filter((analysis) => analysis.status === "completed" && analysis.analysisResult)
     .forEach((analysis) => {
-      const policyName = analysis.analysisResult?.generalInfo?.policyName || "פוליסה";
+      const normalizedAnalysis = normalizePolicyAnalysis(analysis.analysisResult);
+      const policyName = normalizedAnalysis.generalInfo.policyName || "פוליסה";
       const provider = getPolicyProvider(analysis) || "חברת הביטוח";
-      const monthlyPremium = getPolicyMonthlyPremium(analysis);
-      (analysis.analysisResult?.duplicateCoverages ?? []).forEach((duplicate, index) => {
-        const monthlySaving = monthlyPremium > 0 ? Math.max(35, Math.round(monthlyPremium * 0.18)) : 75;
+      (normalizedAnalysis.coverageOverlapGroups ?? []).forEach((overlapGroup, index) => {
+        const monthlySaving = estimateCoverageOverlapMonthlySaving(analysis, overlapGroup);
         const annualSaving = monthlySaving * 12;
-        const opportunityKey = `duplicate-${analysis.sessionId}-${index + 1}`;
+        const opportunityKey = normalizedAnalysis.requiresReanalysis
+          ? `duplicate-${analysis.sessionId}-${index + 1}`
+          : `coverage-overlap-${analysis.sessionId}-${overlapGroup.id}`;
         opportunities.push({
           opportunityKey,
           type: "duplicate",
-          title: `ייתכן כפל כיסוי ב-${duplicate.title}`,
-          description: `${duplicate.explanation} בפוליסה ${policyName} של ${provider}.`,
+          title: `חפיפת כיסוי ב-${overlapGroup.title}`,
+          description: `${overlapGroup.explanation} במסמכים של ${policyName} אצל ${provider}.`,
+          monthlySaving,
+          annualSaving,
+          priority: monthlySaving > 0 ? "high" : "medium",
+          actionSteps: [
+            `לפתוח את ${policyName} ולבדוק את כיסוי ${overlapGroup.title}.`,
+            "להשוות מול שאר הפוליסות מאותה קטגוריה בתיק.",
+            "להחליט אם לצמצם, לאחד או להשאיר את החפיפה ברמת הכיסוי.",
+          ],
+          relatedSessionIds: [analysis.sessionId],
+          status: params.previousStatuses?.[opportunityKey] ?? "open",
+        });
+      });
+
+      (normalizedAnalysis.policyOverlapGroups ?? []).forEach((overlapGroup) => {
+        const monthlySaving = estimatePolicyOverlapMonthlySaving(analysis, overlapGroup);
+        const annualSaving = monthlySaving * 12;
+        const opportunityKey = `policy-overlap-${analysis.sessionId}-${overlapGroup.id}`;
+        opportunities.push({
+          opportunityKey,
+          type: "duplicate",
+          title: "פוליסה שנראית חופפת ברובה",
+          description: overlapGroup.explanation,
           monthlySaving,
           annualSaving,
           priority: "high",
           actionSteps: [
-            `לפתוח את ${policyName} ולבדוק את כיסוי ${duplicate.title}.`,
-            "להשוות מול שאר הפוליסות מאותה קטגוריה בתיק.",
-            "להחליט אם לצמצם, לאחד או לבטל כיסוי כפול.",
+            "לפתוח את שתי הפוליסות החופפות ולהשוות ביניהן ברמת הכיסויים.",
+            "לוודא אם באמת צריך שתי פוליסות פעילות או שאפשר לאחד את ההגנות.",
+            "להחליט על צמצום או השארה של הפוליסה רק אחרי בדיקה מלאה.",
           ],
           relatedSessionIds: [analysis.sessionId],
           status: params.previousStatuses?.[opportunityKey] ?? "open",
@@ -648,50 +741,75 @@ export function buildManualPolicyAnalysis(params: {
   coveredMembers?: string[];
 }) {
   const categoryLabel = insuranceCategoryLabels[params.category];
-  const premium = params.monthlyPremium && params.monthlyPremium > 0
-    ? formatInsuranceCurrency(params.monthlyPremium)
-    : "לא צוין";
+  const premium =
+    params.monthlyPremium && params.monthlyPremium > 0
+      ? formatInsuranceCurrency(params.monthlyPremium)
+      : "לא צוין";
   const coveredMembersText = (params.coveredMembers ?? []).filter(Boolean);
 
-  return {
-    generalInfo: {
-      policyName: `${categoryLabel} ידני`,
-      insurerName: params.company,
-      policyNumber: "manual-entry",
-      policyType: params.category,
-      insuranceCategory: params.category,
-      premiumPaymentPeriod: params.monthlyPremium && params.monthlyPremium > 0 ? "monthly" : "unknown",
-      monthlyPremium: premium,
-      annualPremium: params.monthlyPremium && params.monthlyPremium > 0 ? formatInsuranceCurrency(params.monthlyPremium * 12) : "לא צוין",
-      startDate: params.startDate || "לא צוין",
-      endDate: params.endDate || "לא צוין",
-      importantNotes: coveredMembersText.length > 0 ? [`כיסוי מדווח עבור: ${coveredMembersText.join(", ")}`] : [],
-      fineprint: ["פוליסה זו הוזנה ידנית ולכן כדאי להשלים מסמך מלא בהמשך."],
-    },
+  return normalizePolicyAnalysis({
     summary: `פוליסה ידנית בקטגוריית ${categoryLabel} אצל ${params.company}.`,
-    coverages: [
+    policies: [
       {
-        id: "manual-coverage",
-        title: categoryLabel,
-        category: categoryLabel,
-        limit: "לא צוין",
-        details: "הוזן ידנית על ידי המשתמש",
-        eligibility: coveredMembersText.length > 0 ? coveredMembersText.join(", ") : "לא צוין",
-        copay: "לא צוין",
-        maxReimbursement: "לא צוין",
-        exclusions: "לא צוין",
-        waitingPeriod: "לא צוין",
+        id: `manual-policy-${params.category}`,
+        generalInfo: {
+          policyName: `${categoryLabel} ידני`,
+          insurerName: params.company,
+          policyNumber: "manual-entry",
+          policyType: params.category,
+          insuranceCategory: params.category,
+          premiumPaymentPeriod:
+            params.monthlyPremium && params.monthlyPremium > 0 ? "monthly" : "unknown",
+          monthlyPremium: premium,
+          annualPremium:
+            params.monthlyPremium && params.monthlyPremium > 0
+              ? formatInsuranceCurrency(params.monthlyPremium * 12)
+              : "לא צוין",
+          startDate: params.startDate || "לא צוין",
+          endDate: params.endDate || "לא צוין",
+          importantNotes:
+            coveredMembersText.length > 0
+              ? [`כיסוי מדווח עבור: ${coveredMembersText.join(", ")}`]
+              : [],
+          fineprint: ["פוליסה זו הוזנה ידנית ולכן כדאי להשלים מסמך מלא בהמשך."],
+        },
+        summary: `פוליסה ידנית בקטגוריית ${categoryLabel} אצל ${params.company}.`,
+        sourceFiles: [],
+        coverages: [
+          {
+            id: "manual-coverage",
+            title: categoryLabel,
+            category: categoryLabel,
+            summary: "הוזן ידנית על ידי המשתמש",
+            sourceFile: "הזנה ידנית",
+            clauses: [
+              {
+                id: "manual-clause-detail",
+                kind: "benefit_detail",
+                title: "פירוט הכיסוי",
+                text: "הוזן ידנית על ידי המשתמש",
+              },
+              {
+                id: "manual-clause-eligibility",
+                kind: "eligibility",
+                title: "תנאי זכאות",
+                text: coveredMembersText.length > 0 ? coveredMembersText.join(", ") : "לא צוין",
+              },
+            ],
+          },
+        ],
       },
     ],
-    duplicateCoverages: [],
+    coverageOverlapGroups: [],
     personalizedInsights: [
       {
         id: "manual-followup",
         type: "recommendation" as const,
         title: "כדאי להשלים מסמך מלא",
-        description: "הזנה ידנית נותנת ללומי הקשר ראשוני, אבל מסמך מלא יאפשר זיהוי מדויק יותר של כיסויים וחפיפות.",
+        description:
+          "הזנה ידנית נותנת ללומי הקשר ראשוני, אבל מסמך מלא יאפשר זיהוי מדויק יותר של כיסויים וחפיפות.",
         priority: "medium" as const,
       },
     ],
-  } satisfies PolicyAnalysis;
+  }) satisfies PolicyAnalysis;
 }

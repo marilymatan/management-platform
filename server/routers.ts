@@ -52,6 +52,8 @@ import {
 } from "./db";
 import { TRPCError } from "@trpc/server";
 import {
+  INSURANCE_ANALYSIS_VERSION,
+  INSURANCE_HUB_SCHEMA_VERSION,
   inferInsuranceCategory,
   type InsuranceCategory,
   type InsuranceCategoryLlmSummary,
@@ -238,6 +240,7 @@ const CHAT_SYSTEM_PROMPT = `אתה עוזר וירטואלי מומחה בפול
 3. ענה בעברית בשפה ברורה ומובנת.
 4. אם המשתמש שואל שאלה כללית שלא קשורה לפוליסה, הפנה אותו בנימוס לשאול שאלות על הפוליסה.
 5. כשאתה מצטט מידע מהפוליסה, ציין את הפרטים הרלוונטיים (השתתפות עצמית, מגבלות, החרגות).
+6. סעיף בתוך כיסוי הוא ראיה והסבר בלבד. אל תציע לבטל סעיף בודד, אלא לכל היותר להסביר חפיפה ברמת הכיסוי או הפוליסה.
 
 להלן המידע שחולץ מהפוליסה:
 `;
@@ -300,10 +303,18 @@ function buildCategorySummaryMetrics(analyses: any[]) {
         sum + ((analysis.analysisResult?.coverages ?? []) as unknown[]).length,
       0
     ),
-    duplicateGroups: analyses.reduce(
+    coverageOverlapGroups: analyses.reduce(
       (sum, analysis) =>
         sum +
-        ((analysis.analysisResult?.duplicateCoverages ?? []) as unknown[])
+        (((analysis.analysisResult?.coverageOverlapGroups ??
+          analysis.analysisResult?.duplicateCoverages ??
+          []) as unknown[]).length),
+      0
+    ),
+    policyOverlapGroups: analyses.reduce(
+      (sum, analysis) =>
+        sum +
+        ((analysis.analysisResult?.policyOverlapGroups ?? []) as unknown[])
           .length,
       0
     ),
@@ -355,6 +366,25 @@ function buildCategorySummaryPayload(analyses: any[]) {
       fineprint: analysis.analysisResult?.generalInfo?.fineprint ?? [],
     },
     summary: analysis.analysisResult?.summary ?? "אין סיכום זמין",
+    policies: (analysis.analysisResult?.policies ?? []).map((policy: any) => ({
+      id: policy.id,
+      generalInfo: policy.generalInfo,
+      summary: policy.summary,
+      sourceFiles: policy.sourceFiles ?? [],
+      coverages: (policy.coverages ?? []).map((coverage: any) => ({
+        id: coverage.id,
+        title: coverage.title,
+        category: coverage.category,
+        summary: coverage.summary,
+        sourceFile: coverage.sourceFile ?? "לא מצוין בפוליסה",
+        clauses: (coverage.clauses ?? []).map((clause: any) => ({
+          id: clause.id,
+          kind: clause.kind,
+          title: clause.title,
+          text: clause.text,
+        })),
+      })),
+    })),
     coverages: (analysis.analysisResult?.coverages ?? []).map(
       (coverage: any) => ({
         title: coverage.title,
@@ -369,12 +399,22 @@ function buildCategorySummaryPayload(analyses: any[]) {
         sourceFile: coverage.sourceFile ?? "לא מצוין בפוליסה",
       })
     ),
-    duplicateCoverages: (analysis.analysisResult?.duplicateCoverages ?? []).map(
-      (duplicate: any) => ({
-        title: duplicate.title,
-        explanation: duplicate.explanation,
-        recommendation: duplicate.recommendation,
-        sourceFiles: duplicate.sourceFiles ?? [],
+    coverageOverlapGroups: ((analysis.analysisResult?.coverageOverlapGroups ??
+      analysis.analysisResult?.duplicateCoverages ??
+      []) as any[]).map(
+      (overlap: any) => ({
+        title: overlap.title,
+        explanation: overlap.explanation,
+        recommendation: overlap.recommendation,
+        coverageRefs: overlap.coverageRefs ?? overlap.coverageIds ?? [],
+      })
+    ),
+    policyOverlapGroups: (analysis.analysisResult?.policyOverlapGroups ?? []).map(
+      (overlap: any) => ({
+        policyIds: overlap.policyIds ?? [],
+        overlapRatio: overlap.overlapRatio ?? 0,
+        explanation: overlap.explanation,
+        recommendation: overlap.recommendation,
       })
     ),
     personalizedInsights: (
@@ -860,6 +900,8 @@ async function buildAndSyncUserHubState(userId: number) {
   });
 
   const dataHash = buildWorkspaceDataHash({
+    hubVersion: INSURANCE_HUB_SCHEMA_VERSION,
+    analysisVersion: INSURANCE_ANALYSIS_VERSION,
     profile,
     analyses: analyses.map(analysis => ({
       sessionId: analysis.sessionId,
@@ -2071,8 +2113,13 @@ export const appRouter = router({
         const dataHash = crypto
           .createHash("sha256")
           .update(
-            categoryAnalyses
-              .map(a => `${a.sessionId}:${new Date(a.updatedAt).getTime()}`)
+            [
+              `hub:${INSURANCE_HUB_SCHEMA_VERSION}`,
+              `analysis:${INSURANCE_ANALYSIS_VERSION}`,
+              ...categoryAnalyses
+                .map(a => `${a.sessionId}:${new Date(a.updatedAt).getTime()}`)
+                .sort(),
+            ]
               .sort()
               .join("|")
           )

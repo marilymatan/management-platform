@@ -3,6 +3,7 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import { AIChatBox, type Message } from "@/components/AIChatBox";
 import { trpc } from "@/lib/trpc";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Sparkles,
   Loader2,
@@ -23,13 +24,18 @@ const systemMessage: Message = {
 export default function Assistant() {
   const { user } = useAuth({ redirectOnUnauthenticated: true });
   const [messages, setMessages] = useState<Message[]>([systemMessage]);
+  const [slowContextLoad, setSlowContextLoad] = useState(false);
   const initializedRef = useRef(false);
 
   const homeContextQuery = trpc.assistant.getHomeContext.useQuery(undefined, {
     enabled: !!user,
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
   });
   const historyQuery = trpc.assistant.getChatHistory.useQuery(undefined, {
     enabled: !!user,
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
   });
 
   const chatMutation = trpc.assistant.chat.useMutation({
@@ -49,6 +55,18 @@ export default function Assistant() {
 
   useEffect(() => {
     if (initializedRef.current) return;
+    if (homeContextQuery.isError || historyQuery.isError) {
+      initializedRef.current = true;
+      setMessages([
+        systemMessage,
+        {
+          role: "assistant",
+          content:
+            "לא הצלחתי לטעון את כל ההקשר מהשרת. אפשר לנסות שוב או לכתוב שאלה ולומי יענה לפי מה שזמין.",
+        },
+      ]);
+      return;
+    }
     if (!homeContextQuery.data || historyQuery.data === undefined) return;
 
     if (historyQuery.data.length > 0) {
@@ -64,7 +82,24 @@ export default function Assistant() {
     }
 
     initializedRef.current = true;
-  }, [homeContextQuery.data, historyQuery.data]);
+  }, [homeContextQuery.data, homeContextQuery.isError, historyQuery.data, historyQuery.isError]);
+
+  useEffect(() => {
+    if (initializedRef.current || homeContextQuery.isError || historyQuery.isError) {
+      return;
+    }
+    if (!homeContextQuery.isPending && !historyQuery.isPending) {
+      return;
+    }
+    const timer = window.setTimeout(() => setSlowContextLoad(true), 25_000);
+    return () => window.clearTimeout(timer);
+  }, [homeContextQuery.isPending, homeContextQuery.isError, historyQuery.isPending, historyQuery.isError]);
+
+  useEffect(() => {
+    if (initializedRef.current) {
+      setSlowContextLoad(false);
+    }
+  }, [homeContextQuery.data, historyQuery.data, homeContextQuery.isError, historyQuery.isError]);
 
   const handleSend = (content: string) => {
     setMessages((prev) => [...prev, { role: "user", content }]);
@@ -73,7 +108,12 @@ export default function Assistant() {
 
   if (!user) return null;
 
-  if (!initializedRef.current && (homeContextQuery.isLoading || historyQuery.isLoading)) {
+  if (
+    !initializedRef.current
+    && !homeContextQuery.isError
+    && !historyQuery.isError
+    && (homeContextQuery.isPending || historyQuery.isPending)
+  ) {
     return (
       <div className="page-container" data-testid="assistant-page">
         <div className="mx-auto flex min-h-[60vh] max-w-4xl items-center justify-center">
@@ -87,6 +127,22 @@ export default function Assistant() {
                 <Loader2 className="size-4 animate-spin text-primary" />
                 <span>אוסף פוליסות, מסמכים והיסטוריית צ׳אט</span>
               </div>
+              {slowContextLoad ? (
+                <div className="flex flex-col items-center gap-3 pt-2">
+                  <p className="text-sm text-muted-foreground">זה לוקח יותר מהרגיל. אפשר לנסות לרענן.</p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    data-testid="assistant-context-retry"
+                    onClick={() => {
+                      void Promise.all([homeContextQuery.refetch(), historyQuery.refetch()]);
+                    }}
+                  >
+                    נסה שוב
+                  </Button>
+                </div>
+              ) : null}
             </div>
           </div>
         </div>
