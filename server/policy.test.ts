@@ -1,7 +1,12 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { appRouter } from "./routers";
 import type { TrpcContext } from "./_core/context";
-import { createAnalysis, resetAnalysisForRetry, deleteInFlightAnalysesForUser } from "./db";
+import {
+  appendFilesToAnalysis,
+  createAnalysis,
+  resetAnalysisForRetry,
+  deleteInFlightAnalysesForUser,
+} from "./db";
 import { policyAnalysisWorker } from "./policyAnalysisWorker";
 
 // Mock storage
@@ -14,7 +19,12 @@ vi.mock("./storage", () => ({
     key: fileKey,
     url: `https://storage.example.com/${fileKey}?token=signed`,
   })),
-  sanitizeFilename: vi.fn().mockImplementation((name: string) => name.replace(/[^a-zA-Z0-9._-]/g, "_")),
+  storageDelete: vi.fn().mockResolvedValue(undefined),
+  sanitizeFilename: vi
+    .fn()
+    .mockImplementation((name: string) =>
+      name.replace(/[^a-zA-Z0-9._-]/g, "_")
+    ),
   verifyFileSignature: vi.fn().mockReturnValue(false),
 }));
 
@@ -27,7 +37,13 @@ vi.mock("./db", () => ({
       return {
         sessionId: "existing-session",
         userId: 1,
-        files: [{ name: "test.pdf", size: 1024, fileKey: "policies/existing-session/test.pdf" }],
+        files: [
+          {
+            name: "test.pdf",
+            size: 1024,
+            fileKey: "policies/existing-session/test.pdf",
+          },
+        ],
         status: "completed",
         createdAt: new Date("2026-03-01T08:00:00.000Z"),
         startedAt: new Date("2026-03-01T08:01:00.000Z"),
@@ -43,8 +59,8 @@ vi.mock("./db", () => ({
               limit: "3 פעמים בשנה",
               details: "ביקור אצל רופא מומחה",
               eligibility: "כל המבוטחים",
-              copay: "50 ש\"ח",
-              maxReimbursement: "500 ש\"ח",
+              copay: '50 ש"ח',
+              maxReimbursement: '500 ש"ח',
               exclusions: "אין",
               waitingPeriod: "3 חודשים",
             },
@@ -55,8 +71,8 @@ vi.mock("./db", () => ({
             policyNumber: "12345",
             policyType: "ביטוח בריאות",
             premiumPaymentPeriod: "monthly",
-            monthlyPremium: "150 ש\"ח",
-            annualPremium: "1,800 ש\"ח",
+            monthlyPremium: '150 ש"ח',
+            annualPremium: '1,800 ש"ח',
             startDate: "01/01/2025",
             endDate: "31/12/2025",
             importantNotes: ["תקופת אכשרה 3 חודשים"],
@@ -71,7 +87,13 @@ vi.mock("./db", () => ({
       return {
         sessionId: "no-analysis",
         userId: 1,
-        files: [{ name: "test.pdf", size: 1024, fileKey: "policies/no-analysis/test.pdf" }],
+        files: [
+          {
+            name: "test.pdf",
+            size: 1024,
+            fileKey: "policies/no-analysis/test.pdf",
+          },
+        ],
         status: "pending",
         createdAt: new Date("2026-03-01T08:00:00.000Z"),
         startedAt: null,
@@ -86,7 +108,13 @@ vi.mock("./db", () => ({
       return {
         sessionId: "processing-session",
         userId: 1,
-        files: [{ name: "processing.pdf", size: 1024, fileKey: "policies/processing-session/test.pdf" }],
+        files: [
+          {
+            name: "processing.pdf",
+            size: 1024,
+            fileKey: "policies/processing-session/test.pdf",
+          },
+        ],
         status: "processing",
         createdAt: new Date("2026-03-01T08:00:00.000Z"),
         startedAt: new Date("2026-03-01T08:01:00.000Z"),
@@ -101,7 +129,13 @@ vi.mock("./db", () => ({
       return {
         sessionId: "error-session",
         userId: 1,
-        files: [{ name: "error.pdf", size: 1024, fileKey: "policies/error-session/test.pdf" }],
+        files: [
+          {
+            name: "error.pdf",
+            size: 1024,
+            fileKey: "policies/error-session/test.pdf",
+          },
+        ],
         status: "error",
         createdAt: new Date("2026-03-01T08:00:00.000Z"),
         startedAt: new Date("2026-03-01T08:01:00.000Z"),
@@ -114,11 +148,25 @@ vi.mock("./db", () => ({
     }
     return null;
   }),
+  appendFilesToAnalysis: vi.fn().mockResolvedValue([
+    {
+      name: "test.pdf",
+      size: 1024,
+      fileKey: "policies/existing-session/test.pdf",
+    },
+    {
+      name: "extra.pdf",
+      size: 2048,
+      fileKey: "policies/existing-session/extra.pdf",
+    },
+  ]),
   updateAnalysisStatus: vi.fn(),
   resetAnalysisForRetry: vi.fn().mockResolvedValue(undefined),
   addChatMessage: vi.fn(),
   getChatHistory: vi.fn().mockResolvedValue([]),
-  deleteInFlightAnalysesForUser: vi.fn().mockResolvedValue({ deletedSessionIds: [] }),
+  deleteInFlightAnalysesForUser: vi
+    .fn()
+    .mockResolvedValue({ deletedSessionIds: [] }),
 }));
 
 vi.mock("./policyAnalysisWorker", () => ({
@@ -164,10 +212,13 @@ function createAuthenticatedContext(): TrpcContext {
 
 beforeEach(() => {
   vi.mocked(createAnalysis).mockClear();
+  vi.mocked(appendFilesToAnalysis).mockClear();
   vi.mocked(policyAnalysisWorker.nudge).mockClear();
   vi.mocked(resetAnalysisForRetry).mockClear();
   vi.mocked(deleteInFlightAnalysesForUser).mockClear();
-  vi.mocked(deleteInFlightAnalysesForUser).mockResolvedValue({ deletedSessionIds: [] });
+  vi.mocked(deleteInFlightAnalysesForUser).mockResolvedValue({
+    deletedSessionIds: [],
+  });
 });
 
 describe("policy.upload", () => {
@@ -177,7 +228,13 @@ describe("policy.upload", () => {
 
     await expect(
       caller.policy.upload({
-        files: [{ name: "test.pdf", size: 1024, base64: Buffer.from("test").toString("base64") }],
+        files: [
+          {
+            name: "test.pdf",
+            size: 1024,
+            base64: Buffer.from("test").toString("base64"),
+          },
+        ],
       })
     ).rejects.toThrow();
   });
@@ -217,12 +274,71 @@ describe("policy.upload", () => {
 
     const result = await caller.policy.upload({
       files: [
-        { name: "policy1.pdf", size: 1024, base64: Buffer.from("pdf1").toString("base64") },
-        { name: "policy2.pdf", size: 2048, base64: Buffer.from("pdf2").toString("base64") },
+        {
+          name: "policy1.pdf",
+          size: 1024,
+          base64: Buffer.from("pdf1").toString("base64"),
+        },
+        {
+          name: "policy2.pdf",
+          size: 2048,
+          base64: Buffer.from("pdf2").toString("base64"),
+        },
       ],
     });
 
     expect(result.files).toHaveLength(2);
+  });
+
+  it("adds files to an existing session when sessionId is provided", async () => {
+    const ctx = createAuthenticatedContext();
+    const caller = appRouter.createCaller(ctx);
+
+    const result = await caller.policy.upload({
+      sessionId: "existing-session",
+      files: [
+        {
+          name: "extra.pdf",
+          size: 2048,
+          base64: Buffer.from("extra pdf content").toString("base64"),
+        },
+      ],
+    });
+
+    expect(result.sessionId).toBe("existing-session");
+    expect(result.totalFileCount).toBe(2);
+    expect(createAnalysis).not.toHaveBeenCalled();
+    expect(appendFilesToAnalysis).toHaveBeenCalledWith(
+      "existing-session",
+      1,
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "extra.pdf",
+        }),
+      ])
+    );
+    expect(policyAnalysisWorker.nudge).toHaveBeenCalled();
+  });
+
+  it("rejects adding files while the existing session is processing", async () => {
+    const ctx = createAuthenticatedContext();
+    const caller = appRouter.createCaller(ctx);
+
+    await expect(
+      caller.policy.upload({
+        sessionId: "processing-session",
+        files: [
+          {
+            name: "extra.pdf",
+            size: 2048,
+            base64: Buffer.from("extra pdf content").toString("base64"),
+          },
+        ],
+      })
+    ).rejects.toThrow("אי אפשר להוסיף קבצים בזמן שהסריקה בעיבוד");
+
+    expect(appendFilesToAnalysis).not.toHaveBeenCalled();
+    expect(createAnalysis).not.toHaveBeenCalled();
   });
 });
 
@@ -231,7 +347,9 @@ describe("policy.analyze", () => {
     const ctx = createAuthenticatedContext();
     const caller = appRouter.createCaller(ctx);
 
-    const result = await caller.policy.analyze({ sessionId: "existing-session" });
+    const result = await caller.policy.analyze({
+      sessionId: "existing-session",
+    });
 
     expect(result.status).toBe("completed");
     expect(result.result?.generalInfo.policyName).toBe("פוליסת בריאות כללית");
@@ -286,14 +404,18 @@ describe("policy.getAnalysis", () => {
     const ctx = createAuthenticatedContext();
     const caller = appRouter.createCaller(ctx);
 
-    const result = await caller.policy.getAnalysis({ sessionId: "existing-session" });
+    const result = await caller.policy.getAnalysis({
+      sessionId: "existing-session",
+    });
 
     expect(result).not.toBeNull();
     expect(result!.sessionId).toBe("existing-session");
     expect(result!.status).toBe("completed");
     expect(result!.attemptCount).toBe(1);
     expect(result!.startedAt).toEqual(new Date("2026-03-01T08:01:00.000Z"));
-    expect(result!.lastHeartbeatAt).toEqual(new Date("2026-03-01T08:02:00.000Z"));
+    expect(result!.lastHeartbeatAt).toEqual(
+      new Date("2026-03-01T08:02:00.000Z")
+    );
     expect(result!.result).not.toBeNull();
     expect(result!.result!.coverages).toHaveLength(1);
     expect(result!.result!.coverages[0].title).toBe("ביקור רופא מומחה");
@@ -304,7 +426,9 @@ describe("policy.getAnalysis", () => {
     const ctx = createAuthenticatedContext();
     const caller = appRouter.createCaller(ctx);
 
-    const result = await caller.policy.getAnalysis({ sessionId: "non-existing" });
+    const result = await caller.policy.getAnalysis({
+      sessionId: "non-existing",
+    });
     expect(result).toBeNull();
   });
 });
@@ -319,7 +443,9 @@ describe("policy.getSecureFileUrl", () => {
       fileKey: "policies/existing-session/test.pdf",
     });
 
-    expect(result.url).toBe("https://storage.example.com/policies/existing-session/test.pdf?token=signed");
+    expect(result.url).toBe(
+      "https://storage.example.com/policies/existing-session/test.pdf?token=signed"
+    );
   });
 });
 
@@ -328,7 +454,9 @@ describe("policy.getChatHistory", () => {
     const ctx = createAuthenticatedContext();
     const caller = appRouter.createCaller(ctx);
 
-    const result = await caller.policy.getChatHistory({ sessionId: "existing-session" });
+    const result = await caller.policy.getChatHistory({
+      sessionId: "existing-session",
+    });
     expect(result).toEqual([]);
   });
 });

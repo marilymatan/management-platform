@@ -7,11 +7,18 @@ import { gmailScanWorker } from "./gmailScanWorker";
 import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
 import { z } from "zod";
 import { nanoid } from "nanoid";
-import { storagePut, storageGet, sanitizeFilename, generateSignedFileUrl } from "./storage";
+import {
+  storagePut,
+  storageGet,
+  storageDelete,
+  sanitizeFilename,
+  generateSignedFileUrl,
+} from "./storage";
 import { invokeLLM } from "./_core/llm";
 import { ENV } from "./_core/env";
 import {
   createAnalysis,
+  appendFilesToAnalysis,
   getAnalysisBySessionId,
   addChatMessage,
   getChatHistory,
@@ -99,14 +106,23 @@ import { buildFamilyCoverageSnapshot } from "../client/src/lib/familyCoverage";
 
 function signOAuthState(payload: Record<string, unknown>): string {
   const json = JSON.stringify(payload);
-  const sig = crypto.createHmac("sha256", ENV.cookieSecret).update(json).digest("hex");
+  const sig = crypto
+    .createHmac("sha256", ENV.cookieSecret)
+    .update(json)
+    .digest("hex");
   return Buffer.from(JSON.stringify({ d: json, s: sig })).toString("base64");
 }
 
 export function verifyOAuthState(state: string): Record<string, unknown> {
   const { d, s } = JSON.parse(Buffer.from(state, "base64").toString("utf8"));
-  const expected = crypto.createHmac("sha256", ENV.cookieSecret).update(d).digest("hex");
-  if (s.length !== expected.length || !crypto.timingSafeEqual(Buffer.from(s), Buffer.from(expected))) {
+  const expected = crypto
+    .createHmac("sha256", ENV.cookieSecret)
+    .update(d)
+    .digest("hex");
+  if (
+    s.length !== expected.length ||
+    !crypto.timingSafeEqual(Buffer.from(s), Buffer.from(expected))
+  ) {
     throw new Error("Invalid state signature");
   }
   const payload = JSON.parse(d);
@@ -226,7 +242,6 @@ const CHAT_SYSTEM_PROMPT = `אתה עוזר וירטואלי מומחה בפול
 להלן המידע שחולץ מהפוליסה:
 `;
 
-
 const CATEGORY_SUMMARY_SYSTEM_PROMPT = `אתה יועץ ביטוח ישראלי. קיבלת כמה סקירות של פוליסות מאותה קטגוריית ביטוח עבור אותו משתמש.
 
 המטרה: לייצר סיכום מאוחד אחד, ברור ופרקטי, של כל מה שיש בקטגוריית הביטוח הזאת.
@@ -276,58 +291,95 @@ function resolveAnalysisCategoryForSummary(analysis: any): InsuranceCategory {
 function buildCategorySummaryMetrics(analyses: any[]) {
   return {
     policyCount: analyses.length,
-    fileCount: analyses.reduce((sum, analysis) => sum + ((analysis.files ?? []) as unknown[]).length, 0),
-    coverageCount: analyses.reduce((sum, analysis) => sum + ((analysis.analysisResult?.coverages ?? []) as unknown[]).length, 0),
-    duplicateGroups: analyses.reduce((sum, analysis) => sum + ((analysis.analysisResult?.duplicateCoverages ?? []) as unknown[]).length, 0),
+    fileCount: analyses.reduce(
+      (sum, analysis) => sum + ((analysis.files ?? []) as unknown[]).length,
+      0
+    ),
+    coverageCount: analyses.reduce(
+      (sum, analysis) =>
+        sum + ((analysis.analysisResult?.coverages ?? []) as unknown[]).length,
+      0
+    ),
+    duplicateGroups: analyses.reduce(
+      (sum, analysis) =>
+        sum +
+        ((analysis.analysisResult?.duplicateCoverages ?? []) as unknown[])
+          .length,
+      0
+    ),
     knownMonthlyPremiums: analyses
-      .map((analysis) => analysis.analysisResult?.generalInfo?.monthlyPremium)
+      .map(analysis => analysis.analysisResult?.generalInfo?.monthlyPremium)
       .filter((value): value is string => Boolean(value)),
-    renewalDates: analyses
-      .map((analysis) => ({
-        policyName: analysis.analysisResult?.generalInfo?.policyName ?? "פוליסה",
-        endDate: analysis.analysisResult?.generalInfo?.endDate ?? "לא מצוין בפוליסה",
-      })),
+    renewalDates: analyses.map(analysis => ({
+      policyName: analysis.analysisResult?.generalInfo?.policyName ?? "פוליסה",
+      endDate:
+        analysis.analysisResult?.generalInfo?.endDate ?? "לא מצוין בפוליסה",
+    })),
   };
 }
 
 function buildCategorySummaryPayload(analyses: any[]) {
-  return analyses.map((analysis) => ({
+  return analyses.map(analysis => ({
     sessionId: analysis.sessionId,
-    createdAt: analysis.createdAt instanceof Date ? analysis.createdAt.toISOString() : String(analysis.createdAt),
-    files: ((analysis.files ?? []) as Array<{ name?: string }>).map((file) => file?.name ?? "קובץ"),
+    createdAt:
+      analysis.createdAt instanceof Date
+        ? analysis.createdAt.toISOString()
+        : String(analysis.createdAt),
+    files: ((analysis.files ?? []) as Array<{ name?: string }>).map(
+      file => file?.name ?? "קובץ"
+    ),
     generalInfo: {
-      policyName: analysis.analysisResult?.generalInfo?.policyName ?? "לא מצוין בפוליסה",
-      insurerName: analysis.analysisResult?.generalInfo?.insurerName ?? "לא מצוין בפוליסה",
-      policyNumber: analysis.analysisResult?.generalInfo?.policyNumber ?? "לא מצוין בפוליסה",
-      policyType: analysis.analysisResult?.generalInfo?.policyType ?? "לא מצוין בפוליסה",
-      premiumPaymentPeriod: analysis.analysisResult?.generalInfo?.premiumPaymentPeriod ?? "unknown",
-      monthlyPremium: analysis.analysisResult?.generalInfo?.monthlyPremium ?? "לא מצוין בפוליסה",
-      annualPremium: analysis.analysisResult?.generalInfo?.annualPremium ?? "לא מצוין בפוליסה",
-      startDate: analysis.analysisResult?.generalInfo?.startDate ?? "לא מצוין בפוליסה",
-      endDate: analysis.analysisResult?.generalInfo?.endDate ?? "לא מצוין בפוליסה",
-      importantNotes: analysis.analysisResult?.generalInfo?.importantNotes ?? [],
+      policyName:
+        analysis.analysisResult?.generalInfo?.policyName ?? "לא מצוין בפוליסה",
+      insurerName:
+        analysis.analysisResult?.generalInfo?.insurerName ?? "לא מצוין בפוליסה",
+      policyNumber:
+        analysis.analysisResult?.generalInfo?.policyNumber ??
+        "לא מצוין בפוליסה",
+      policyType:
+        analysis.analysisResult?.generalInfo?.policyType ?? "לא מצוין בפוליסה",
+      premiumPaymentPeriod:
+        analysis.analysisResult?.generalInfo?.premiumPaymentPeriod ?? "unknown",
+      monthlyPremium:
+        analysis.analysisResult?.generalInfo?.monthlyPremium ??
+        "לא מצוין בפוליסה",
+      annualPremium:
+        analysis.analysisResult?.generalInfo?.annualPremium ??
+        "לא מצוין בפוליסה",
+      startDate:
+        analysis.analysisResult?.generalInfo?.startDate ?? "לא מצוין בפוליסה",
+      endDate:
+        analysis.analysisResult?.generalInfo?.endDate ?? "לא מצוין בפוליסה",
+      importantNotes:
+        analysis.analysisResult?.generalInfo?.importantNotes ?? [],
       fineprint: analysis.analysisResult?.generalInfo?.fineprint ?? [],
     },
     summary: analysis.analysisResult?.summary ?? "אין סיכום זמין",
-    coverages: (analysis.analysisResult?.coverages ?? []).map((coverage: any) => ({
-      title: coverage.title,
-      category: coverage.category,
-      limit: coverage.limit,
-      details: coverage.details,
-      eligibility: coverage.eligibility,
-      copay: coverage.copay,
-      maxReimbursement: coverage.maxReimbursement,
-      exclusions: coverage.exclusions,
-      waitingPeriod: coverage.waitingPeriod,
-      sourceFile: coverage.sourceFile ?? "לא מצוין בפוליסה",
-    })),
-    duplicateCoverages: (analysis.analysisResult?.duplicateCoverages ?? []).map((duplicate: any) => ({
-      title: duplicate.title,
-      explanation: duplicate.explanation,
-      recommendation: duplicate.recommendation,
-      sourceFiles: duplicate.sourceFiles ?? [],
-    })),
-    personalizedInsights: (analysis.analysisResult?.personalizedInsights ?? []).map((insight: any) => ({
+    coverages: (analysis.analysisResult?.coverages ?? []).map(
+      (coverage: any) => ({
+        title: coverage.title,
+        category: coverage.category,
+        limit: coverage.limit,
+        details: coverage.details,
+        eligibility: coverage.eligibility,
+        copay: coverage.copay,
+        maxReimbursement: coverage.maxReimbursement,
+        exclusions: coverage.exclusions,
+        waitingPeriod: coverage.waitingPeriod,
+        sourceFile: coverage.sourceFile ?? "לא מצוין בפוליסה",
+      })
+    ),
+    duplicateCoverages: (analysis.analysisResult?.duplicateCoverages ?? []).map(
+      (duplicate: any) => ({
+        title: duplicate.title,
+        explanation: duplicate.explanation,
+        recommendation: duplicate.recommendation,
+        sourceFiles: duplicate.sourceFiles ?? [],
+      })
+    ),
+    personalizedInsights: (
+      analysis.analysisResult?.personalizedInsights ?? []
+    ).map((insight: any) => ({
       title: insight.title,
       description: insight.description,
       type: insight.type,
@@ -337,11 +389,12 @@ function buildCategorySummaryPayload(analyses: any[]) {
   }));
 }
 
-
 function serializeProfileForClient(profile: any) {
   if (!profile) return null;
   return {
-    dateOfBirth: profile.dateOfBirth ? new Date(profile.dateOfBirth).toISOString() : null,
+    dateOfBirth: profile.dateOfBirth
+      ? new Date(profile.dateOfBirth).toISOString()
+      : null,
     gender: profile.gender,
     maritalStatus: profile.maritalStatus,
     numberOfChildren: profile.numberOfChildren ?? 0,
@@ -389,10 +442,12 @@ function logHubDependencyFailure(
     | "action items"
     | "savings opportunities",
   userId: number,
-  error: unknown,
+  error: unknown
 ) {
   const message = error instanceof Error ? error.message : String(error);
-  console.warn(`[${scope}] Failed to load ${source} for user ${userId}: ${message}`);
+  console.warn(
+    `[${scope}] Failed to load ${source} for user ${userId}: ${message}`
+  );
 }
 
 function serializeFamilyMemberForClient(member: any) {
@@ -400,7 +455,9 @@ function serializeFamilyMemberForClient(member: any) {
     id: member.id,
     fullName: member.fullName,
     relation: member.relation,
-    birthDate: member.birthDate ? new Date(member.birthDate).toISOString() : null,
+    birthDate: member.birthDate
+      ? new Date(member.birthDate).toISOString()
+      : null,
     ageLabel: member.ageLabel ?? null,
     gender: member.gender ?? null,
     allergies: member.allergies ?? null,
@@ -408,11 +465,14 @@ function serializeFamilyMemberForClient(member: any) {
     activities: member.activities ?? null,
     insuranceNotes: member.insuranceNotes ?? null,
     notes: member.notes ?? null,
-    createdAt: member.createdAt ? new Date(member.createdAt).toISOString() : null,
-    updatedAt: member.updatedAt ? new Date(member.updatedAt).toISOString() : null,
+    createdAt: member.createdAt
+      ? new Date(member.createdAt).toISOString()
+      : null,
+    updatedAt: member.updatedAt
+      ? new Date(member.updatedAt).toISOString()
+      : null,
   };
 }
-
 
 async function getAssistantInvoices(userId: number) {
   const db = await getDb();
@@ -424,11 +484,12 @@ async function getAssistantInvoices(userId: number) {
     .orderBy(desc(smartInvoices.createdAt))
     .limit(100);
 
-  return rows.map((inv) => {
+  return rows.map(inv => {
     try {
-      const extractedData = inv.extractedData && typeof inv.extractedData === "string"
-        ? decryptJson(inv.extractedData)
-        : inv.extractedData;
+      const extractedData =
+        inv.extractedData && typeof inv.extractedData === "string"
+          ? decryptJson(inv.extractedData)
+          : inv.extractedData;
       return {
         ...inv,
         subject: inv.subject ? decryptField(inv.subject) : inv.subject,
@@ -459,7 +520,9 @@ function serializeSavingsOpportunityRow(row: any) {
     monthlySaving: toNumericValue(row.monthlySaving),
     annualSaving: toNumericValue(row.annualSaving),
     actionSteps: Array.isArray(row.actionSteps) ? row.actionSteps : [],
-    relatedSessionIds: Array.isArray(row.relatedSessionIds) ? row.relatedSessionIds : [],
+    relatedSessionIds: Array.isArray(row.relatedSessionIds)
+      ? row.relatedSessionIds
+      : [],
   };
 }
 
@@ -491,19 +554,26 @@ async function syncSavingsOpportunities(
     .select()
     .from(savingsOpportunities)
     .where(eq(savingsOpportunities.userId, userId));
-  const existingByKey = new Map(existingRows.map((row) => [row.opportunityKey, row]));
-  const activeKeys = new Set(report.opportunities.map((opportunity) => opportunity.opportunityKey));
+  const existingByKey = new Map(
+    existingRows.map(row => [row.opportunityKey, row])
+  );
+  const activeKeys = new Set(
+    report.opportunities.map(opportunity => opportunity.opportunityKey)
+  );
 
   for (const row of existingRows) {
     if (!activeKeys.has(row.opportunityKey)) {
-      await db.delete(savingsOpportunities).where(eq(savingsOpportunities.id, row.id));
+      await db
+        .delete(savingsOpportunities)
+        .where(eq(savingsOpportunities.id, row.id));
     }
   }
 
   for (const opportunity of report.opportunities) {
     const existing = existingByKey.get(opportunity.opportunityKey);
     const status = existing?.status ?? opportunity.status;
-    const completedAt = status === "completed" ? (existing?.completedAt ?? new Date()) : null;
+    const completedAt =
+      status === "completed" ? (existing?.completedAt ?? new Date()) : null;
     const payload = {
       userId,
       opportunityKey: opportunity.opportunityKey,
@@ -551,7 +621,12 @@ async function syncMonthlyReportRow(
   const [existing] = await db
     .select()
     .from(monthlyReports)
-    .where(and(eq(monthlyReports.userId, userId), eq(monthlyReports.month, report.month)))
+    .where(
+      and(
+        eq(monthlyReports.userId, userId),
+        eq(monthlyReports.month, report.month)
+      )
+    )
     .limit(1);
 
   const payload = {
@@ -567,7 +642,10 @@ async function syncMonthlyReportRow(
   } as const;
 
   if (existing) {
-    await db.update(monthlyReports).set(payload).where(eq(monthlyReports.id, existing.id));
+    await db
+      .update(monthlyReports)
+      .set(payload)
+      .where(eq(monthlyReports.id, existing.id));
   } else {
     await db.insert(monthlyReports).values(payload);
   }
@@ -575,7 +653,12 @@ async function syncMonthlyReportRow(
   const [row] = await db
     .select()
     .from(monthlyReports)
-    .where(and(eq(monthlyReports.userId, userId), eq(monthlyReports.month, report.month)))
+    .where(
+      and(
+        eq(monthlyReports.userId, userId),
+        eq(monthlyReports.month, report.month)
+      )
+    )
     .limit(1);
 
   return row ? serializeMonthlyReportRow(row) : null;
@@ -589,13 +672,15 @@ async function syncActionItems(
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
-  const opportunityIdsByKey = new Map(opportunityRows.map((row) => [row.opportunityKey, row.id]));
+  const opportunityIdsByKey = new Map(
+    opportunityRows.map(row => [row.opportunityKey, row.id])
+  );
   const existingRows = await db
     .select()
     .from(actionItems)
     .where(eq(actionItems.userId, userId));
-  const existingByKey = new Map(existingRows.map((row) => [row.actionKey, row]));
-  const activeKeys = new Set(drafts.map((draft) => draft.actionKey));
+  const existingByKey = new Map(existingRows.map(row => [row.actionKey, row]));
+  const activeKeys = new Set(drafts.map(draft => draft.actionKey));
 
   for (const row of existingRows) {
     if (!activeKeys.has(row.actionKey)) {
@@ -606,11 +691,14 @@ async function syncActionItems(
   for (const draft of drafts) {
     const existing = existingByKey.get(draft.actionKey);
     const status = existing?.status ?? draft.status;
-    const completedAt = status === "completed" ? (existing?.completedAt ?? new Date()) : null;
+    const completedAt =
+      status === "completed" ? (existing?.completedAt ?? new Date()) : null;
     const payload = {
       userId,
       actionKey: draft.actionKey,
-      savingsOpportunityId: draft.relatedOpportunityKey ? opportunityIdsByKey.get(draft.relatedOpportunityKey) ?? null : null,
+      savingsOpportunityId: draft.relatedOpportunityKey
+        ? (opportunityIdsByKey.get(draft.relatedOpportunityKey) ?? null)
+        : null,
       type: draft.type,
       title: draft.title,
       description: draft.description,
@@ -643,22 +731,40 @@ async function syncActionItems(
 }
 
 async function buildAndSyncUserHubState(userId: number) {
-  const [profile, analyses, familyMembers, invoices, insuranceDiscoveries, existingReports, existingActions] = await Promise.all([
-    getUserProfile(userId).catch((error) => {
+  const [
+    profile,
+    analyses,
+    familyMembers,
+    invoices,
+    insuranceDiscoveries,
+    existingReports,
+    existingActions,
+  ] = await Promise.all([
+    getUserProfile(userId).catch(error => {
       logHubDependencyFailure("savingsHub", "profile", userId, error);
       return null;
     }),
     getUserAnalyses(userId),
-    getFamilyMembers(userId).catch((error) => {
+    getFamilyMembers(userId).catch(error => {
       logHubDependencyFailure("savingsHub", "family members", userId, error);
       return [];
     }),
-    getAssistantInvoices(userId).catch((error) => {
-      logHubDependencyFailure("savingsHub", "assistant invoices", userId, error);
+    getAssistantInvoices(userId).catch(error => {
+      logHubDependencyFailure(
+        "savingsHub",
+        "assistant invoices",
+        userId,
+        error
+      );
       return [];
     }),
-    listInsuranceDiscoveries(userId, 50).catch((error) => {
-      logHubDependencyFailure("savingsHub", "insurance discoveries", userId, error);
+    listInsuranceDiscoveries(userId, 50).catch(error => {
+      logHubDependencyFailure(
+        "savingsHub",
+        "insurance discoveries",
+        userId,
+        error
+      );
       return [];
     }),
     (async () => {
@@ -669,7 +775,7 @@ async function buildAndSyncUserHubState(userId: number) {
         .from(monthlyReports)
         .where(eq(monthlyReports.userId, userId))
         .orderBy(desc(monthlyReports.month));
-    })().catch((error) => {
+    })().catch(error => {
       logHubDependencyFailure("savingsHub", "monthly reports", userId, error);
       return [];
     }),
@@ -680,7 +786,7 @@ async function buildAndSyncUserHubState(userId: number) {
         .select()
         .from(actionItems)
         .where(eq(actionItems.userId, userId));
-    })().catch((error) => {
+    })().catch(error => {
       logHubDependencyFailure("savingsHub", "action items", userId, error);
       return [];
     }),
@@ -694,16 +800,21 @@ async function buildAndSyncUserHubState(userId: number) {
       .select()
       .from(savingsOpportunities)
       .where(eq(savingsOpportunities.userId, userId));
-  })().catch((error) => {
-    logHubDependencyFailure("savingsHub", "savings opportunities", userId, error);
+  })().catch(error => {
+    logHubDependencyFailure(
+      "savingsHub",
+      "savings opportunities",
+      userId,
+      error
+    );
     return [];
   });
 
   const opportunityStatusMap = Object.fromEntries(
-    existingOpportunityRows.map((row) => [row.opportunityKey, row.status])
+    existingOpportunityRows.map(row => [row.opportunityKey, row.status])
   );
   const actionStatusMap = Object.fromEntries(
-    existingActions.map((row) => [row.actionKey, row.status])
+    existingActions.map(row => [row.actionKey, row.status])
   );
 
   const savingsDraft = buildSavingsReportDraft({
@@ -712,7 +823,10 @@ async function buildAndSyncUserHubState(userId: number) {
     familyMembers,
     insuranceDiscoveries,
     invoices,
-    previousStatuses: opportunityStatusMap as Record<string, "open" | "completed" | "dismissed">,
+    previousStatuses: opportunityStatusMap as Record<
+      string,
+      "open" | "completed" | "dismissed"
+    >,
   });
   const scoreSnapshot = buildInsuranceScoreSnapshot({
     analyses,
@@ -728,7 +842,10 @@ async function buildAndSyncUserHubState(userId: number) {
     invoices,
     currentScore: scoreSnapshot.score,
     previousScore: latestReport?.scoreAtTime ?? null,
-    previousStatuses: actionStatusMap as Record<string, "pending" | "completed" | "dismissed">,
+    previousStatuses: actionStatusMap as Record<
+      string,
+      "pending" | "completed" | "dismissed"
+    >,
   });
   const fullActionDrafts = buildActionItemsDraft({
     opportunities: savingsDraft.opportunities,
@@ -736,35 +853,50 @@ async function buildAndSyncUserHubState(userId: number) {
     profile: normalizedProfile,
     familyMembers,
     monitoringChanges: monthlyDraft.changes,
-    previousStatuses: actionStatusMap as Record<string, "pending" | "completed" | "dismissed">,
+    previousStatuses: actionStatusMap as Record<
+      string,
+      "pending" | "completed" | "dismissed"
+    >,
   });
 
   const dataHash = buildWorkspaceDataHash({
     profile,
-    analyses: analyses.map((analysis) => ({
+    analyses: analyses.map(analysis => ({
       sessionId: analysis.sessionId,
-      updatedAt: analysis.updatedAt instanceof Date ? analysis.updatedAt.toISOString() : analysis.updatedAt,
+      updatedAt:
+        analysis.updatedAt instanceof Date
+          ? analysis.updatedAt.toISOString()
+          : analysis.updatedAt,
       status: analysis.status,
       category: analysis.insuranceCategory,
     })),
-    familyMembers: familyMembers.map((member) => ({
+    familyMembers: familyMembers.map(member => ({
       id: member.id,
-      updatedAt: member.updatedAt instanceof Date ? member.updatedAt.toISOString() : member.updatedAt,
+      updatedAt:
+        member.updatedAt instanceof Date
+          ? member.updatedAt.toISOString()
+          : member.updatedAt,
     })),
-    insuranceDiscoveries: insuranceDiscoveries.map((discovery) => ({
+    insuranceDiscoveries: insuranceDiscoveries.map(discovery => ({
       id: discovery.id,
-      documentDate: discovery.documentDate instanceof Date ? discovery.documentDate.toISOString() : discovery.documentDate,
+      documentDate:
+        discovery.documentDate instanceof Date
+          ? discovery.documentDate.toISOString()
+          : discovery.documentDate,
       artifactType: discovery.artifactType,
       premiumAmount: discovery.premiumAmount,
     })),
-    invoices: invoices.map((invoice) => ({
+    invoices: invoices.map(invoice => ({
       id: invoice.id,
       amount: invoice.amount,
-      invoiceDate: invoice.invoiceDate instanceof Date ? invoice.invoiceDate.toISOString() : invoice.invoiceDate,
+      invoiceDate:
+        invoice.invoiceDate instanceof Date
+          ? invoice.invoiceDate.toISOString()
+          : invoice.invoiceDate,
       provider: invoice.provider,
       status: invoice.status,
     })),
-    savings: savingsDraft.opportunities.map((opportunity) => ({
+    savings: savingsDraft.opportunities.map(opportunity => ({
       key: opportunity.opportunityKey,
       type: opportunity.type,
       monthlySaving: opportunity.monthlySaving,
@@ -775,9 +907,21 @@ async function buildAndSyncUserHubState(userId: number) {
     },
   });
 
-  const opportunityRows = await syncSavingsOpportunities(userId, savingsDraft, dataHash);
-  const monthlyReportRow = await syncMonthlyReportRow(userId, monthlyDraft, dataHash);
-  const actionRows = await syncActionItems(userId, fullActionDrafts, opportunityRows);
+  const opportunityRows = await syncSavingsOpportunities(
+    userId,
+    savingsDraft,
+    dataHash
+  );
+  const monthlyReportRow = await syncMonthlyReportRow(
+    userId,
+    monthlyDraft,
+    dataHash
+  );
+  const actionRows = await syncActionItems(
+    userId,
+    fullActionDrafts,
+    opportunityRows
+  );
 
   return {
     profile,
@@ -815,26 +959,38 @@ export const appRouter = router({
     }),
 
     uploadImage: protectedProcedure
-      .input(z.object({
-        name: z.string(),
-        base64: z.string(),
-      }))
+      .input(
+        z.object({
+          name: z.string(),
+          base64: z.string(),
+        })
+      )
       .mutation(async ({ ctx, input }) => {
         if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
         const allowedExtensions = [".jpg", ".jpeg", ".png", ".webp"];
-        const ext = input.name.substring(input.name.lastIndexOf(".")).toLowerCase();
+        const ext = input.name
+          .substring(input.name.lastIndexOf("."))
+          .toLowerCase();
         if (!allowedExtensions.includes(ext)) {
-          throw new TRPCError({ code: "BAD_REQUEST", message: "Only jpg, png, webp images are allowed" });
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Only jpg, png, webp images are allowed",
+          });
         }
         const safeName = sanitizeFilename(input.name);
         const fileKey = `avatars/${ctx.user.id}/${nanoid(8)}-${safeName}`;
         const buffer = Buffer.from(input.base64, "base64");
         const maxSize = 5 * 1024 * 1024;
         if (buffer.length > maxSize) {
-          throw new TRPCError({ code: "BAD_REQUEST", message: "Image must be under 5MB" });
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Image must be under 5MB",
+          });
         }
         await storagePut(fileKey, buffer, `image/${ext.replace(".", "")}`);
-        await upsertUserProfile(ctx.user.id, { profileImageKey: fileKey } as any);
+        await upsertUserProfile(ctx.user.id, {
+          profileImageKey: fileKey,
+        } as any);
         return { fileKey };
       }),
 
@@ -846,35 +1002,66 @@ export const appRouter = router({
     }),
 
     update: protectedProcedure
-      .input(z.object({
-        dateOfBirth: z.string().nullable().optional(),
-        gender: z.enum(["male", "female", "other"]).nullable().optional(),
-        maritalStatus: z.enum(["single", "married", "divorced", "widowed"]).nullable().optional(),
-        numberOfChildren: z.number().min(0).max(20).optional(),
-        childrenAges: z.string().nullable().optional(),
-        employmentStatus: z.enum(["salaried", "self_employed", "business_owner", "student", "retired", "unemployed"]).nullable().optional(),
-        incomeRange: z.enum(["below_5k", "5k_10k", "10k_15k", "15k_25k", "25k_40k", "above_40k"]).nullable().optional(),
-        ownsApartment: z.boolean().optional(),
-        hasActiveMortgage: z.boolean().optional(),
-        numberOfVehicles: z.number().min(0).max(10).optional(),
-        hasExtremeSports: z.boolean().optional(),
-        hasSpecialHealthConditions: z.boolean().optional(),
-        healthConditionsDetails: z.string().nullable().optional(),
-        hasPets: z.boolean().optional(),
-        businessName: z.string().max(160).nullable().optional(),
-        businessTaxId: z.string().max(64).nullable().optional(),
-        businessEmailDomains: z.string().max(1000).nullable().optional(),
-        onboardingCompleted: z.boolean().optional(),
-        emailScanSenders: z.string().max(2000).nullable().optional(),
-        emailScanKeywords: z.string().max(2000).nullable().optional(),
-      }))
+      .input(
+        z.object({
+          dateOfBirth: z.string().nullable().optional(),
+          gender: z.enum(["male", "female", "other"]).nullable().optional(),
+          maritalStatus: z
+            .enum(["single", "married", "divorced", "widowed"])
+            .nullable()
+            .optional(),
+          numberOfChildren: z.number().min(0).max(20).optional(),
+          childrenAges: z.string().nullable().optional(),
+          employmentStatus: z
+            .enum([
+              "salaried",
+              "self_employed",
+              "business_owner",
+              "student",
+              "retired",
+              "unemployed",
+            ])
+            .nullable()
+            .optional(),
+          incomeRange: z
+            .enum([
+              "below_5k",
+              "5k_10k",
+              "10k_15k",
+              "15k_25k",
+              "25k_40k",
+              "above_40k",
+            ])
+            .nullable()
+            .optional(),
+          ownsApartment: z.boolean().optional(),
+          hasActiveMortgage: z.boolean().optional(),
+          numberOfVehicles: z.number().min(0).max(10).optional(),
+          hasExtremeSports: z.boolean().optional(),
+          hasSpecialHealthConditions: z.boolean().optional(),
+          healthConditionsDetails: z.string().nullable().optional(),
+          hasPets: z.boolean().optional(),
+          businessName: z.string().max(160).nullable().optional(),
+          businessTaxId: z.string().max(64).nullable().optional(),
+          businessEmailDomains: z.string().max(1000).nullable().optional(),
+          onboardingCompleted: z.boolean().optional(),
+          emailScanSenders: z.string().max(2000).nullable().optional(),
+          emailScanKeywords: z.string().max(2000).nullable().optional(),
+        })
+      )
       .mutation(async ({ ctx, input }) => {
         if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
         const data: any = { ...input };
         if (input.dateOfBirth !== undefined) {
-          data.dateOfBirth = input.dateOfBirth ? new Date(input.dateOfBirth) : null;
+          data.dateOfBirth = input.dateOfBirth
+            ? new Date(input.dateOfBirth)
+            : null;
         }
-        for (const field of ["businessName", "businessTaxId", "businessEmailDomains"] as const) {
+        for (const field of [
+          "businessName",
+          "businessTaxId",
+          "businessEmailDomains",
+        ] as const) {
           if (typeof data[field] === "string") {
             const normalized = data[field].trim();
             data[field] = normalized ? normalized : null;
@@ -882,11 +1069,13 @@ export const appRouter = router({
         }
         if (typeof data.emailScanSenders === "string") {
           const { sanitizeEmailScanFilter } = await import("./gmail");
-          data.emailScanSenders = sanitizeEmailScanFilter(data.emailScanSenders, 2000) || null;
+          data.emailScanSenders =
+            sanitizeEmailScanFilter(data.emailScanSenders, 2000) || null;
         }
         if (typeof data.emailScanKeywords === "string") {
           const { sanitizeEmailScanFilter } = await import("./gmail");
-          data.emailScanKeywords = sanitizeEmailScanFilter(data.emailScanKeywords, 2000) || null;
+          data.emailScanKeywords =
+            sanitizeEmailScanFilter(data.emailScanKeywords, 2000) || null;
         }
         const profile = await upsertUserProfile(ctx.user.id, data);
         return { success: true, profile: serializeProfileForClient(profile) };
@@ -901,19 +1090,21 @@ export const appRouter = router({
     }),
 
     upsert: protectedProcedure
-      .input(z.object({
-        id: z.number().int().positive().optional(),
-        fullName: z.string().min(1).max(120),
-        relation: z.enum(["spouse", "child", "parent", "dependent", "other"]),
-        birthDate: z.string().nullable().optional(),
-        ageLabel: z.string().max(64).nullable().optional(),
-        gender: z.enum(["male", "female", "other"]).nullable().optional(),
-        allergies: z.string().max(400).nullable().optional(),
-        medicalNotes: z.string().max(800).nullable().optional(),
-        activities: z.string().max(400).nullable().optional(),
-        insuranceNotes: z.string().max(400).nullable().optional(),
-        notes: z.string().max(800).nullable().optional(),
-      }))
+      .input(
+        z.object({
+          id: z.number().int().positive().optional(),
+          fullName: z.string().min(1).max(120),
+          relation: z.enum(["spouse", "child", "parent", "dependent", "other"]),
+          birthDate: z.string().nullable().optional(),
+          ageLabel: z.string().max(64).nullable().optional(),
+          gender: z.enum(["male", "female", "other"]).nullable().optional(),
+          allergies: z.string().max(400).nullable().optional(),
+          medicalNotes: z.string().max(800).nullable().optional(),
+          activities: z.string().max(400).nullable().optional(),
+          insuranceNotes: z.string().max(400).nullable().optional(),
+          notes: z.string().max(800).nullable().optional(),
+        })
+      )
       .mutation(async ({ ctx, input }) => {
         if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
         const member = await upsertFamilyMember(ctx.user.id, {
@@ -934,7 +1125,10 @@ export const appRouter = router({
           action: "manage_family_member",
           resource: "family",
           resourceId: member ? String(member.id) : null,
-          details: JSON.stringify({ relation: input.relation, mode: input.id ? "update" : "create" }),
+          details: JSON.stringify({
+            relation: input.relation,
+            mode: input.id ? "update" : "create",
+          }),
         });
         return {
           success: true,
@@ -971,7 +1165,10 @@ export const appRouter = router({
         userId: ctx.user.id,
         action: "manage_family_member",
         resource: "family",
-        details: JSON.stringify({ mode: "bootstrap", createdCount: members.length }),
+        details: JSON.stringify({
+          mode: "bootstrap",
+          createdCount: members.length,
+        }),
       });
       return {
         success: true,
@@ -988,46 +1185,85 @@ export const appRouter = router({
     }),
 
     upsertClassification: protectedProcedure
-      .input(z.object({
-        documentKey: z.string().min(1).max(191),
-        sourceType: z.enum(["analysis_file", "invoice_pdf"]),
-        sourceId: z.string().max(128).nullable().optional(),
-        manualType: z.enum(["insurance", "money", "health", "education", "family", "other"]),
-        familyMemberId: z.number().int().positive().nullable().optional(),
-      }))
+      .input(
+        z.object({
+          documentKey: z.string().min(1).max(191),
+          sourceType: z.enum(["analysis_file", "invoice_pdf"]),
+          sourceId: z.string().max(128).nullable().optional(),
+          manualType: z.enum([
+            "insurance",
+            "money",
+            "health",
+            "education",
+            "family",
+            "other",
+          ]),
+          familyMemberId: z.number().int().positive().nullable().optional(),
+        })
+      )
       .mutation(async ({ ctx, input }) => {
         if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
-        const classification = await upsertDocumentClassification(ctx.user.id, input);
+        const classification = await upsertDocumentClassification(
+          ctx.user.id,
+          input
+        );
         await audit({
           userId: ctx.user.id,
           action: "update_document_classification",
           resource: "document",
           resourceId: input.documentKey,
-          details: JSON.stringify({ sourceType: input.sourceType, manualType: input.manualType, familyMemberId: input.familyMemberId ?? null }),
+          details: JSON.stringify({
+            sourceType: input.sourceType,
+            manualType: input.manualType,
+            familyMemberId: input.familyMemberId ?? null,
+          }),
         });
         return { success: true, classification };
       }),
 
     migrateLegacyClassifications: protectedProcedure
-      .input(z.object({
-        items: z.array(
-          z.object({
-            documentKey: z.string().min(1).max(191),
-            sourceType: z.enum(["analysis_file", "invoice_pdf"]),
-            sourceId: z.string().max(128).nullable().optional(),
-            manualType: z.enum(["insurance", "money", "health", "education", "family", "other"]),
-            familyMemberId: z.number().int().positive().nullable().optional(),
-          })
-        ).min(1).max(200),
-      }))
+      .input(
+        z.object({
+          items: z
+            .array(
+              z.object({
+                documentKey: z.string().min(1).max(191),
+                sourceType: z.enum(["analysis_file", "invoice_pdf"]),
+                sourceId: z.string().max(128).nullable().optional(),
+                manualType: z.enum([
+                  "insurance",
+                  "money",
+                  "health",
+                  "education",
+                  "family",
+                  "other",
+                ]),
+                familyMemberId: z
+                  .number()
+                  .int()
+                  .positive()
+                  .nullable()
+                  .optional(),
+              })
+            )
+            .min(1)
+            .max(200),
+        })
+      )
       .mutation(async ({ ctx, input }) => {
         if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
-        const saved = await bulkUpsertDocumentClassifications(ctx.user.id, input.items);
+        const saved = await bulkUpsertDocumentClassifications(
+          ctx.user.id,
+          input.items
+        );
         await audit({
           userId: ctx.user.id,
           action: "update_document_classification",
           resource: "document",
-          details: JSON.stringify({ mode: "legacy_migration", count: saved.length }),
+          details: JSON.stringify({
+            mode: "legacy_migration",
+            count: saved.length,
+          }),
         });
         return { success: true, count: saved.length };
       }),
@@ -1036,7 +1272,15 @@ export const appRouter = router({
   assistant: router({
     getHomeContext: protectedProcedure.query(async ({ ctx }) => {
       if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
-      const [profile, analyses, invoices, insuranceDiscoveries, gmailConnections, familyMembers, documentClassifications] = await Promise.all([
+      const [
+        profile,
+        analyses,
+        invoices,
+        insuranceDiscoveries,
+        gmailConnections,
+        familyMembers,
+        documentClassifications,
+      ] = await Promise.all([
         getUserProfile(ctx.user.id),
         getUserAnalyses(ctx.user.id),
         getAssistantInvoices(ctx.user.id),
@@ -1062,16 +1306,18 @@ export const appRouter = router({
       if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
       const sessionId = getLumiSessionId(ctx.user.id);
       const history = await getChatHistory(sessionId);
-      return history.map((msg) => ({
+      return history.map(msg => ({
         role: msg.role as "user" | "assistant",
         content: msg.content,
       }));
     }),
 
     chat: protectedProcedure
-      .input(z.object({
-        message: z.string().min(1).max(4000),
-      }))
+      .input(
+        z.object({
+          message: z.string().min(1).max(4000),
+        })
+      )
       .mutation(async ({ ctx, input }) => {
         if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
         const sessionId = getLumiSessionId(ctx.user.id);
@@ -1082,7 +1328,16 @@ export const appRouter = router({
           content: input.message,
         });
 
-        const [history, profile, analyses, invoices, insuranceDiscoveries, gmailConnections, familyMembers, documentClassifications] = await Promise.all([
+        const [
+          history,
+          profile,
+          analyses,
+          invoices,
+          insuranceDiscoveries,
+          gmailConnections,
+          familyMembers,
+          documentClassifications,
+        ] = await Promise.all([
           getChatHistory(sessionId),
           getUserProfile(ctx.user.id),
           getUserAnalyses(ctx.user.id),
@@ -1115,14 +1370,18 @@ export const appRouter = router({
             matchedCategories: assistantPrompt.meta.matchedCategories,
           },
         });
-        const selectedModel = useComplexModel ? ENV.lumiComplexModel : ENV.llmModel;
+        const selectedModel = useComplexModel
+          ? ENV.lumiComplexModel
+          : ENV.llmModel;
 
         const messages = [
           { role: "system" as const, content: assistantPrompt.systemPrompt },
-          ...history.slice(-assistantPrompt.meta.suggestedHistoryLimit).map((msg) => ({
-            role: msg.role as "user" | "assistant",
-            content: msg.content,
-          })),
+          ...history
+            .slice(-assistantPrompt.meta.suggestedHistoryLimit)
+            .map(msg => ({
+              role: msg.role as "user" | "assistant",
+              content: msg.content,
+            })),
         ];
 
         const response = await invokeLLM({ messages, model: selectedModel });
@@ -1176,7 +1435,9 @@ export const appRouter = router({
         breakdown: state.scoreSnapshot.breakdown,
         totalMonthlySpend: state.scoreSnapshot.totalMonthlySpend,
         potentialSavings: state.scoreSnapshot.potentialSavings,
-        topActions: state.actions.filter((action) => action.status === "pending").slice(0, 4),
+        topActions: state.actions
+          .filter(action => action.status === "pending")
+          .slice(0, 4),
         upcomingRenewals: state.scoreSnapshot.overview.renewals.slice(0, 4),
         recentChanges: state.monthlyReport?.changes ?? [],
       };
@@ -1187,20 +1448,31 @@ export const appRouter = router({
     get: protectedProcedure.query(async ({ ctx }) => {
       if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
       const analysesPromise = getUserAnalyses(ctx.user.id);
-      const profilePromise = getUserProfile(ctx.user.id).catch((error) => {
+      const profilePromise = getUserProfile(ctx.user.id).catch(error => {
         logHubDependencyFailure("insuranceMap", "profile", ctx.user.id, error);
         return null;
       });
-      const familyMembersPromise = getFamilyMembers(ctx.user.id).catch((error) => {
-        logHubDependencyFailure("insuranceMap", "family members", ctx.user.id, error);
-        return [];
-      });
+      const familyMembersPromise = getFamilyMembers(ctx.user.id).catch(
+        error => {
+          logHubDependencyFailure(
+            "insuranceMap",
+            "family members",
+            ctx.user.id,
+            error
+          );
+          return [];
+        }
+      );
       const [analyses, profile, familyMembers] = await Promise.all([
         analysesPromise,
         profilePromise,
         familyMembersPromise,
       ]);
-      return buildFamilyCoverageSnapshot(analyses, normalizeHubProfile(profile), familyMembers);
+      return buildFamilyCoverageSnapshot(
+        analyses,
+        normalizeHubProfile(profile),
+        familyMembers
+      );
     }),
   }),
 
@@ -1209,7 +1481,7 @@ export const appRouter = router({
       if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
       const state = await buildAndSyncUserHubState(ctx.user.id);
       const savedSoFar = state.opportunities
-        .filter((opportunity) => opportunity.status === "completed")
+        .filter(opportunity => opportunity.status === "completed")
         .reduce((sum, opportunity) => sum + opportunity.annualSaving, 0);
       return {
         overview: state.savingsDraft.overview,
@@ -1219,9 +1491,11 @@ export const appRouter = router({
         score: state.scoreSnapshot.score,
         totalMonthlySpend: state.scoreSnapshot.totalMonthlySpend,
         policyCount: state.scoreSnapshot.overview.completedPolicies.length,
-        categoriesWithData: Object.values(state.scoreSnapshot.overview.categorySummaries)
-          .filter((category) => category.hasData)
-          .map((category) => category.category),
+        categoriesWithData: Object.values(
+          state.scoreSnapshot.overview.categorySummaries
+        )
+          .filter(category => category.hasData)
+          .map(category => category.category),
         opportunities: state.opportunities,
         actionItems: state.actions,
       };
@@ -1235,8 +1509,17 @@ export const appRouter = router({
         if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
         await db
           .update(savingsOpportunities)
-          .set({ status: "completed", completedAt: new Date(), updatedAt: new Date() })
-          .where(and(eq(savingsOpportunities.id, input.opportunityId), eq(savingsOpportunities.userId, ctx.user.id)));
+          .set({
+            status: "completed",
+            completedAt: new Date(),
+            updatedAt: new Date(),
+          })
+          .where(
+            and(
+              eq(savingsOpportunities.id, input.opportunityId),
+              eq(savingsOpportunities.userId, ctx.user.id)
+            )
+          );
         await audit({
           userId: ctx.user.id,
           action: "complete_savings_opportunity",
@@ -1254,8 +1537,17 @@ export const appRouter = router({
         if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
         await db
           .update(savingsOpportunities)
-          .set({ status: "dismissed", completedAt: null, updatedAt: new Date() })
-          .where(and(eq(savingsOpportunities.id, input.opportunityId), eq(savingsOpportunities.userId, ctx.user.id)));
+          .set({
+            status: "dismissed",
+            completedAt: null,
+            updatedAt: new Date(),
+          })
+          .where(
+            and(
+              eq(savingsOpportunities.id, input.opportunityId),
+              eq(savingsOpportunities.userId, ctx.user.id)
+            )
+          );
         await audit({
           userId: ctx.user.id,
           action: "dismiss_savings_opportunity",
@@ -1281,8 +1573,17 @@ export const appRouter = router({
         if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
         await db
           .update(actionItems)
-          .set({ status: "completed", completedAt: new Date(), updatedAt: new Date() })
-          .where(and(eq(actionItems.id, input.actionId), eq(actionItems.userId, ctx.user.id)));
+          .set({
+            status: "completed",
+            completedAt: new Date(),
+            updatedAt: new Date(),
+          })
+          .where(
+            and(
+              eq(actionItems.id, input.actionId),
+              eq(actionItems.userId, ctx.user.id)
+            )
+          );
         await audit({
           userId: ctx.user.id,
           action: "complete_action_item",
@@ -1300,8 +1601,17 @@ export const appRouter = router({
         if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
         await db
           .update(actionItems)
-          .set({ status: "dismissed", completedAt: null, updatedAt: new Date() })
-          .where(and(eq(actionItems.id, input.actionId), eq(actionItems.userId, ctx.user.id)));
+          .set({
+            status: "dismissed",
+            completedAt: null,
+            updatedAt: new Date(),
+          })
+          .where(
+            and(
+              eq(actionItems.id, input.actionId),
+              eq(actionItems.userId, ctx.user.id)
+            )
+          );
         await audit({
           userId: ctx.user.id,
           action: "dismiss_action_item",
@@ -1320,10 +1630,12 @@ export const appRouter = router({
     }),
 
     checkForChanges: protectedProcedure
-      .input(z.object({
-        daysBack: z.number().min(1).max(365).default(30),
-        scanFirst: z.boolean().default(false),
-      }))
+      .input(
+        z.object({
+          daysBack: z.number().min(1).max(365).default(30),
+          scanFirst: z.boolean().default(false),
+        })
+      )
       .mutation(async ({ ctx, input }) => {
         if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
         let queuedScanJobId: string | null = null;
@@ -1368,31 +1680,93 @@ export const appRouter = router({
   policy: router({
     /** Upload PDF files and create an analysis session */
     upload: protectedProcedure
-      .input(z.object({
-        files: z.array(z.object({
-          name: z.string(),
-          size: z.number(),
-          base64: z.string(),
-        })),
-      }))
+      .input(
+        z.object({
+          sessionId: z.string().optional(),
+          files: z.array(
+            z.object({
+              name: z.string(),
+              size: z.number(),
+              base64: z.string(),
+            })
+          ),
+        })
+      )
       .mutation(async ({ ctx, input }) => {
         if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
-        const sessionId = nanoid(16);
-        const uploadedFiles: Array<{ name: string; size: number; fileKey: string }> = [];
+        const requestedSessionId = input.sessionId?.trim() || null;
+        const sessionId = requestedSessionId ?? nanoid(16);
+        const uploadedFiles: Array<{
+          name: string;
+          size: number;
+          fileKey: string;
+        }> = [];
 
-        for (const file of input.files) {
-          const buffer = Buffer.from(file.base64, "base64");
-          const fileKey = `policies/${sessionId}/${nanoid(24)}.pdf`;
-          await storagePut(fileKey, buffer, "application/pdf");
-          uploadedFiles.push({ name: file.name, size: file.size, fileKey });
+        if (requestedSessionId) {
+          const existingAnalysis =
+            await getAnalysisBySessionId(requestedSessionId);
+          if (!existingAnalysis) {
+            throw new TRPCError({
+              code: "NOT_FOUND",
+              message: "לא מצאנו את הסריקה שביקשת לעדכן",
+            });
+          }
+          if (existingAnalysis.userId !== ctx.user.id) {
+            throw new TRPCError({
+              code: "FORBIDDEN",
+              message: "אין לך הרשאה לעדכן את הסריקה הזאת",
+            });
+          }
+          if (existingAnalysis.status === "processing") {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message:
+                "אי אפשר להוסיף קבצים בזמן שהסריקה בעיבוד. נסה שוב בעוד רגע.",
+            });
+          }
         }
 
-        await createAnalysis({
-          sessionId,
-          userId: ctx.user.id,
-          files: uploadedFiles,
-          status: "pending",
-        });
+        try {
+          for (const file of input.files) {
+            const buffer = Buffer.from(file.base64, "base64");
+            const fileKey = `policies/${sessionId}/${nanoid(24)}.pdf`;
+            await storagePut(fileKey, buffer, "application/pdf");
+            uploadedFiles.push({ name: file.name, size: file.size, fileKey });
+          }
+        } catch (error) {
+          await Promise.all(
+            uploadedFiles.map(file =>
+              storageDelete(file.fileKey).catch(() => {})
+            )
+          );
+          throw error;
+        }
+
+        let totalFileCount = uploadedFiles.length;
+        try {
+          if (requestedSessionId) {
+            const nextFiles = await appendFilesToAnalysis(
+              requestedSessionId,
+              ctx.user.id,
+              uploadedFiles
+            );
+            totalFileCount = nextFiles.length;
+          } else {
+            await createAnalysis({
+              sessionId,
+              userId: ctx.user.id,
+              files: uploadedFiles,
+              status: "pending",
+            });
+          }
+        } catch (error) {
+          await Promise.all(
+            uploadedFiles.map(file =>
+              storageDelete(file.fileKey).catch(() => {})
+            )
+          );
+          throw error;
+        }
 
         // Audit log
         await audit({
@@ -1400,23 +1774,33 @@ export const appRouter = router({
           action: "upload_file",
           resource: "file",
           resourceId: sessionId,
-          details: JSON.stringify({ fileCount: uploadedFiles.length, fileNames: uploadedFiles.map(f => f.name) }),
+          details: JSON.stringify({
+            mode: requestedSessionId ? "append" : "create",
+            fileCount: uploadedFiles.length,
+            totalFileCount,
+            fileNames: uploadedFiles.map(f => f.name),
+          }),
         });
 
         policyAnalysisWorker.nudge();
 
-        return { sessionId, files: uploadedFiles };
+        return { sessionId, files: uploadedFiles, totalFileCount };
       }),
 
     createManualEntry: protectedProcedure
-      .input(z.object({
-        company: z.string().min(1).max(160),
-        category: z.enum(["health", "life", "car", "home"]),
-        monthlyPremium: z.number().min(0).max(100000).nullable().optional(),
-        startDate: z.string().nullable().optional(),
-        endDate: z.string().nullable().optional(),
-        coveredMembers: z.array(z.string().min(1).max(120)).max(20).optional(),
-      }))
+      .input(
+        z.object({
+          company: z.string().min(1).max(160),
+          category: z.enum(["health", "life", "car", "home"]),
+          monthlyPremium: z.number().min(0).max(100000).nullable().optional(),
+          startDate: z.string().nullable().optional(),
+          endDate: z.string().nullable().optional(),
+          coveredMembers: z
+            .array(z.string().min(1).max(120))
+            .max(20)
+            .optional(),
+        })
+      )
       .mutation(async ({ ctx, input }) => {
         if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
         const sessionId = nanoid(16);
@@ -1464,10 +1848,19 @@ export const appRouter = router({
         if (!analysis.userId || analysis.userId !== ctx.user.id) {
           throw new TRPCError({ code: "FORBIDDEN", message: "Access denied" });
         }
-        const files = analysis.files as Array<{ name: string; fileKey?: string; url?: string }>;
-        const fileExists = files.some(f => (f.fileKey || f.url) === input.fileKey);
+        const files = analysis.files as Array<{
+          name: string;
+          fileKey?: string;
+          url?: string;
+        }>;
+        const fileExists = files.some(
+          f => (f.fileKey || f.url) === input.fileKey
+        );
         if (!fileExists) {
-          throw new TRPCError({ code: "FORBIDDEN", message: "File not found in this analysis" });
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "File not found in this analysis",
+          });
         }
         const { url } = await storageGet(input.fileKey);
         // Audit log
@@ -1508,7 +1901,10 @@ export const appRouter = router({
         policyAnalysisWorker.nudge();
 
         return {
-          status: analysis.status === "processing" ? "processing" as const : "queued" as const,
+          status:
+            analysis.status === "processing"
+              ? ("processing" as const)
+              : ("queued" as const),
           result: null,
         };
       }),
@@ -1551,10 +1947,12 @@ export const appRouter = router({
 
     /** Chat Q&A about the analyzed policy (ownership verified) */
     chat: protectedProcedure
-      .input(z.object({
-        sessionId: z.string(),
-        message: z.string(),
-      }))
+      .input(
+        z.object({
+          sessionId: z.string(),
+          message: z.string(),
+        })
+      )
       .mutation(async ({ ctx, input }) => {
         if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
         const analysis = await getAnalysisBySessionId(input.sessionId);
@@ -1594,9 +1992,10 @@ export const appRouter = router({
 
         const response = await invokeLLM({ messages });
 
-        const assistantContent = typeof response.choices[0]?.message?.content === "string"
-          ? response.choices[0].message.content
-          : "";
+        const assistantContent =
+          typeof response.choices[0]?.message?.content === "string"
+            ? response.choices[0].message.content
+            : "";
 
         // Save assistant response
         await addChatMessage({
@@ -1656,7 +2055,7 @@ export const appRouter = router({
         ]);
 
         const categoryAnalyses = allAnalyses.filter(
-          (analysis) =>
+          analysis =>
             analysis.status === "completed" &&
             analysis.analysisResult &&
             resolveAnalysisCategoryForSummary(analysis) === input.category
@@ -1673,19 +2072,24 @@ export const appRouter = router({
           .createHash("sha256")
           .update(
             categoryAnalyses
-              .map((a) => `${a.sessionId}:${new Date(a.updatedAt).getTime()}`)
+              .map(a => `${a.sessionId}:${new Date(a.updatedAt).getTime()}`)
               .sort()
               .join("|")
           )
           .digest("hex");
 
-        const cached = await getCategorySummaryCache(ctx.user.id, input.category);
+        const cached = await getCategorySummaryCache(
+          ctx.user.id,
+          input.category
+        );
         if (cached && cached.dataHash === dataHash && cached.summaryData) {
           return cached.summaryData as InsuranceCategoryLlmSummary;
         }
 
         const categoryTitle = INSURANCE_CATEGORY_TITLES[input.category];
-        const profileContext = profile ? buildProfileContext(profile) : "לא הוזן פרופיל מפורט";
+        const profileContext = profile
+          ? buildProfileContext(profile)
+          : "לא הוזן פרופיל מפורט";
         const metrics = buildCategorySummaryMetrics(categoryAnalyses);
         const payload = buildCategorySummaryPayload(categoryAnalyses);
         const summarySessionId = `category-summary-${ctx.user.id}-${input.category}`;
@@ -1729,7 +2133,10 @@ ${JSON.stringify(payload, null, 2)}`,
                         id: { type: "string" },
                         title: { type: "string" },
                         description: { type: "string" },
-                        tone: { type: "string", enum: ["warning", "info", "success"] },
+                        tone: {
+                          type: "string",
+                          enum: ["warning", "info", "success"],
+                        },
                       },
                       required: ["id", "title", "description", "tone"],
                       additionalProperties: false,
@@ -1744,7 +2151,12 @@ ${JSON.stringify(payload, null, 2)}`,
                     items: { type: "string" },
                   },
                 },
-                required: ["overview", "highlights", "recommendedActions", "recommendedQuestions"],
+                required: [
+                  "overview",
+                  "highlights",
+                  "recommendedActions",
+                  "recommendedQuestions",
+                ],
                 additionalProperties: false,
               },
             },
@@ -1752,7 +2164,8 @@ ${JSON.stringify(payload, null, 2)}`,
         });
 
         const content = extractLLMContent(response);
-        const parsed = parseLLMJson<Omit<InsuranceCategoryLlmSummary, "category">>(content);
+        const parsed =
+          parseLLMJson<Omit<InsuranceCategoryLlmSummary, "category">>(content);
         const result: InsuranceCategoryLlmSummary = {
           category: input.category,
           overview: parsed.overview,
@@ -1761,7 +2174,12 @@ ${JSON.stringify(payload, null, 2)}`,
           recommendedQuestions: parsed.recommendedQuestions,
         };
 
-        await upsertCategorySummaryCache(ctx.user.id, input.category, result, dataHash);
+        await upsertCategorySummaryCache(
+          ctx.user.id,
+          input.category,
+          result,
+          dataHash
+        );
 
         const usage = response.usage;
         if (usage) {
@@ -1826,12 +2244,17 @@ ${JSON.stringify(payload, null, 2)}`,
 
     clearInFlightQueue: protectedProcedure.mutation(async ({ ctx }) => {
       if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
-      const { deletedSessionIds } = await deleteInFlightAnalysesForUser(ctx.user.id);
+      const { deletedSessionIds } = await deleteInFlightAnalysesForUser(
+        ctx.user.id
+      );
       await audit({
         userId: ctx.user.id,
         action: "clear_inflight_analysis_queue",
         resource: "analysis",
-        details: JSON.stringify({ count: deletedSessionIds.length, sessionIds: deletedSessionIds }),
+        details: JSON.stringify({
+          count: deletedSessionIds.length,
+          sessionIds: deletedSessionIds,
+        }),
       });
       return { deletedSessionIds, deletedCount: deletedSessionIds.length };
     }),
@@ -1847,10 +2270,12 @@ ${JSON.stringify(payload, null, 2)}`,
   gmail: router({
     /** Get Gmail OAuth URL for connecting a user's Gmail account */
     getAuthUrl: protectedProcedure
-      .input(z.object({
-        redirectUri: z.string().optional(),
-        returnTo: z.string().optional(),
-      }))
+      .input(
+        z.object({
+          redirectUri: z.string().optional(),
+          returnTo: z.string().optional(),
+        })
+      )
       .query(async ({ ctx, input }) => {
         if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
         const exp = Math.floor(Date.now() / 1000) + 600;
@@ -1869,11 +2294,15 @@ ${JSON.stringify(payload, null, 2)}`,
       .input(z.object({ code: z.string(), redirectUri: z.string() }))
       .mutation(async ({ ctx, input }) => {
         if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
-        const { accessToken, refreshToken, email, expiresAt } = await exchangeCodeForTokens(
-          input.code,
-          input.redirectUri
+        const { accessToken, refreshToken, email, expiresAt } =
+          await exchangeCodeForTokens(input.code, input.redirectUri);
+        await saveGmailConnection(
+          ctx.user.id,
+          accessToken,
+          refreshToken,
+          email,
+          expiresAt
         );
-        await saveGmailConnection(ctx.user.id, accessToken, refreshToken, email, expiresAt);
         return { success: true, email };
       }),
 
@@ -1882,7 +2311,7 @@ ${JSON.stringify(payload, null, 2)}`,
       const connections = await getAllGmailConnections(ctx.user.id);
       return {
         connected: connections.length > 0,
-        connections: connections.map((c) => ({
+        connections: connections.map(c => ({
           id: c.id,
           email: c.email,
           lastSyncedAt: c.lastSyncedAt,
@@ -1897,7 +2326,7 @@ ${JSON.stringify(payload, null, 2)}`,
           .object({
             jobId: z.string().min(1).max(64).optional(),
           })
-          .optional(),
+          .optional()
       )
       .query(async ({ ctx, input }) => {
         if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
@@ -1963,14 +2392,15 @@ ${JSON.stringify(payload, null, 2)}`,
           .limit(input.limit);
         return invoices.map(inv => {
           try {
-            const decrypted = inv.extractedData && typeof inv.extractedData === 'string'
-              ? decryptJson(inv.extractedData) as Record<string, unknown>
-              : inv.extractedData as Record<string, unknown> | null;
+            const decrypted =
+              inv.extractedData && typeof inv.extractedData === "string"
+                ? (decryptJson(inv.extractedData) as Record<string, unknown>)
+                : (inv.extractedData as Record<string, unknown> | null);
 
-            if (decrypted?.pdfUrl && typeof decrypted.pdfUrl === 'string') {
+            if (decrypted?.pdfUrl && typeof decrypted.pdfUrl === "string") {
               try {
-                const rawUrl = decrypted.pdfUrl.split('?')[0];
-                const fileKey = rawUrl.replace(/^\/api\/files\//, '');
+                const rawUrl = decrypted.pdfUrl.split("?")[0];
+                const fileKey = rawUrl.replace(/^\/api\/files\//, "");
                 if (fileKey) {
                   decrypted.pdfUrl = generateSignedFileUrl(fileKey);
                 }
@@ -2009,13 +2439,18 @@ ${JSON.stringify(payload, null, 2)}`,
       }),
 
     importPolicyPdf: protectedProcedure
-      .input(z.object({
-        connectionId: z.number().int().positive(),
-        gmailMessageId: z.string().min(1).max(128),
-        attachmentId: z.string().min(1).max(255),
-        filename: z.string().min(1).max(255),
-        insuranceCategory: z.enum(["health", "life", "car", "home"]).nullable().optional(),
-      }))
+      .input(
+        z.object({
+          connectionId: z.number().int().positive(),
+          gmailMessageId: z.string().min(1).max(128),
+          attachmentId: z.string().min(1).max(255),
+          filename: z.string().min(1).max(255),
+          insuranceCategory: z
+            .enum(["health", "life", "car", "home"])
+            .nullable()
+            .optional(),
+        })
+      )
       .mutation(async ({ ctx, input }) => {
         if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
         const result = await importPolicyPdfFromGmail({
@@ -2069,15 +2504,30 @@ ${JSON.stringify(payload, null, 2)}`,
       }),
 
     addManualExpense: protectedProcedure
-      .input(z.object({
-        provider: z.string().min(1).max(128),
-        amount: z.number().positive(),
-        category: z.enum(["תקשורת", "חשמל", "מים", "ארנונה", "ביטוח", "בנק", "רכב", "אחר"]),
-        invoiceDate: z.string(),
-        status: z.enum(["pending", "paid", "overdue", "unknown"]).default("paid"),
-        flowDirection: z.enum(["expense", "income", "unknown"]).default("expense"),
-        description: z.string().optional(),
-      }))
+      .input(
+        z.object({
+          provider: z.string().min(1).max(128),
+          amount: z.number().positive(),
+          category: z.enum([
+            "תקשורת",
+            "חשמל",
+            "מים",
+            "ארנונה",
+            "ביטוח",
+            "בנק",
+            "רכב",
+            "אחר",
+          ]),
+          invoiceDate: z.string(),
+          status: z
+            .enum(["pending", "paid", "overdue", "unknown"])
+            .default("paid"),
+          flowDirection: z
+            .enum(["expense", "income", "unknown"])
+            .default("expense"),
+          description: z.string().optional(),
+        })
+      )
       .mutation(async ({ ctx, input }) => {
         if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
         const db = await getDb();
@@ -2086,37 +2536,49 @@ ${JSON.stringify(payload, null, 2)}`,
         const extractedData: Record<string, unknown> = {};
         if (input.description) extractedData.description = input.description;
         extractedData.flowDirection = input.flowDirection;
-        const [inserted] = await db.insert(smartInvoices).values({
-          userId: ctx.user.id,
-          gmailConnectionId: null,
-          sourceEmail: null,
-          gmailMessageId: manualId,
-          provider: input.provider,
-          category: input.category,
-          amount: String(input.amount),
-          invoiceDate: new Date(input.invoiceDate),
-          status: input.status,
-          flowDirection: input.flowDirection,
-          subject: null,
-          rawText: null,
-          extractedData: Object.keys(extractedData).length > 0 ? encryptJson(extractedData) : null,
-          parsed: true,
-        }).returning({ id: smartInvoices.id });
+        const [inserted] = await db
+          .insert(smartInvoices)
+          .values({
+            userId: ctx.user.id,
+            gmailConnectionId: null,
+            sourceEmail: null,
+            gmailMessageId: manualId,
+            provider: input.provider,
+            category: input.category,
+            amount: String(input.amount),
+            invoiceDate: new Date(input.invoiceDate),
+            status: input.status,
+            flowDirection: input.flowDirection,
+            subject: null,
+            rawText: null,
+            extractedData:
+              Object.keys(extractedData).length > 0
+                ? encryptJson(extractedData)
+                : null,
+            parsed: true,
+          })
+          .returning({ id: smartInvoices.id });
         await audit({
           userId: ctx.user.id,
           action: "add_manual_expense",
           resource: "invoice",
           resourceId: String(inserted.id),
-          details: JSON.stringify({ provider: input.provider, amount: input.amount, flowDirection: input.flowDirection }),
+          details: JSON.stringify({
+            provider: input.provider,
+            amount: input.amount,
+            flowDirection: input.flowDirection,
+          }),
         });
         return { id: inserted.id };
       }),
 
     updateInvoiceCategory: protectedProcedure
-      .input(z.object({
-        invoiceId: z.number(),
-        customCategory: z.string().min(1).max(128),
-      }))
+      .input(
+        z.object({
+          invoiceId: z.number(),
+          customCategory: z.string().min(1).max(128),
+        })
+      )
       .mutation(async ({ ctx, input }) => {
         if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
         const db = await getDb();
@@ -2125,10 +2587,19 @@ ${JSON.stringify(payload, null, 2)}`,
         const [invoice] = await db
           .select({ id: smartInvoices.id, provider: smartInvoices.provider })
           .from(smartInvoices)
-          .where(and(eq(smartInvoices.id, input.invoiceId), eq(smartInvoices.userId, ctx.user.id)))
+          .where(
+            and(
+              eq(smartInvoices.id, input.invoiceId),
+              eq(smartInvoices.userId, ctx.user.id)
+            )
+          )
           .limit(1);
 
-        if (!invoice) throw new TRPCError({ code: "NOT_FOUND", message: "Invoice not found" });
+        if (!invoice)
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: "Invoice not found",
+          });
 
         await db
           .update(smartInvoices)
@@ -2146,8 +2617,14 @@ ${JSON.stringify(payload, null, 2)}`,
               customCategory: input.customCategory,
             })
             .onConflictDoUpdate({
-              target: [categoryMappings.userId, categoryMappings.providerPattern],
-              set: { customCategory: input.customCategory, updatedAt: new Date() },
+              target: [
+                categoryMappings.userId,
+                categoryMappings.providerPattern,
+              ],
+              set: {
+                customCategory: input.customCategory,
+                updatedAt: new Date(),
+              },
             });
 
           await db
@@ -2166,7 +2643,10 @@ ${JSON.stringify(payload, null, 2)}`,
           action: "update_invoice_category",
           resource: "invoice",
           resourceId: String(input.invoiceId),
-          details: JSON.stringify({ customCategory: input.customCategory, provider: invoice.provider }),
+          details: JSON.stringify({
+            customCategory: input.customCategory,
+            provider: invoice.provider,
+          }),
         });
 
         return { success: true };
@@ -2187,9 +2667,10 @@ ${JSON.stringify(payload, null, 2)}`,
             ...inv,
             subject: inv.subject ? decryptField(inv.subject) : inv.subject,
             rawText: inv.rawText ? decryptField(inv.rawText) : inv.rawText,
-            extractedData: inv.extractedData && typeof inv.extractedData === 'string'
-              ? decryptJson(inv.extractedData)
-              : inv.extractedData,
+            extractedData:
+              inv.extractedData && typeof inv.extractedData === "string"
+                ? decryptJson(inv.extractedData)
+                : inv.extractedData,
           };
         } catch {
           return { ...inv, extractedData: null };
@@ -2205,7 +2686,10 @@ ${JSON.stringify(payload, null, 2)}`,
     /** Get platform-wide stats (admin only) */
     platformStats: protectedProcedure.query(async ({ ctx }) => {
       if (ctx.user?.role !== "admin") {
-        throw new TRPCError({ code: "FORBIDDEN", message: "Admin access required" });
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Admin access required",
+        });
       }
       // Audit log
       await audit({
@@ -2219,7 +2703,10 @@ ${JSON.stringify(payload, null, 2)}`,
     /** Get all users with their usage summary (admin only) */
     allUsers: protectedProcedure.query(async ({ ctx }) => {
       if (ctx.user?.role !== "admin") {
-        throw new TRPCError({ code: "FORBIDDEN", message: "Admin access required" });
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Admin access required",
+        });
       }
       // Audit log
       await audit({
@@ -2235,14 +2722,20 @@ ${JSON.stringify(payload, null, 2)}`,
       .input(z.object({ userId: z.number() }))
       .query(async ({ ctx, input }) => {
         if (ctx.user?.role !== "admin") {
-          throw new TRPCError({ code: "FORBIDDEN", message: "Admin access required" });
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "Admin access required",
+          });
         }
         return getUserUsageStats(input.userId);
       }),
 
     dashboardStats: protectedProcedure.query(async ({ ctx }) => {
       if (ctx.user?.role !== "admin") {
-        throw new TRPCError({ code: "FORBIDDEN", message: "Admin access required" });
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Admin access required",
+        });
       }
       await audit({
         userId: ctx.user.id,
@@ -2253,42 +2746,66 @@ ${JSON.stringify(payload, null, 2)}`,
     }),
 
     recentActivity: protectedProcedure
-      .input(z.object({ limit: z.number().min(1).max(200).default(100) }).optional())
+      .input(
+        z.object({ limit: z.number().min(1).max(200).default(100) }).optional()
+      )
       .query(async ({ ctx, input }) => {
         if (ctx.user?.role !== "admin") {
-          throw new TRPCError({ code: "FORBIDDEN", message: "Admin access required" });
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "Admin access required",
+          });
         }
         const logs = await getRecentAuditLogs(input?.limit ?? 100);
         const { getDb: getDbFn } = await import("./db");
         const db = await getDbFn();
-        if (!db) return logs.map(l => ({ ...l, userName: null, userEmail: null }));
+        if (!db)
+          return logs.map(l => ({ ...l, userName: null, userEmail: null }));
         const { users: usersTable } = await import("../drizzle/schema");
-        const allUsers = await db.select({ id: usersTable.id, name: usersTable.name, email: usersTable.email }).from(usersTable);
+        const allUsers = await db
+          .select({
+            id: usersTable.id,
+            name: usersTable.name,
+            email: usersTable.email,
+          })
+          .from(usersTable);
         const userMap = new Map(allUsers.map(u => [u.id, u]));
         return logs.map(l => ({
           ...l,
-          userName: l.userId ? userMap.get(l.userId)?.name ?? null : null,
-          userEmail: l.userId ? userMap.get(l.userId)?.email ?? null : null,
+          userName: l.userId ? (userMap.get(l.userId)?.name ?? null) : null,
+          userEmail: l.userId ? (userMap.get(l.userId)?.email ?? null) : null,
         }));
       }),
 
     securityEvents: protectedProcedure
-      .input(z.object({ limit: z.number().min(1).max(200).default(100) }).optional())
+      .input(
+        z.object({ limit: z.number().min(1).max(200).default(100) }).optional()
+      )
       .query(async ({ ctx, input }) => {
         if (ctx.user?.role !== "admin") {
-          throw new TRPCError({ code: "FORBIDDEN", message: "Admin access required" });
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "Admin access required",
+          });
         }
         const events = await getSecurityEvents(input?.limit ?? 100);
         const { getDb: getDbFn } = await import("./db");
         const db = await getDbFn();
-        if (!db) return events.map(e => ({ ...e, userName: null, userEmail: null }));
+        if (!db)
+          return events.map(e => ({ ...e, userName: null, userEmail: null }));
         const { users: usersTable } = await import("../drizzle/schema");
-        const allUsers = await db.select({ id: usersTable.id, name: usersTable.name, email: usersTable.email }).from(usersTable);
+        const allUsers = await db
+          .select({
+            id: usersTable.id,
+            name: usersTable.name,
+            email: usersTable.email,
+          })
+          .from(usersTable);
         const userMap = new Map(allUsers.map(u => [u.id, u]));
         return events.map(e => ({
           ...e,
-          userName: e.userId ? userMap.get(e.userId)?.name ?? null : null,
-          userEmail: e.userId ? userMap.get(e.userId)?.email ?? null : null,
+          userName: e.userId ? (userMap.get(e.userId)?.name ?? null) : null,
+          userEmail: e.userId ? (userMap.get(e.userId)?.email ?? null) : null,
         }));
       }),
 
@@ -2296,37 +2813,54 @@ ${JSON.stringify(payload, null, 2)}`,
       .input(z.object({ userId: z.number() }))
       .query(async ({ ctx, input }) => {
         if (ctx.user?.role !== "admin") {
-          throw new TRPCError({ code: "FORBIDDEN", message: "Admin access required" });
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "Admin access required",
+          });
         }
         return getUserDetailedSummary(input.userId);
       }),
 
     llmBreakdown: protectedProcedure.query(async ({ ctx }) => {
       if (ctx.user?.role !== "admin") {
-        throw new TRPCError({ code: "FORBIDDEN", message: "Admin access required" });
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Admin access required",
+        });
       }
       return getLLMUsageBreakdown();
     }),
 
     systemHealth: protectedProcedure.query(async ({ ctx }) => {
       if (ctx.user?.role !== "admin") {
-        throw new TRPCError({ code: "FORBIDDEN", message: "Admin access required" });
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Admin access required",
+        });
       }
       return getSystemHealth();
     }),
 
     newUsersOverTime: protectedProcedure
-      .input(z.object({ days: z.number().min(1).max(365).default(30) }).optional())
+      .input(
+        z.object({ days: z.number().min(1).max(365).default(30) }).optional()
+      )
       .query(async ({ ctx, input }) => {
         if (ctx.user?.role !== "admin") {
-          throw new TRPCError({ code: "FORBIDDEN", message: "Admin access required" });
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "Admin access required",
+          });
         }
         return getNewUsersOverTime(input?.days ?? 30);
       }),
 
     categoryDistribution: protectedProcedure.query(async ({ ctx }) => {
       if (ctx.user?.role !== "admin") {
-        throw new TRPCError({ code: "FORBIDDEN", message: "Admin access required" });
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Admin access required",
+        });
       }
       return getCategoryDistribution();
     }),

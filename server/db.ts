@@ -1,10 +1,35 @@
 import { eq, desc, sql, and, asc, inArray } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import pg from "pg";
-import { InsertUser, users, analyses, chatMessages, apiUsageLogs, userProfiles, gmailConnections, smartInvoices, auditLogs, familyMembers, documentClassifications, categorySummaryCache, type InsertAnalysis, type InsertChatMessage, type InsertApiUsageLog, type InsertUserProfile, type InsertFamilyMember, type InsertDocumentClassification, type InsertCategorySummaryCache } from "../drizzle/schema";
-import { ENV } from './_core/env';
+import {
+  InsertUser,
+  users,
+  analyses,
+  chatMessages,
+  apiUsageLogs,
+  userProfiles,
+  gmailConnections,
+  smartInvoices,
+  auditLogs,
+  familyMembers,
+  documentClassifications,
+  categorySummaryCache,
+  type InsertAnalysis,
+  type InsertChatMessage,
+  type InsertApiUsageLog,
+  type InsertUserProfile,
+  type InsertFamilyMember,
+  type InsertDocumentClassification,
+  type InsertCategorySummaryCache,
+} from "../drizzle/schema";
+import { ENV } from "./_core/env";
 import type { PolicyAnalysis } from "@shared/insurance";
-import { encryptField, decryptField, encryptJson, decryptJson } from "./encryption";
+import {
+  encryptField,
+  decryptField,
+  encryptJson,
+  decryptJson,
+} from "./encryption";
 import { storageDelete } from "./storage";
 import { deleteAnalysisArtifacts } from "./analysisCleanup";
 
@@ -13,8 +38,11 @@ let _db: ReturnType<typeof drizzle> | null = null;
 
 function getPool(): pg.Pool {
   if (!_pool && process.env.DATABASE_URL) {
-    _pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, max: 10 });
-    _pool.on("error", (err) => {
+    _pool = new pg.Pool({
+      connectionString: process.env.DATABASE_URL,
+      max: 10,
+    });
+    _pool.on("error", err => {
       console.error("[Database] Pool error:", err.message);
     });
   }
@@ -71,8 +99,8 @@ export async function upsertUser(user: InsertUser): Promise<void> {
       values.role = user.role;
       updateSet.role = user.role;
     } else if (user.email && user.email === ENV.adminEmail) {
-      values.role = 'admin';
-      updateSet.role = 'admin';
+      values.role = "admin";
+      updateSet.role = "admin";
     }
 
     if (!values.lastSignedIn) {
@@ -102,7 +130,11 @@ export async function getUserByOpenId(openId: string) {
     return undefined;
   }
 
-  const result = await db.select().from(users).where(eq(users.openId, openId)).limit(1);
+  const result = await db
+    .select()
+    .from(users)
+    .where(eq(users.openId, openId))
+    .limit(1);
 
   return result.length > 0 ? result[0] : undefined;
 }
@@ -143,7 +175,9 @@ type EncryptedAnalysisJsonEnvelope = {
   ciphertext: string;
 };
 
-function isEncryptedAnalysisJsonEnvelope(value: unknown): value is EncryptedAnalysisJsonEnvelope {
+function isEncryptedAnalysisJsonEnvelope(
+  value: unknown
+): value is EncryptedAnalysisJsonEnvelope {
   if (!value || typeof value !== "object") {
     return false;
   }
@@ -158,7 +192,9 @@ export function serializeAnalysisJsonCompat(value: unknown): string {
   } satisfies EncryptedAnalysisJsonEnvelope);
 }
 
-export function decodeAnalysisJsonCompat<T = unknown>(value: unknown): T | null {
+export function decodeAnalysisJsonCompat<T = unknown>(
+  value: unknown
+): T | null {
   if (value == null) {
     return null;
   }
@@ -192,8 +228,13 @@ function decryptAnalysisData(row: any): any {
   if (decrypted.extractedText && typeof decrypted.extractedText === "string") {
     decrypted.extractedText = decryptField(decrypted.extractedText);
   }
-  if (decrypted.analysisResult !== undefined && decrypted.analysisResult !== null) {
-    decrypted.analysisResult = decodeAnalysisJsonCompat(decrypted.analysisResult);
+  if (
+    decrypted.analysisResult !== undefined &&
+    decrypted.analysisResult !== null
+  ) {
+    decrypted.analysisResult = decodeAnalysisJsonCompat(
+      decrypted.analysisResult
+    );
   }
   if (decrypted.errorMessage && typeof decrypted.errorMessage === "string") {
     decrypted.errorMessage = decryptField(decrypted.errorMessage);
@@ -202,10 +243,16 @@ function decryptAnalysisData(row: any): any {
 }
 
 function normalizeAnalysisFile(file: CreateAnalysisInput["files"][number]) {
-  const name = typeof file.name === "string" && file.name.trim() ? file.name.trim() : "file";
-  const size = typeof file.size === "number" && Number.isFinite(file.size) && file.size >= 0
-    ? Math.floor(file.size)
-    : 0;
+  const name =
+    typeof file.name === "string" && file.name.trim()
+      ? file.name.trim()
+      : "file";
+  const size =
+    typeof file.size === "number" &&
+    Number.isFinite(file.size) &&
+    file.size >= 0
+      ? Math.floor(file.size)
+      : 0;
   const normalized: {
     name: string;
     size: number;
@@ -214,17 +261,24 @@ function normalizeAnalysisFile(file: CreateAnalysisInput["files"][number]) {
     mimeType?: string;
   } = { name, size };
 
-  const fileKey = typeof file.fileKey === "string" && file.fileKey.trim() ? file.fileKey.trim() : "";
+  const fileKey =
+    typeof file.fileKey === "string" && file.fileKey.trim()
+      ? file.fileKey.trim()
+      : "";
   if (fileKey) {
     normalized.fileKey = fileKey;
   }
 
-  const url = typeof file.url === "string" && file.url.trim() ? file.url.trim() : "";
+  const url =
+    typeof file.url === "string" && file.url.trim() ? file.url.trim() : "";
   if (url) {
     normalized.url = url;
   }
 
-  const mimeType = typeof file.mimeType === "string" && file.mimeType.trim() ? file.mimeType.trim() : "";
+  const mimeType =
+    typeof file.mimeType === "string" && file.mimeType.trim()
+      ? file.mimeType.trim()
+      : "";
   if (mimeType) {
     normalized.mimeType = mimeType;
   }
@@ -251,10 +305,62 @@ export async function createAnalysis(data: CreateAnalysisInput) {
   return data.sessionId;
 }
 
+export async function appendFilesToAnalysis(
+  sessionId: string,
+  userId: number,
+  files: CreateAnalysisInput["files"]
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const analysis = await getAnalysisBySessionId(sessionId);
+  if (!analysis || analysis.userId !== userId) {
+    throw new Error("Unauthorized");
+  }
+  if (analysis.status === "processing") {
+    throw new Error(
+      "אי אפשר להוסיף קבצים בזמן שהסריקה בעיבוד. נסה שוב בעוד רגע."
+    );
+  }
+
+  const existingFiles = Array.isArray(analysis.files)
+    ? normalizeAnalysisFiles(analysis.files as CreateAnalysisInput["files"])
+    : [];
+  const appendedFiles = normalizeAnalysisFiles(files);
+  const nextFiles = [...existingFiles, ...appendedFiles];
+
+  await db
+    .update(analyses)
+    .set({
+      files: serializeAnalysisJsonCompat(nextFiles),
+      extractedText: null,
+      analysisResult: null,
+      status: "pending",
+      attemptCount: 0,
+      processedFileCount: 0,
+      activeBatchFileCount: 0,
+      lockedBy: null,
+      lastHeartbeatAt: null,
+      startedAt: null,
+      completedAt: null,
+      nextRetryAt: null,
+      insuranceCategory: null,
+      errorMessage: null,
+      updatedAt: new Date(),
+    })
+    .where(eq(analyses.sessionId, sessionId));
+
+  return nextFiles;
+}
+
 export async function getAnalysisBySessionId(sessionId: string) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const result = await db.select().from(analyses).where(eq(analyses.sessionId, sessionId)).limit(1);
+  const result = await db
+    .select()
+    .from(analyses)
+    .where(eq(analyses.sessionId, sessionId))
+    .limit(1);
   return result.length > 0 ? decryptAnalysisData(result[0]) : null;
 }
 
@@ -270,16 +376,22 @@ export async function updateAnalysisStatus(
     updatedAt: new Date(),
   };
   if (data?.extractedText !== undefined) {
-    updateData.extractedText = data.extractedText == null ? null : encryptField(data.extractedText);
+    updateData.extractedText =
+      data.extractedText == null ? null : encryptField(data.extractedText);
   }
   if (data?.analysisResult !== undefined) {
-    updateData.analysisResult = data.analysisResult == null ? null : serializeAnalysisJsonCompat(data.analysisResult);
+    updateData.analysisResult =
+      data.analysisResult == null
+        ? null
+        : serializeAnalysisJsonCompat(data.analysisResult);
   }
   if (data?.errorMessage !== undefined) {
-    updateData.errorMessage = data.errorMessage == null ? null : encryptField(data.errorMessage);
+    updateData.errorMessage =
+      data.errorMessage == null ? null : encryptField(data.errorMessage);
   }
   if (data?.insuranceCategory !== undefined) {
-    updateData.insuranceCategory = data.insuranceCategory as InsertAnalysis["insuranceCategory"];
+    updateData.insuranceCategory =
+      data.insuranceCategory as InsertAnalysis["insuranceCategory"];
   }
   if (data?.attemptCount !== undefined) {
     updateData.attemptCount = data.attemptCount;
@@ -305,14 +417,17 @@ export async function updateAnalysisStatus(
   if (data?.nextRetryAt !== undefined) {
     updateData.nextRetryAt = data.nextRetryAt;
   }
-  await db.update(analyses).set(updateData).where(eq(analyses.sessionId, sessionId));
+  await db
+    .update(analyses)
+    .set(updateData)
+    .where(eq(analyses.sessionId, sessionId));
 }
 
 const CLAIM_MAX_ATTEMPTS = 10;
 
 export function buildClaimNextPendingAnalysisCandidateQuery(
   now: Date,
-  staleBefore: Date,
+  staleBefore: Date
 ) {
   return sql`
     SELECT ${analyses.id}
@@ -336,7 +451,7 @@ export function buildClaimNextPendingAnalysisCandidateQuery(
 export function buildClaimNextPendingAnalysisUpdateQuery(
   candidateId: number,
   workerId: string,
-  now: Date,
+  now: Date
 ) {
   return sql`
     UPDATE ${analyses}
@@ -357,7 +472,9 @@ export function buildClaimNextPendingAnalysisUpdateQuery(
   `;
 }
 
-function mapSnakeToCamel(row: Record<string, unknown>): Record<string, unknown> {
+function mapSnakeToCamel(
+  row: Record<string, unknown>
+): Record<string, unknown> {
   const mapped: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(row)) {
     const camel = key.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
@@ -366,20 +483,23 @@ function mapSnakeToCamel(row: Record<string, unknown>): Record<string, unknown> 
   return mapped;
 }
 
-export async function claimNextPendingAnalysis(workerId: string, staleBefore: Date) {
+export async function claimNextPendingAnalysis(
+  workerId: string,
+  staleBefore: Date
+) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   const now = new Date();
-  const row = await db.transaction(async (tx) => {
+  const row = await db.transaction(async tx => {
     const candidateResult = await tx.execute(
-      buildClaimNextPendingAnalysisCandidateQuery(now, staleBefore),
+      buildClaimNextPendingAnalysisCandidateQuery(now, staleBefore)
     );
     const candidate = candidateResult.rows[0] as { id: number } | undefined;
     if (!candidate) {
       return null;
     }
     const updateResult = await tx.execute(
-      buildClaimNextPendingAnalysisUpdateQuery(candidate.id, workerId, now),
+      buildClaimNextPendingAnalysisUpdateQuery(candidate.id, workerId, now)
     );
     return updateResult.rows[0] ?? null;
   });
@@ -397,13 +517,23 @@ export async function heartbeatAnalysis(sessionId: string, workerId: string) {
       lastHeartbeatAt: new Date(),
       updatedAt: new Date(),
     })
-    .where(and(eq(analyses.sessionId, sessionId), eq(analyses.lockedBy, workerId), eq(analyses.status, "processing")));
+    .where(
+      and(
+        eq(analyses.sessionId, sessionId),
+        eq(analyses.lockedBy, workerId),
+        eq(analyses.status, "processing")
+      )
+    );
 }
 
-export async function updateAnalysisProcessingProgress(sessionId: string, workerId: string, data: {
-  processedFileCount?: number;
-  activeBatchFileCount?: number;
-}) {
+export async function updateAnalysisProcessingProgress(
+  sessionId: string,
+  workerId: string,
+  data: {
+    processedFileCount?: number;
+    activeBatchFileCount?: number;
+  }
+) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
@@ -421,13 +551,23 @@ export async function updateAnalysisProcessingProgress(sessionId: string, worker
   await db
     .update(analyses)
     .set(updateData)
-    .where(and(eq(analyses.sessionId, sessionId), eq(analyses.lockedBy, workerId), eq(analyses.status, "processing")));
+    .where(
+      and(
+        eq(analyses.sessionId, sessionId),
+        eq(analyses.lockedBy, workerId),
+        eq(analyses.status, "processing")
+      )
+    );
 }
 
-export async function completeAnalysis(sessionId: string, workerId: string, data: {
-  analysisResult: PolicyAnalysis;
-  insuranceCategory?: string | null;
-}) {
+export async function completeAnalysis(
+  sessionId: string,
+  workerId: string,
+  data: {
+    analysisResult: PolicyAnalysis;
+    insuranceCategory?: string | null;
+  }
+) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   const now = new Date();
@@ -436,7 +576,8 @@ export async function completeAnalysis(sessionId: string, workerId: string, data
     .set({
       status: "completed",
       analysisResult: serializeAnalysisJsonCompat(data.analysisResult),
-      insuranceCategory: (data.insuranceCategory ?? null) as InsertAnalysis["insuranceCategory"],
+      insuranceCategory: (data.insuranceCategory ??
+        null) as InsertAnalysis["insuranceCategory"],
       processedFileCount: 0,
       activeBatchFileCount: 0,
       errorMessage: null,
@@ -446,10 +587,16 @@ export async function completeAnalysis(sessionId: string, workerId: string, data
       nextRetryAt: null,
       updatedAt: now,
     })
-    .where(and(eq(analyses.sessionId, sessionId), eq(analyses.lockedBy, workerId)));
+    .where(
+      and(eq(analyses.sessionId, sessionId), eq(analyses.lockedBy, workerId))
+    );
 }
 
-export async function requeueAnalysis(sessionId: string, workerId: string, nextRetryAt: Date) {
+export async function requeueAnalysis(
+  sessionId: string,
+  workerId: string,
+  nextRetryAt: Date
+) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   const now = new Date();
@@ -466,10 +613,16 @@ export async function requeueAnalysis(sessionId: string, workerId: string, nextR
       completedAt: null,
       updatedAt: now,
     })
-    .where(and(eq(analyses.sessionId, sessionId), eq(analyses.lockedBy, workerId)));
+    .where(
+      and(eq(analyses.sessionId, sessionId), eq(analyses.lockedBy, workerId))
+    );
 }
 
-export async function failAnalysis(sessionId: string, workerId: string, errorMessage: string) {
+export async function failAnalysis(
+  sessionId: string,
+  workerId: string,
+  errorMessage: string
+) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   const now = new Date();
@@ -485,7 +638,9 @@ export async function failAnalysis(sessionId: string, workerId: string, errorMes
       nextRetryAt: null,
       updatedAt: now,
     })
-    .where(and(eq(analyses.sessionId, sessionId), eq(analyses.lockedBy, workerId)));
+    .where(
+      and(eq(analyses.sessionId, sessionId), eq(analyses.lockedBy, workerId))
+    );
 }
 
 export async function resetAnalysisForRetry(sessionId: string) {
@@ -562,7 +717,10 @@ export async function deleteAnalysis(sessionId: string, userId: number) {
     db,
     sessionId,
     userId,
-    files: analysis.files as Array<string | { fileKey?: string | null }> | null | undefined,
+    files: analysis.files as
+      | Array<string | { fileKey?: string | null }>
+      | null
+      | undefined,
     deleteStoredFile: storageDelete,
   });
 }
@@ -573,7 +731,12 @@ export async function deleteInFlightAnalysesForUser(userId: number) {
   const rows = await db
     .select({ sessionId: analyses.sessionId })
     .from(analyses)
-    .where(and(eq(analyses.userId, userId), inArray(analyses.status, ["pending", "processing"])));
+    .where(
+      and(
+        eq(analyses.userId, userId),
+        inArray(analyses.status, ["pending", "processing"])
+      )
+    );
   const deletedSessionIds: string[] = [];
   for (const row of rows) {
     await deleteAnalysis(row.sessionId, userId);
@@ -615,7 +778,10 @@ export async function logApiUsage(data: {
     return;
   }
   const totalTokens = data.promptTokens + data.completionTokens;
-  const costUsd = ((totalTokens / 1000) * getCostPer1kTokens(data.model)).toFixed(6);
+  const costUsd = (
+    (totalTokens / 1000) *
+    getCostPer1kTokens(data.model)
+  ).toFixed(6);
   const entry: InsertApiUsageLog = {
     userId: data.userId ?? null,
     sessionId: data.sessionId ?? null,
@@ -642,7 +808,10 @@ export async function getUserUsageStats(userId: number) {
     .where(eq(apiUsageLogs.userId, userId))
     .orderBy(desc(apiUsageLogs.createdAt));
   const totalTokens = rows.reduce((s, r) => s + r.totalTokens, 0);
-  const totalCost = rows.reduce((s, r) => s + parseFloat(r.costUsd as string), 0);
+  const totalCost = rows.reduce(
+    (s, r) => s + parseFloat(r.costUsd as string),
+    0
+  );
   const analyzeCount = rows.filter(r => r.action === "analyze").length;
   const chatCount = rows.filter(r => r.action === "chat").length;
   return { rows, totalTokens, totalCost, analyzeCount, chatCount };
@@ -673,8 +842,12 @@ export async function getAllUsersWithUsage() {
 export async function getPlatformStats() {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const [userCount] = await db.select({ count: sql<number>`COUNT(*)` }).from(users);
-  const [analysisCount] = await db.select({ count: sql<number>`COUNT(*)` }).from(analyses);
+  const [userCount] = await db
+    .select({ count: sql<number>`COUNT(*)` })
+    .from(users);
+  const [analysisCount] = await db
+    .select({ count: sql<number>`COUNT(*)` })
+    .from(analyses);
   const [usageTotals] = await db
     .select({
       totalTokens: sql<number>`COALESCE(SUM(${apiUsageLogs.totalTokens}), 0)`,
@@ -718,23 +891,43 @@ export async function getPlatformStats() {
 export async function getUserProfile(userId: number) {
   const db = await getDb();
   if (!db) return null;
-  const result = await db.select().from(userProfiles).where(eq(userProfiles.userId, userId)).limit(1);
+  const result = await db
+    .select()
+    .from(userProfiles)
+    .where(eq(userProfiles.userId, userId))
+    .limit(1);
   if (result.length === 0) return null;
   const profile = result[0];
   return {
     ...profile,
-    businessName: profile.businessName ? decryptField(profile.businessName) : profile.businessName,
-    businessTaxId: profile.businessTaxId ? decryptField(profile.businessTaxId) : profile.businessTaxId,
-    businessEmailDomains: profile.businessEmailDomains ? decryptField(profile.businessEmailDomains) : profile.businessEmailDomains,
+    businessName: profile.businessName
+      ? decryptField(profile.businessName)
+      : profile.businessName,
+    businessTaxId: profile.businessTaxId
+      ? decryptField(profile.businessTaxId)
+      : profile.businessTaxId,
+    businessEmailDomains: profile.businessEmailDomains
+      ? decryptField(profile.businessEmailDomains)
+      : profile.businessEmailDomains,
   };
 }
 
-export async function upsertUserProfile(userId: number, data: Omit<InsertUserProfile, "id" | "userId" | "createdAt" | "updatedAt">) {
+export async function upsertUserProfile(
+  userId: number,
+  data: Omit<InsertUserProfile, "id" | "userId" | "createdAt" | "updatedAt">
+) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
-  const preparedData: Omit<InsertUserProfile, "id" | "userId" | "createdAt" | "updatedAt"> = { ...data };
-  for (const field of ["businessName", "businessTaxId", "businessEmailDomains"] as const) {
+  const preparedData: Omit<
+    InsertUserProfile,
+    "id" | "userId" | "createdAt" | "updatedAt"
+  > = { ...data };
+  for (const field of [
+    "businessName",
+    "businessTaxId",
+    "businessEmailDomains",
+  ] as const) {
     const value = preparedData[field];
     if (value === undefined) continue;
     if (typeof value !== "string") {
@@ -775,7 +968,13 @@ interface DocumentClassificationInput {
   documentKey: string;
   sourceType: "analysis_file" | "invoice_pdf";
   sourceId?: string | null;
-  manualType: "insurance" | "money" | "health" | "education" | "family" | "other";
+  manualType:
+    | "insurance"
+    | "money"
+    | "health"
+    | "education"
+    | "family"
+    | "other";
   familyMemberId?: number | null;
 }
 
@@ -816,7 +1015,8 @@ function calculateAgeFromBirthDate(birthDate: Date | null | undefined) {
   let age = today.getFullYear() - birthDate.getFullYear();
   const hasHadBirthdayThisYear =
     today.getMonth() > birthDate.getMonth() ||
-    (today.getMonth() === birthDate.getMonth() && today.getDate() >= birthDate.getDate());
+    (today.getMonth() === birthDate.getMonth() &&
+      today.getDate() >= birthDate.getDate());
   if (!hasHadBirthdayThisYear) {
     age -= 1;
   }
@@ -829,11 +1029,14 @@ function calculateAgeFromBirthDate(birthDate: Date | null | undefined) {
 function parseLegacyAgeLabels(raw: string | null | undefined) {
   return (raw ?? "")
     .split(/[,/|\n]+/)
-    .map((value) => value.trim())
+    .map(value => value.trim())
     .filter(Boolean);
 }
 
-function getChildAgeLabel(member: { birthDate?: Date | null; ageLabel?: string | null }) {
+function getChildAgeLabel(member: {
+  birthDate?: Date | null;
+  ageLabel?: string | null;
+}) {
   if (member.ageLabel) {
     return member.ageLabel;
   }
@@ -847,7 +1050,9 @@ async function getFamilyMemberRow(userId: number, memberId: number) {
   const result = await db
     .select()
     .from(familyMembers)
-    .where(and(eq(familyMembers.id, memberId), eq(familyMembers.userId, userId)))
+    .where(
+      and(eq(familyMembers.id, memberId), eq(familyMembers.userId, userId))
+    )
     .limit(1);
   return result[0] ?? null;
 }
@@ -856,9 +1061,9 @@ async function syncFamilyProfile(userId: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   const members = await getFamilyMembers(userId);
-  const childMembers = members.filter((member) => member.relation === "child");
+  const childMembers = members.filter(member => member.relation === "child");
   const childrenAges = childMembers
-    .map((member) => getChildAgeLabel(member))
+    .map(member => getChildAgeLabel(member))
     .filter((value): value is string => Boolean(value));
   const existing = await getUserProfile(userId);
   const updateData = {
@@ -867,7 +1072,10 @@ async function syncFamilyProfile(userId: number) {
     updatedAt: new Date(),
   };
   if (existing) {
-    await db.update(userProfiles).set(updateData).where(eq(userProfiles.userId, userId));
+    await db
+      .update(userProfiles)
+      .set(updateData)
+      .where(eq(userProfiles.userId, userId));
     return;
   }
   await db.insert(userProfiles).values({
@@ -885,25 +1093,31 @@ export async function getFamilyMembers(userId: number) {
     .from(familyMembers)
     .where(eq(familyMembers.userId, userId))
     .orderBy(asc(familyMembers.createdAt));
-  return result
-    .map(decryptFamilyMemberRow)
-    .sort((a, b) => {
-      const relationOrder = familyRelationOrder[a.relation as FamilyMemberInput["relation"]] - familyRelationOrder[b.relation as FamilyMemberInput["relation"]];
-      if (relationOrder !== 0) {
-        return relationOrder;
-      }
-      return a.createdAt.getTime() - b.createdAt.getTime();
-    });
+  return result.map(decryptFamilyMemberRow).sort((a, b) => {
+    const relationOrder =
+      familyRelationOrder[a.relation as FamilyMemberInput["relation"]] -
+      familyRelationOrder[b.relation as FamilyMemberInput["relation"]];
+    if (relationOrder !== 0) {
+      return relationOrder;
+    }
+    return a.createdAt.getTime() - b.createdAt.getTime();
+  });
 }
 
-export async function upsertFamilyMember(userId: number, data: FamilyMemberInput) {
+export async function upsertFamilyMember(
+  userId: number,
+  data: FamilyMemberInput
+) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   const fullName = data.fullName.trim();
   if (!fullName) {
     throw new Error("Family member name is required");
   }
-  const preparedData: Omit<InsertFamilyMember, "id" | "userId" | "createdAt" | "updatedAt"> = {
+  const preparedData: Omit<
+    InsertFamilyMember,
+    "id" | "userId" | "createdAt" | "updatedAt"
+  > = {
     fullName: encryptField(fullName),
     relation: data.relation,
     birthDate: data.birthDate ?? null,
@@ -973,7 +1187,9 @@ export async function bootstrapFamilyMembersFromProfile(userId: number) {
   if (!profile) {
     return [];
   }
-  const legacyMembers: Array<Omit<InsertFamilyMember, "id" | "userId" | "createdAt" | "updatedAt">> = [];
+  const legacyMembers: Array<
+    Omit<InsertFamilyMember, "id" | "userId" | "createdAt" | "updatedAt">
+  > = [];
   const ageLabels = parseLegacyAgeLabels(profile.childrenAges);
   if (profile.maritalStatus === "married") {
     legacyMembers.push({
@@ -1006,7 +1222,9 @@ export async function bootstrapFamilyMembersFromProfile(userId: number) {
   if (legacyMembers.length === 0) {
     return [];
   }
-  await db.insert(familyMembers).values(legacyMembers.map((member) => ({ ...member, userId })));
+  await db
+    .insert(familyMembers)
+    .values(legacyMembers.map(member => ({ ...member, userId })));
   await syncFamilyProfile(userId);
   return getFamilyMembers(userId);
 }
@@ -1021,7 +1239,10 @@ export async function getDocumentClassifications(userId: number) {
     .orderBy(desc(documentClassifications.updatedAt));
 }
 
-export async function upsertDocumentClassification(userId: number, data: DocumentClassificationInput) {
+export async function upsertDocumentClassification(
+  userId: number,
+  data: DocumentClassificationInput
+) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   const values: InsertDocumentClassification = {
@@ -1036,7 +1257,10 @@ export async function upsertDocumentClassification(userId: number, data: Documen
     .insert(documentClassifications)
     .values(values)
     .onConflictDoUpdate({
-      target: [documentClassifications.userId, documentClassifications.documentKey],
+      target: [
+        documentClassifications.userId,
+        documentClassifications.documentKey,
+      ],
       set: {
         sourceType: data.sourceType,
         sourceId: data.sourceId ?? null,
@@ -1058,7 +1282,10 @@ export async function upsertDocumentClassification(userId: number, data: Documen
   return result[0] ?? null;
 }
 
-export async function bulkUpsertDocumentClassifications(userId: number, items: DocumentClassificationInput[]) {
+export async function bulkUpsertDocumentClassifications(
+  userId: number,
+  items: DocumentClassificationInput[]
+) {
   const results = [];
   for (const item of items) {
     const saved = await upsertDocumentClassification(userId, item);
@@ -1073,11 +1300,21 @@ export async function getAdminDashboardStats() {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
-  const [userCount] = await db.select({ count: sql<number>`COUNT(*)` }).from(users);
-  const [analysisCount] = await db.select({ count: sql<number>`COUNT(*)` }).from(analyses);
-  const [chatCount] = await db.select({ count: sql<number>`COUNT(*)` }).from(chatMessages);
-  const [gmailCount] = await db.select({ count: sql<number>`COUNT(*)` }).from(gmailConnections);
-  const [invoiceCount] = await db.select({ count: sql<number>`COUNT(*)` }).from(smartInvoices);
+  const [userCount] = await db
+    .select({ count: sql<number>`COUNT(*)` })
+    .from(users);
+  const [analysisCount] = await db
+    .select({ count: sql<number>`COUNT(*)` })
+    .from(analyses);
+  const [chatCount] = await db
+    .select({ count: sql<number>`COUNT(*)` })
+    .from(chatMessages);
+  const [gmailCount] = await db
+    .select({ count: sql<number>`COUNT(*)` })
+    .from(gmailConnections);
+  const [invoiceCount] = await db
+    .select({ count: sql<number>`COUNT(*)` })
+    .from(smartInvoices);
 
   const [usageTotals] = await db
     .select({
@@ -1105,9 +1342,14 @@ export async function getAdminDashboardStats() {
 
   const now = new Date();
   const dayOfMonth = now.getDate();
-  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  const daysInMonth = new Date(
+    now.getFullYear(),
+    now.getMonth() + 1,
+    0
+  ).getDate();
   const monthCostValue = parseFloat(monthCost?.cost ?? "0");
-  const projectedMonthlyCost = dayOfMonth > 0 ? (monthCostValue / dayOfMonth) * daysInMonth : 0;
+  const projectedMonthlyCost =
+    dayOfMonth > 0 ? (monthCostValue / dayOfMonth) * daysInMonth : 0;
 
   const dailyUsageRaw = await db
     .select({
@@ -1140,7 +1382,8 @@ export async function getAdminDashboardStats() {
   const totalAnalyses = Number(analysisCount?.count ?? 0);
   const completed = Number(completedCount?.count ?? 0);
   const errors = Number(errorCount?.count ?? 0);
-  const successRate = totalAnalyses > 0 ? Math.round((completed / totalAnalyses) * 100) : 100;
+  const successRate =
+    totalAnalyses > 0 ? Math.round((completed / totalAnalyses) * 100) : 100;
 
   return {
     totalUsers: Number(userCount?.count ?? 0),
@@ -1167,7 +1410,11 @@ export async function getUserDetailedSummary(userId: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
-  const [user] = await db.select().from(users).where(eq(users.id, userId)).limit(1);
+  const [user] = await db
+    .select()
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
   if (!user) throw new Error("User not found");
 
   const userAnalyses = await db
@@ -1188,7 +1435,10 @@ export async function getUserDetailedSummary(userId: number) {
     .orderBy(desc(apiUsageLogs.createdAt));
 
   const totalTokens = usageRows.reduce((s, r) => s + r.totalTokens, 0);
-  const totalCost = usageRows.reduce((s, r) => s + parseFloat(r.costUsd as string), 0);
+  const totalCost = usageRows.reduce(
+    (s, r) => s + parseFloat(r.costUsd as string),
+    0
+  );
   const analyzeCount = usageRows.filter(r => r.action === "analyze").length;
   const chatCount = usageRows.filter(r => r.action === "chat").length;
 
@@ -1203,7 +1453,10 @@ export async function getUserDetailedSummary(userId: number) {
     .where(eq(gmailConnections.userId, userId));
 
   const [invoiceStats] = await db
-    .select({ count: sql<number>`COUNT(*)`, total: sql<string>`COALESCE(SUM(${smartInvoices.amount}::numeric), 0)` })
+    .select({
+      count: sql<number>`COUNT(*)`,
+      total: sql<string>`COALESCE(SUM(${smartInvoices.amount}::numeric), 0)`,
+    })
     .from(smartInvoices)
     .where(eq(smartInvoices.userId, userId));
 
@@ -1311,13 +1564,15 @@ export async function getLLMUsageBreakdown() {
     .from(apiUsageLogs)
     .where(sql`${apiUsageLogs.action} = 'chat'`);
 
-  const avgCostPerAnalysis = Number(analyzeTotals?.count ?? 0) > 0
-    ? parseFloat(analyzeTotals?.cost ?? "0") / Number(analyzeTotals.count)
-    : 0;
+  const avgCostPerAnalysis =
+    Number(analyzeTotals?.count ?? 0) > 0
+      ? parseFloat(analyzeTotals?.cost ?? "0") / Number(analyzeTotals.count)
+      : 0;
 
-  const avgCostPerChat = Number(chatTotals?.count ?? 0) > 0
-    ? parseFloat(chatTotals?.cost ?? "0") / Number(chatTotals.count)
-    : 0;
+  const avgCostPerChat =
+    Number(chatTotals?.count ?? 0) > 0
+      ? parseFloat(chatTotals?.cost ?? "0") / Number(chatTotals.count)
+      : 0;
 
   return {
     costByUser: costByUser.map(r => ({
@@ -1428,7 +1683,9 @@ export async function getNewUsersOverTime(days = 30) {
       count: sql<number>`COUNT(*)`,
     })
     .from(users)
-    .where(sql`${users.createdAt} >= NOW() - INTERVAL '${sql.raw(String(days))} days'`)
+    .where(
+      sql`${users.createdAt} >= NOW() - INTERVAL '${sql.raw(String(days))} days'`
+    )
     .groupBy(sql`DATE(${users.createdAt})`)
     .orderBy(sql`DATE(${users.createdAt})`);
 
@@ -1457,7 +1714,10 @@ export async function getCategoryDistribution() {
   }));
 }
 
-export async function getCategorySummaryCache(userId: number, category: string) {
+export async function getCategorySummaryCache(
+  userId: number,
+  category: string
+) {
   const db = await getDb();
   if (!db) return null;
   const result = await db
@@ -1504,4 +1764,3 @@ export async function upsertCategorySummaryCache(
       },
     });
 }
-

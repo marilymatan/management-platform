@@ -5,7 +5,11 @@ import { Transform } from "stream";
 import { pipeline } from "stream/promises";
 import { audit } from "./auditLog";
 import { sdk } from "./_core/sdk";
-import { createAnalysis } from "./db";
+import {
+  appendFilesToAnalysis,
+  createAnalysis,
+  getAnalysisBySessionId,
+} from "./db";
 import { policyAnalysisWorker } from "./policyAnalysisWorker";
 import { createStorageWriteStream, storageDelete } from "./storage";
 
@@ -19,30 +23,54 @@ type UploadedPolicyFile = {
   mimeType: string;
 };
 
+function createHttpError(statusCode: number, message: string) {
+  const error = new Error(message) as Error & { statusCode?: number };
+  error.statusCode = statusCode;
+  return error;
+}
+
+function resolveRequestedSessionId(req: Request) {
+  const rawValue = req.query.sessionId;
+  if (typeof rawValue !== "string") {
+    return null;
+  }
+  const trimmed = rawValue.trim();
+  return trimmed || null;
+}
+
 function isPdfHeader(buffer: Buffer) {
   return buffer.length >= 5 && buffer.toString("utf8", 0, 5) === "%PDF-";
 }
 
 function isJpegHeader(buffer: Buffer) {
-  return buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
+  return (
+    buffer.length >= 3 &&
+    buffer[0] === 0xff &&
+    buffer[1] === 0xd8 &&
+    buffer[2] === 0xff
+  );
 }
 
 function isPngHeader(buffer: Buffer) {
-  return buffer.length >= 8
-    && buffer[0] === 0x89
-    && buffer[1] === 0x50
-    && buffer[2] === 0x4e
-    && buffer[3] === 0x47
-    && buffer[4] === 0x0d
-    && buffer[5] === 0x0a
-    && buffer[6] === 0x1a
-    && buffer[7] === 0x0a;
+  return (
+    buffer.length >= 8 &&
+    buffer[0] === 0x89 &&
+    buffer[1] === 0x50 &&
+    buffer[2] === 0x4e &&
+    buffer[3] === 0x47 &&
+    buffer[4] === 0x0d &&
+    buffer[5] === 0x0a &&
+    buffer[6] === 0x1a &&
+    buffer[7] === 0x0a
+  );
 }
 
 function isWebpHeader(buffer: Buffer) {
-  return buffer.length >= 12
-    && buffer.toString("ascii", 0, 4) === "RIFF"
-    && buffer.toString("ascii", 8, 12) === "WEBP";
+  return (
+    buffer.length >= 12 &&
+    buffer.toString("ascii", 0, 4) === "RIFF" &&
+    buffer.toString("ascii", 8, 12) === "WEBP"
+  );
 }
 
 function detectMimeType(buffer: Buffer) {
@@ -130,13 +158,17 @@ async function parsePolicyUploadRequest(req: Request, sessionId: string) {
       fileCount += 1;
       const task = (async () => {
         const incomingName = info.filename?.trim() || "policy";
-        const reportedMimeType = info.mimeType === "image/jpeg"
-          || info.mimeType === "image/png"
-          || info.mimeType === "image/webp"
-          || info.mimeType === "application/pdf"
-          ? info.mimeType
-          : "application/pdf";
-        const normalizedFilename = normalizeUploadFilename(incomingName, reportedMimeType);
+        const reportedMimeType =
+          info.mimeType === "image/jpeg" ||
+          info.mimeType === "image/png" ||
+          info.mimeType === "image/webp" ||
+          info.mimeType === "application/pdf"
+            ? info.mimeType
+            : "application/pdf";
+        const normalizedFilename = normalizeUploadFilename(
+          incomingName,
+          reportedMimeType
+        );
         const extension = normalizedFilename.includes(".")
           ? normalizedFilename.slice(normalizedFilename.lastIndexOf("."))
           : getExtensionForMimeType(reportedMimeType);
@@ -150,7 +182,12 @@ async function parsePolicyUploadRequest(req: Request, sessionId: string) {
         });
         try {
           const storageTarget = await createStorageWriteStream(fileKey);
-          await pipeline(file, createPolicyValidationStream(), sizeTracker, storageTarget.stream);
+          await pipeline(
+            file,
+            createPolicyValidationStream(),
+            sizeTracker,
+            storageTarget.stream
+          );
           uploadedFiles.push({
             name: normalizedFilename,
             size: fileSize,
@@ -162,19 +199,25 @@ async function parsePolicyUploadRequest(req: Request, sessionId: string) {
           await storageDelete(fileKey).catch(() => {});
           throw error;
         }
-      })().catch((error) => {
-        parser.destroy(error instanceof Error ? error : new Error(String(error)));
+      })().catch(error => {
+        parser.destroy(
+          error instanceof Error ? error : new Error(String(error))
+        );
         throw error;
       });
       fileTasks.push(task);
     });
 
     parser.on("filesLimit", () => {
-      parser.destroy(new Error(`ניתן להעלות עד ${MAX_POLICY_FILES} קבצים בכל פעם`));
+      parser.destroy(
+        new Error(`ניתן להעלות עד ${MAX_POLICY_FILES} קבצים בכל פעם`)
+      );
     });
 
-    parser.on("error", (error) => {
-      void Promise.allSettled(fileTasks).then(() => fail(error instanceof Error ? error : new Error(String(error))));
+    parser.on("error", error => {
+      void Promise.allSettled(fileTasks).then(() =>
+        fail(error instanceof Error ? error : new Error(String(error)))
+      );
     });
 
     parser.on("finish", () => {
@@ -186,14 +229,16 @@ async function parsePolicyUploadRequest(req: Request, sessionId: string) {
           }
           resolve();
         })
-        .catch((error) => {
+        .catch(error => {
           reject(error instanceof Error ? error : new Error(String(error)));
         });
     });
 
     req.pipe(parser);
-  }).catch(async (error) => {
-    await Promise.all(storedFileKeys.map((fileKey) => storageDelete(fileKey).catch(() => {})));
+  }).catch(async error => {
+    await Promise.all(
+      storedFileKeys.map(fileKey => storageDelete(fileKey).catch(() => {}))
+    );
     throw error;
   });
 
@@ -210,34 +255,77 @@ export function registerPolicyUploadRoute(app: Express) {
       return;
     }
 
+    let uploadedFiles: UploadedPolicyFile[] = [];
+    let filesPersisted = false;
     try {
       const user = await sdk.authenticateRequest(req);
-      const sessionId = nanoid(16);
-      const uploadedFiles = await parsePolicyUploadRequest(req, sessionId);
-      await createAnalysis({
-        sessionId,
-        userId: user.id,
-        files: uploadedFiles,
-        status: "pending",
-      });
+      const requestedSessionId = resolveRequestedSessionId(req);
+      const sessionId = requestedSessionId ?? nanoid(16);
+
+      if (requestedSessionId) {
+        const existingAnalysis =
+          await getAnalysisBySessionId(requestedSessionId);
+        if (!existingAnalysis) {
+          throw createHttpError(404, "לא מצאנו את הסריקה שביקשת לעדכן");
+        }
+        if (existingAnalysis.userId !== user.id) {
+          throw createHttpError(403, "אין לך הרשאה לעדכן את הסריקה הזאת");
+        }
+        if (existingAnalysis.status === "processing") {
+          throw createHttpError(
+            409,
+            "אי אפשר להוסיף קבצים בזמן שהסריקה בעיבוד. נסה שוב בעוד רגע."
+          );
+        }
+      }
+
+      uploadedFiles = await parsePolicyUploadRequest(req, sessionId);
+
+      let totalFileCount = uploadedFiles.length;
+      if (requestedSessionId) {
+        const nextFiles = await appendFilesToAnalysis(
+          requestedSessionId,
+          user.id,
+          uploadedFiles
+        );
+        totalFileCount = nextFiles.length;
+      } else {
+        await createAnalysis({
+          sessionId,
+          userId: user.id,
+          files: uploadedFiles,
+          status: "pending",
+        });
+      }
+      filesPersisted = true;
+
       await audit({
         userId: user.id,
         action: "upload_file",
         resource: "file",
         resourceId: sessionId,
         details: JSON.stringify({
+          mode: requestedSessionId ? "append" : "create",
           fileCount: uploadedFiles.length,
-          fileNames: uploadedFiles.map((file) => file.name),
+          totalFileCount,
+          fileNames: uploadedFiles.map(file => file.name),
         }),
       });
       policyAnalysisWorker.nudge();
-      res.status(201).json({
+      res.status(requestedSessionId ? 200 : 201).json({
         sessionId,
         files: uploadedFiles,
+        totalFileCount,
       });
     } catch (error: any) {
+      if (!filesPersisted && uploadedFiles.length > 0) {
+        await Promise.all(
+          uploadedFiles.map(file => storageDelete(file.fileKey).catch(() => {}))
+        );
+      }
       const message = error?.message || "שגיאה בהעלאת הקבצים";
-      const statusCode = message === "Invalid session cookie" ? 401 : 400;
+      const statusCode =
+        error?.statusCode ?? (message === "Invalid session cookie" ? 401 : 400);
       res.status(statusCode).json({
         error: statusCode === 401 ? "Unauthorized" : "Bad Request",
         message,
